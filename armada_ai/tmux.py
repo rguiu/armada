@@ -53,6 +53,29 @@ def install_skills(project_dir: str):
     return str(skills_dir)
 
 
+def install_user_skills() -> list[str]:
+    """Install armada skills to user-level skill directories.
+    Checks ~/.opencode/skills/ and ~/.claude/skills/.
+    Returns list of paths where skills were installed."""
+    installed = []
+    home = Path.home()
+
+    for agent_dir, skills_subdir in [
+        (home / ".opencode", home / ".opencode" / "skills"),
+        (home / ".claude", home / ".claude" / "skills"),
+    ]:
+        if agent_dir.exists():
+            skills_subdir.mkdir(parents=True, exist_ok=True)
+            for fname in SKILL_FILES:
+                src = _SKILLS_SRC / fname
+                dst = skills_subdir / fname
+                if src.exists():
+                    shutil.copy2(src, dst)
+            installed.append(str(skills_subdir))
+
+    return installed
+
+
 def create_node_window(name: str, colour: str, working_dir: str,
                        agent_type: str = "auto") -> str | None:
     if not _has_tmux():

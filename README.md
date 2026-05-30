@@ -45,6 +45,9 @@ cd armada
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
+
+# Install skills to user profile (once, works for all projects)
+armada setup
 ```
 
 Add the wrapper to your PATH for the `armada` command anywhere:
@@ -86,6 +89,7 @@ The dashboard polls every 10 seconds. You can see each node's current status, la
 | `armada start` | Start daemon in background |
 | `armada stop` | Stop the daemon |
 | `armada attach` | Start in foreground (debugging) |
+| `armada setup` | Install skills to user profile |
 
 ## API Endpoints
 
@@ -113,22 +117,19 @@ Armada ships with three skills that teach agents how to operate as managed nodes
 
 ### Installing Skills
 
-Copy the skills into your agent's project-level skills directory:
+Run once — installs to your user profile for all projects:
 
 ```bash
-# Open Code
-mkdir -p .opencode/skills
-cp skills/armada-node.md .opencode/skills/
-cp skills/armada-worker.md .opencode/skills/
-cp skills/armada-orchestrator.md .opencode/skills/
-
-# Claude Code
-mkdir -p .claude/skills
-cp skills/armada-node.md .claude/skills/
-# ...
+armada setup
 ```
 
-Skills auto-activate when you launch an agent in a Armada-managed tmux window. The agent automatically reports status on every turn via `curl` to the Armada API.
+This copies the skills to:
+- `~/.opencode/skills/` (Open Code user-wide)
+- `~/.claude/skills/` (Claude Code user-wide)
+
+Skills auto-activate when you launch an agent in an Armada-managed tmux window. The agent automatically reports status on every turn via `curl` to the Armada API.
+
+When creating a node, Armada also copies skills to the project's `.opencode/skills/` as a fallback.
 
 ### Skill Behavior
 
@@ -164,10 +165,7 @@ armada
 #   Project: Shipping API
 #   Agent: opencode
 
-# 4. Copy skills into the shipping-api project
-mkdir -p /Users/you/projects/shipping-api/.opencode/skills
-cp skills/armada-node.md /Users/you/projects/shipping-api/.opencode/skills/
-cp skills/armada-worker.md /Users/you/projects/shipping-api/.opencode/skills/
+# 4. Skills already installed globally by 'armada setup' — no per-project copy needed.
 
 # 5. Attach to Architect and start working
 # Click Architect in tree → Attach
