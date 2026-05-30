@@ -15,6 +15,7 @@ echo "=== Armada Apples Demo ==="
 echo ""
 
 # Cleanup
+armada stop 2>/dev/null || kill $(lsof -ti :9100) 2>/dev/null || true
 tmux kill-server 2>/dev/null || true
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"

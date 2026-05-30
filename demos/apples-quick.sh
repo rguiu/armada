@@ -10,6 +10,8 @@ WORKDIR="/tmp/armada-apples-q"
 
 echo "=== Armada Apples Demo ==="
 
+# Cleanup previous instances
+armada stop 2>/dev/null || kill $(lsof -ti :9100) 2>/dev/null || true
 tmux kill-server 2>/dev/null || true
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
@@ -32,15 +34,16 @@ W2=$(id "Apple-2")
 W3=$(id "Apple-3")
 echo "Workers: Apple-1=$W1 Apple-2=$W2 Apple-3=$W3"
 
-# Assign tasks using armada-node-* CLI tools
+# Assign tasks
+sleep 1
 tmux send-keys -t "armada:Apple-1" \
-    "armada-node-report active 'picking apples' && sleep \$((5 + RANDOM % 5)) && N=\$((RANDOM % 11 + 10)) && armada-node-result \$N && echo 'Apple-1 done: '\$N" Enter
-
+    "armada-node-report active 'picking apples' && sleep 3 && N=\$((RANDOM % 11 + 10)) && armada-node-result \$N && echo 'Apple-1 done: '\$N" Enter
+sleep 0.3
 tmux send-keys -t "armada:Apple-2" \
-    "armada-node-report active 'picking apples' && sleep \$((5 + RANDOM % 5)) && N=\$((RANDOM % 11 + 10)) && armada-node-result \$N && echo 'Apple-2 done: '\$N" Enter
-
+    "armada-node-report active 'picking apples' && sleep 3 && N=\$((RANDOM % 11 + 10)) && armada-node-result \$N && echo 'Apple-2 done: '\$N" Enter
+sleep 0.3
 tmux send-keys -t "armada:Apple-3" \
-    "armada-node-report active 'picking apples' && sleep \$((5 + RANDOM % 5)) && N=\$((RANDOM % 11 + 10)) && armada-node-result \$N && echo 'Apple-3 done: '\$N" Enter
+    "armada-node-report active 'picking apples' && sleep 3 && N=\$((RANDOM % 11 + 10)) && armada-node-result \$N && echo 'Apple-3 done: '\$N" Enter
 
 echo "Waiting for workers to finish..."
 for i in $(seq 1 30); do
@@ -49,6 +52,7 @@ for i in $(seq 1 30); do
     S3=$(curl -s "$API/api/nodes/$W3" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['node']['status'])" 2>/dev/null || echo "?")
 
     if [ "$S1" = "idle" ] && [ "$S2" = "idle" ] && [ "$S3" = "idle" ]; then
+        sleep 1  # Let result files flush
         A=$(cat "/tmp/armada-results/Apple-1/result" 2>/dev/null || echo "0")
         B=$(cat "/tmp/armada-results/Apple-2/result" 2>/dev/null || echo "0")
         C=$(cat "/tmp/armada-results/Apple-3/result" 2>/dev/null || echo "0")

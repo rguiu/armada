@@ -17,16 +17,16 @@ def _write_zsh_startup(zdotdir: str, tools_dir: str):
     home_zshenv = os.path.expanduser("~/.zshenv")
     home_zshrc = os.path.expanduser("~/.zshrc")
 
-    # .zshenv: environment — chain to global, then add tools
+    # .zshenv: environment — chain to global
     with open(os.path.join(zdotdir, ".zshenv"), "w") as f:
         if os.path.exists(home_zshenv):
             f.write(f'[[ -f "{home_zshenv}" ]] && source "{home_zshenv}"\n')
-        f.write(f'export PATH="{tools_dir}:$PATH"\n')
 
-    # .zshrc: interactive — chain to global as-is
+    # .zshrc: interactive — chain to global, then add tools (user's .zshrc clobbers PATH!)
     with open(os.path.join(zdotdir, ".zshrc"), "w") as f:
         if os.path.exists(home_zshrc):
             f.write(f'[[ -f "{home_zshrc}" ]] && source "{home_zshrc}"\n')
+        f.write(f'export PATH="{tools_dir}:$PATH"\n')
 
 
 def _has_tmux() -> bool:
