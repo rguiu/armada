@@ -160,9 +160,56 @@ def has_attached_clients() -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def attach_node(name: str) -> bool:
+def attach_node(name: str) -> str | None:
+    """Open a terminal attached to the named tmux window.
+    Returns None on success, or an error message string."""
     if not _has_tmux():
-        return False
+        return "tmux is not installed"
+
+    # Already inside tmux: switch client to the window
+    if os.environ.get("TMUX"):
+        subprocess.run(["tmux", "switch-client", "-t", f"{ARMADA_SESSION}:{name}"])
+        return None
+
+    # Try AppleScript to open iTerm
+    term = os.environ.get("TERM_PROGRAM", "")
+    if "iTerm" in term:
+        try:
+            applescript = (
+                f'tell application "iTerm"\n'
+                f'  if (count of windows) > 0 then\n'
+                f'    tell current window to create tab with default profile command "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+                f'  else\n'
+                f'    create window with default profile command "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+                f'  end if\n'
+                f'end tell'
+            )
+            result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                return None
+            return f"iTerm attach failed: {result.stderr.strip()}"
+        except Exception as e:
+            return f"iTerm attach error: {e}"
+
+    # Try Terminal.app
+    if "Apple_Terminal" in term or "Terminal" in term:
+        try:
+            applescript = (
+                f'tell application "Terminal"\n'
+                f'  do script "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+                f'  activate\n'
+                f'end tell'
+            )
+            result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                return None
+            return f"Terminal attach failed: {result.stderr.strip()}"
+        except Exception as e:
+            return f"Terminal attach error: {e}"
+
+    # Last resort: try direct attach (replaces current shell)
+    return "Could not auto-open terminal. Run: tmux attach -t armada"
+
 
     if os.environ.get("TMUX"):
         subprocess.run(["tmux", "switch-client", "-t", f"{ARMADA_SESSION}:{name}"])

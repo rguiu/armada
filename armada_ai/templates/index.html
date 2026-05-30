@@ -146,6 +146,15 @@ a { color: #58a6ff; }
 }
 .modal input:focus, .modal select:focus { outline: none; border-color: #58a6ff; }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+/* ── Toast ── */
+#toast {
+  position: fixed; bottom: 20px; right: 20px; max-width: 400px;
+  padding: 12px 18px; border-radius: 6px; font-size: 13px; color: #e1e4e8;
+  background: #1f6feb; box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+  display: none; z-index: 200; animation: fadeIn 0.2s;
+}
+#toast.error { background: #da3633; }
+@keyframes fadeIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
 </style>
 </head>
 <body>
@@ -200,7 +209,7 @@ a { color: #58a6ff; }
   </div>
 </div>
 
-<!-- ── New Label Modal ── -->
+<!-- ── Modal Overlays ── -->
 <div class="modal-overlay" id="label-modal">
   <div class="modal">
     <h3>New Project Label</h3>
@@ -357,7 +366,12 @@ async function loadNodeDetail(nodeId) {
 }
 
 async function attachNode(id) {
-  await api('/api/nodes/' + id + '/attach', {method:'POST'});
+  try {
+    await api('/api/nodes/' + id + '/attach', {method:'POST'});
+    toast('Terminal opened — check your iTerm tabs.');
+  } catch(e) {
+    toast('Attach failed: ' + e.message + ' — run: tmux attach -t armada', true);
+  }
 }
 
 async function killNode(id) {
@@ -501,6 +515,18 @@ document.querySelectorAll('.modal-overlay').forEach(overlay => {
     if (e.target === overlay) overlay.classList.remove('show');
   });
 });
+
+let _toastTimer = null;
+function toast(msg, isError = false) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className = isError ? 'error' : '';
+  el.style.display = 'block';
+  clearTimeout(_toastTimer);
+  _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
+}
 </script>
+
+<div id="toast"></div>
 </body>
 </html>

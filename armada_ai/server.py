@@ -140,7 +140,11 @@ def attach(node_id: int):
         raise HTTPException(status_code=404, detail="Node not found")
     if not tmux.window_exists(node["name"]):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
-    tmux.attach_node(node["name"])
+
+    error = tmux.attach_node(node["name"])
+    if error:
+        raise HTTPException(status_code=500, detail=error)
+
     return JSONResponse({"ok": True})
 
 
