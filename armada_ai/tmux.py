@@ -171,55 +171,70 @@ def attach_node(name: str) -> str | None:
         subprocess.run(["tmux", "switch-client", "-t", f"{ARMADA_SESSION}:{name}"])
         return None
 
-    # Try AppleScript to open iTerm
-    term = os.environ.get("TERM_PROGRAM", "")
-    if "iTerm" in term:
-        try:
-            applescript = (
-                f'tell application "iTerm"\n'
-                f'  activate\n'
-                f'  try\n'
-                f'    tell current window\n'
-                f'      set newTab to (create tab with default profile)\n'
-                f'      tell current session of newTab\n'
-                f'        set name to "{name}"\n'
-                f'        write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
-                f'      end tell\n'
-                f'    end tell\n'
-                f'  on error\n'
-                f'    set newWindow to (create window with default profile)\n'
-                f'    tell current session of newWindow\n'
-                f'      set name to "{name}"\n'
-                f'      write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
-                f'    end tell\n'
-                f'  end try\n'
-                f'end tell'
-            )
-            result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                return None
-            return f"iTerm attach failed: {result.stderr.strip()}"
-        except Exception as e:
-            return f"iTerm attach error: {e}"
+    # Try AppleScript to open iTerm (works regardless of TERM_PROGRAM on macOS)
+    result = _try_iterm_attach(name)
+    if result is None:
+        return None
 
     # Try Terminal.app
-    if "Apple_Terminal" in term or "Terminal" in term:
-        try:
-            applescript = (
-                f'tell application "Terminal"\n'
-                f'  do script "tmux attach -t {ARMADA_SESSION}:{name}"\n'
-                f'  activate\n'
-                f'end tell'
-            )
-            result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
-            if result.returncode == 0:
-                return None
-            return f"Terminal attach failed: {result.stderr.strip()}"
-        except Exception as e:
-            return f"Terminal attach error: {e}"
+    result2 = _try_terminal_attach(name)
+    if result2 is None:
+        return None
 
-    # Last resort: try direct attach (replaces current shell)
-    return "Could not auto-open terminal. Run: tmux attach -t armada"
+    # Nothing worked — return the first error message
+    return result or "Cannot auto-open terminal. Run: tmux attach -t armada"
+
+
+def _try_iterm_attach(name: str) -> str | None:
+    """Try opening a new iTerm tab attached to the node."""
+    try:
+        applescript = (
+            f'tell application "iTerm"\n'
+            f'  activate\n'
+            f'  try\n'
+            f'    tell current window\n'
+            f'      set newTab to (create tab with default profile)\n'
+            f'      tell current session of newTab\n'
+            f'        set name to "{name}"\n'
+            f'        write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+            f'      end tell\n'
+            f'    end tell\n'
+            f'  on error\n'
+            f'    set newWindow to (create window with default profile)\n'
+            f'    tell current session of newWindow\n'
+            f'      set name to "{name}"\n'
+            f'      write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+            f'    end tell\n'
+            f'  end try\n'
+            f'end tell'
+        )
+        result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            return None
+        return f"iTerm: {result.stderr.strip()}"
+    except FileNotFoundError:
+        return "osascript not available"
+    except Exception as e:
+        return f"iTerm error: {e}"
+
+
+def _try_terminal_attach(name: str) -> str | None:
+    """Try opening a Terminal.app window attached to the node."""
+    try:
+        applescript = (
+            f'tell application "Terminal"\n'
+            f'  activate\n'
+            f'  do script "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+            f'end tell'
+        )
+        result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
+        if result.returncode == 0:
+            return None
+        return f"Terminal: {result.stderr.strip()}"
+    except FileNotFoundError:
+        return None
+    except Exception as e:
+        return f"Terminal error: {e}"
 
 
     if os.environ.get("TMUX"):
