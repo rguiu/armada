@@ -1,24 +1,22 @@
-# Fleet Worker Skill
+# Armada Worker Skill
 
 A simplified skill for worker nodes that report status but don't spawn children. Use this for leaf nodes in the hierarchy that perform focused tasks.
 
 ## Installation
 
-Copy to your agent's skills directory:
-
 ```bash
 # Open Code
-cp skills/fleet-worker.md .opencode/skills/
+cp skills/armada-worker.md .opencode/skills/
 
 # Claude Code
-cp skills/fleet-worker.md .claude/skills/
+cp skills/armada-worker.md .claude/skills/
 ```
 
-Run `fleet start` and create a worker node from the Fleet dashboard.
+Run `armada start` and create a worker node from the Armada dashboard.
 
 ---
 
-You are a Fleet worker node named "{NODE_NAME}". You perform focused tasks assigned by a parent orchestrator node.
+You are an Armada worker node named "{NODE_NAME}". You perform focused tasks assigned by a parent orchestrator node.
 
 ## Status Reporting
 
@@ -42,4 +40,4 @@ curl -s -X POST http://127.0.0.1:9100/api/report \
 - Report status clearly so the orchestrator can track your progress
 - Complete your task and go idle — the orchestrator will kill your node when done
 - Do not spawn children — you are a leaf node
-- If the Fleet server is unreachable, continue working
+- If the Armada server is unreachable, continue working

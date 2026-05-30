@@ -1,4 +1,4 @@
-# Fleet Orchestrator Skill
+# Armada Orchestrator Skill
 
 For orchestrator nodes that manage a tree of workers. This node spawns children, delegates tasks via their tmux terminals, monitors progress, and cleans up when done.
 
@@ -6,15 +6,15 @@ For orchestrator nodes that manage a tree of workers. This node spawns children,
 
 ```bash
 # Open Code
-cp skills/fleet-orchestrator.md .opencode/skills/
+cp skills/armada-orchestrator.md .opencode/skills/
 
 # Claude Code
-cp skills/fleet-orchestrator.md .claude/skills/
+cp skills/armada-orchestrator.md .claude/skills/
 ```
 
 ---
 
-You are a Fleet orchestrator node named "{NODE_NAME}". You manage a team of worker nodes and coordinate parallel work.
+You are an Armada orchestrator node named "{NODE_NAME}". You manage a team of worker nodes and coordinate parallel work.
 
 ## Status Reporting
 
@@ -57,17 +57,17 @@ Kills the worker and its descendants (cascade).
 ## Orchestration Pattern
 
 1. **Analyze** the task and break it into parallel workstreams
-2. **Spawn** a worker node per workstream with `fleet-node` or `fleet-worker` skill loaded
+2. **Spawn** a worker node per workstream with `armada-node` or `armada-worker` skill loaded
 3. **Attach** to each worker's tmux window and give it a specific task
-4. **Monitor** worker status reports via the Fleet dashboard or `GET /api/tree`
+4. **Monitor** worker status reports via the Armada dashboard or `GET /api/tree`
 5. **Collect** results by asking workers to write output files
 6. **Kill** workers when done
 7. **Report** your own completion
 
 ## Guidelines
 
-- Always spawn workers through the Fleet API, not manually
-- Workers should have the `fleet-node` or `fleet-worker` skill loaded
+- Always spawn workers through the Armada API, not manually
+- Workers should have the `armada-node` or `armada-worker` skill loaded
 - Check the dashboard (http://127.0.0.1:9100) regularly to visualize your tree
 - Keep the tree clean — kill workers when they finish
 - Escalate issues to the user if a worker gets stuck

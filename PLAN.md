@@ -1,16 +1,16 @@
-# Fleet — Architecture & Roadmap
+# Armada — Architecture & Roadmap
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Fleet Dashboard (http://127.0.0.1:9100)         │
+│  Armada Dashboard (http://127.0.0.1:9100)         │
 │  Dark-themed HTML, auto-refreshes every 10s      │
 │  Tree sidebar + detail panel + actions           │
 └────────────────────┬─────────────────────────────┘
                      │ HTTP (REST API)
 ┌────────────────────▼─────────────────────────────┐
-│  Fleet Server (FastAPI, daemonized)              │
+│  Armada Server (FastAPI, daemonized)              │
 │  POST /api/report    ← agent hooks               │
 │  GET  /api/tree      → dashboard tree            │
 │  POST /api/nodes     ← create nodes              │
@@ -20,10 +20,10 @@
 └────────────────────┬─────────────────────────────┘
                      │ sqlite3 / subprocess
 ┌────────────────────▼─────────────────────────────┐
-│  fleet.db (SQLite, WAL mode)                     │
+│  armada.db (SQLite, WAL mode)                     │
 │  nodes | project_labels | status_reports         │
 ├──────────────────────────────────────────────────┤
-│  Tmux session "fleet" (detached)                 │
+│  Tmux session "armada" (detached)                 │
 │  Window 0: overview | Window N: <node-name>      │
 │  Each window = one AI agent process              │
 └──────────────────────────────────────────────────┘
@@ -108,7 +108,7 @@ Default names from two pools:
 
 ## Daemon
 
-`fleet` (or `fleet start`) double-forks, writes PID to `~/.fleet/server.pid`. `fleet stop` reads PID file and sends SIGTERM.
+`armada` (or `armada start`) double-forks, writes PID to `~/.armada/server.pid`. `armada stop` reads PID file and sends SIGTERM.
 
 ## Roadmap
 
@@ -116,7 +116,7 @@ Default names from two pools:
 - [x] Tree hierarchy with cascade kill
 - [x] Dashboard with sidebar tree + detail panel
 - [x] Project label CRUD from dashboard
-- [x] Agent skills (fleet-node, fleet-worker, fleet-orchestrator)
+- [x] Agent skills (armada-node, armada-worker, armada-orchestrator)
 - [x] Agent hooks via HTTP POST to `/api/report`
 - [x] Health check for dead tmux windows
 - [x] Daemonize + PID file
@@ -128,7 +128,7 @@ Default names from two pools:
 - [ ] Statistics / uptime charts
 
 ### Future (v0.3.0+)
-- [ ] Multi-machine fleet (nodes on remote hosts)
+- [ ] Multi-machine armada (nodes on remote hosts)
 - [ ] Authentication for remote dashboard access
 - [ ] Configurable colour themes
 - [ ] Cross-session search in logs

@@ -3,9 +3,9 @@ requires = ["setuptools>=64", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "fleet"
+name = "armada-ai"
 version = "0.1.0"
-description = "Manage multiple Open Code / Claude Code agent sessions via tmux"
+description = "Terminal orchestration for Open Code and Claude Code agents"
 requires-python = ">=3.10"
 dependencies = [
     "click>=8.0",
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fleet = "fleet.cli:main"
+armada = "armada_ai.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]

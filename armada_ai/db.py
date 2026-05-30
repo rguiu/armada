@@ -1,8 +1,8 @@
 import sqlite3
 import os
 
-DB_DIR = os.path.expanduser("~/.fleet")
-DB_PATH = os.path.join(DB_DIR, "fleet.db")
+DB_DIR = os.path.expanduser("~/.armada")
+DB_PATH = os.path.join(DB_DIR, "armada.db")
 
 
 def _ensure_dir():

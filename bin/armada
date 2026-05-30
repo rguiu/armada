@@ -1,4 +1,4 @@
 #!/bin/bash
 PROJECT_DIR="/Users/raulguiugallardo/Projects/terminal_manager"
 source "$PROJECT_DIR/.venv/bin/activate"
-exec fleet "$@"
+exec armada "$@"

@@ -12,9 +12,9 @@ from . import naming
 from . import tmux
 from . import health
 
-app = FastAPI(title="Fleet Manager")
+app = FastAPI(title="Armada")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
-PID_FILE = os.path.expanduser("~/.fleet/server.pid")
+PID_FILE = os.path.expanduser("~/.armada/server.pid")
 HOST = "127.0.0.1"
 PORT = 9100
 
@@ -23,7 +23,7 @@ PORT = 9100
 def startup():
     db.init_db()
     try:
-        tmux.ensure_fleet_session()
+        tmux.ensure_armada_session()
     except RuntimeError:
         pass
     health.start_health_loop()

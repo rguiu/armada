@@ -1,16 +1,16 @@
-# Fleet
+# Armada
 
 > Terminal orchestration for Open Code and Claude Code agents.
 
 Manage multiple AI coding agents as a **hierarchy of tmux nodes** with a live dashboard. Orchestrator nodes can **spawn worker children**, delegate tasks, monitor progress, and clean up — all through a local web UI.
 
-![Screenshot placeholder](https://via.placeholder.com/800x400/0f1117/58a6ff?text=Fleet+Dashboard)
+![Screenshot placeholder](https://via.placeholder.com/800x400/0f1117/58a6ff?text=Armada+Dashboard)
 
 ## How It Works
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  Fleet Dashboard (http://127.0.0.1:9100)         │
+│  Armada Dashboard (http://127.0.0.1:9100)         │
 │  ┌─────────────┐  ┌─────────────────────────────┐│
 │  │ Tree        │  │ Detail: "Architect"         ││
 │  │             │  │ Status: active               ││
@@ -28,36 +28,36 @@ Manage multiple AI coding agents as a **hierarchy of tmux nodes** with a live da
          │
     ┌────┴────┐
     │  tmux   │
-    │  fleet  │
+    │  armada  │
     │ session │
     └─────────┘
 ```
 
-Each node is a tmux window running an AI agent (Open Code or Claude Code). Nodes can have a parent-child relationship forming a tree. Orchestrator nodes spawn children via the Fleet API. The dashboard shows the full hierarchy with live status, recent activity, and logs.
+Each node is a tmux window running an AI agent (Open Code or Claude Code). Nodes can have a parent-child relationship forming a tree. Orchestrator nodes spawn children via the Armada API. The dashboard shows the full hierarchy with live status, recent activity, and logs.
 
 ## Installation
 
 **Prerequisites:** Python 3.10+, tmux (`brew install tmux`), Open Code or Claude Code.
 
 ```bash
-git clone https://github.com/your-username/fleet.git
-cd fleet
+git clone https://github.com/your-username/armada.git
+cd armada
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 ```
 
-Add the wrapper to your PATH for the `fleet` command anywhere:
+Add the wrapper to your PATH for the `armada` command anywhere:
 
 ```bash
-echo 'export PATH="$HOME/Projects/fleet/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$HOME/Projects/armada/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
 
 ## Quick Start
 
 ```bash
-fleet              # Start the server (daemon) + open dashboard
+armada              # Start the server (daemon) + open dashboard
 ```
 
 Open http://127.0.0.1:9100.
@@ -72,7 +72,7 @@ Click **+ Node**. Choose a name (or leave blank for auto-generated), select a pr
 
 ### Step 3: Attach and work
 
-Select the node in the tree and click **Attach**. This opens a terminal tab connected to the node's tmux window. The agent receives Fleet status reporting instructions automatically.
+Select the node in the tree and click **Attach**. This opens a terminal tab connected to the node's tmux window. The agent receives Armada status reporting instructions automatically.
 
 ### Step 4: Monitor
 
@@ -82,10 +82,10 @@ The dashboard polls every 10 seconds. You can see each node's current status, la
 
 | Command | Description |
 |---|---|
-| `fleet` | Start daemon + open dashboard |
-| `fleet start` | Start daemon in background |
-| `fleet stop` | Stop the daemon |
-| `fleet attach` | Start in foreground (debugging) |
+| `armada` | Start daemon + open dashboard |
+| `armada start` | Start daemon in background |
+| `armada stop` | Stop the daemon |
+| `armada attach` | Start in foreground (debugging) |
 
 ## API Endpoints
 
@@ -103,13 +103,13 @@ The dashboard polls every 10 seconds. You can see each node's current status, la
 
 ## Agent Skills
 
-Fleet ships with three skills that teach agents how to operate as managed nodes:
+Armada ships with three skills that teach agents how to operate as managed nodes:
 
 | Skill | Purpose |
 |---|---|
-| [`fleet-node.md`](skills/fleet-node.md) | Full node: reports status, spawns/kills children |
-| [`fleet-worker.md`](skills/fleet-worker.md) | Leaf node: reports status, single-task focus |
-| [`fleet-orchestrator.md`](skills/fleet-orchestrator.md) | Orchestrator: spawns workers, delegates, monitors |
+| [`armada-node.md`](skills/armada-node.md) | Full node: reports status, spawns/kills children |
+| [`armada-worker.md`](skills/armada-worker.md) | Leaf node: reports status, single-task focus |
+| [`armada-orchestrator.md`](skills/armada-orchestrator.md) | Orchestrator: spawns workers, delegates, monitors |
 
 ### Installing Skills
 
@@ -118,23 +118,23 @@ Copy the skills into your agent's project-level skills directory:
 ```bash
 # Open Code
 mkdir -p .opencode/skills
-cp skills/fleet-node.md .opencode/skills/
-cp skills/fleet-worker.md .opencode/skills/
-cp skills/fleet-orchestrator.md .opencode/skills/
+cp skills/armada-node.md .opencode/skills/
+cp skills/armada-worker.md .opencode/skills/
+cp skills/armada-orchestrator.md .opencode/skills/
 
 # Claude Code
 mkdir -p .claude/skills
-cp skills/fleet-node.md .claude/skills/
+cp skills/armada-node.md .claude/skills/
 # ...
 ```
 
-Skills auto-activate when you launch an agent in a Fleet-managed tmux window. The agent automatically reports status on every turn via `curl` to the Fleet API.
+Skills auto-activate when you launch an agent in a Armada-managed tmux window. The agent automatically reports status on every turn via `curl` to the Armada API.
 
 ### Skill Behavior
 
-- **`fleet-node`**: Reports status at start/end of every response. Can spawn child nodes, check their progress, and kill them when done.
-- **`fleet-worker`**: Reports status only. Focused on completing a single task assigned by a parent.
-- **`fleet-orchestrator`**: Manages a team. Breaks work into parallel streams, spawns workers per stream, monitors their status, collects results, and cleans up.
+- **`armada-node`**: Reports status at start/end of every response. Can spawn child nodes, check their progress, and kill them when done.
+- **`armada-worker`**: Reports status only. Focused on completing a single task assigned by a parent.
+- **`armada-orchestrator`**: Manages a team. Breaks work into parallel streams, spawns workers per stream, monitors their status, collects results, and cleans up.
 
 ## Example: Multi-Agent Code Review Pipeline
 
@@ -149,8 +149,8 @@ Architect (orchestrator)
 ### Setup
 
 ```bash
-# 1. Start Fleet
-fleet
+# 1. Start Armada
+armada
 
 # 2. Register project
 # In dashboard: Projects → + Add
@@ -166,17 +166,17 @@ fleet
 
 # 4. Copy skills into the shipping-api project
 mkdir -p /Users/you/projects/shipping-api/.opencode/skills
-cp skills/fleet-node.md /Users/you/projects/shipping-api/.opencode/skills/
-cp skills/fleet-worker.md /Users/you/projects/shipping-api/.opencode/skills/
+cp skills/armada-node.md /Users/you/projects/shipping-api/.opencode/skills/
+cp skills/armada-worker.md /Users/you/projects/shipping-api/.opencode/skills/
 
 # 5. Attach to Architect and start working
 # Click Architect in tree → Attach
-# The agent now has the fleet-orchestrator skill loaded
+# The agent now has the armada-orchestrator skill loaded
 ```
 
 ### Architect's Workflow
 
-The Architect (with `fleet-orchestrator` skill) will:
+The Architect (with `armada-orchestrator` skill) will:
 
 1. Analyze the codebase structure
 2. Spawn a `Reviewer` node for code review:
@@ -195,9 +195,9 @@ The dashboard shows the full tree updating in real time. Each worker reports "ac
 
 | Path | Purpose |
 |---|---|
-| `~/.fleet/fleet.db` | SQLite database |
-| `~/.fleet/server.pid` | Daemon PID file |
-| `~/.fleet/hooks/<name>.md` | Per-node hook instructions |
+| `~/.armada/armada.db` | SQLite database |
+| `~/.armada/server.pid` | Daemon PID file |
+| `~/.armada/hooks/<name>.md` | Per-node hook instructions |
 
 ## Architecture
 

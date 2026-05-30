@@ -18,24 +18,24 @@ def main():
         start_server(daemon=False, open_browser=False)
 
     else:
-        print("Usage: fleet [start|stop|attach]")
-        print("  start   Start the Fleet server daemon + open dashboard")
-        print("  stop    Stop the Fleet server")
+        print("Usage: armada [start|stop|attach]")
+        print("  start   Start the Armada server daemon + open dashboard")
+        print("  stop    Stop the Armada server")
         print("  attach  Start server in foreground (for debugging)")
         sys.exit(1)
 
 
 def _stop_server():
-    pid_file = os.path.expanduser("~/.fleet/server.pid")
+    pid_file = os.path.expanduser("~/.armada/server.pid")
     try:
         with open(pid_file) as f:
             pid = int(f.read().strip())
         os.kill(pid, signal.SIGTERM)
-        print(f"Stopped Fleet server (PID {pid}).")
+        print(f"Stopped Armada server (PID {pid}).")
     except FileNotFoundError:
-        print("Fleet server is not running (no PID file).")
+        print("Armada server is not running (no PID file).")
     except ProcessLookupError:
-        print("Fleet server is not running (stale PID file).")
+        print("Armada server is not running (stale PID file).")
         try:
             os.remove(pid_file)
         except OSError:
