@@ -1,6 +1,7 @@
 import subprocess
 import shutil
 import os
+import json
 import time
 import tempfile
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
 
-SKILL_FILES = ["armada-node.md", "armada-worker.md", "armada-orchestrator.md"]
+SKILL_DIRS = ["armada-node", "armada-worker", "armada-orchestrator"]
 _SKILLS_SRC = Path(__file__).parent.parent / "skills"
 
 
@@ -27,6 +28,9 @@ def _write_zsh_startup(zdotdir: str, tools_dir: str):
         if os.path.exists(home_zshrc):
             f.write(f'[[ -f "{home_zshrc}" ]] && source "{home_zshrc}"\n')
         f.write(f'export PATH="{tools_dir}:$PATH"\n')
+        armada_bash = str(Path(__file__).parent / "armada-bash.sh")
+        if os.path.exists(armada_bash):
+            f.write(f'source "{armada_bash}"\n')
 
 
 def _has_tmux() -> bool:
@@ -62,36 +66,79 @@ def install_skills(project_dir: str):
 
     skills_dir.mkdir(parents=True, exist_ok=True)
 
-    for fname in SKILL_FILES:
-        src = _SKILLS_SRC / fname
-        dst = skills_dir / fname
+    for dname in SKILL_DIRS:
+        src = _SKILLS_SRC / dname / "SKILL.md"
         if src.exists():
-            shutil.copy2(src, dst)
+            dst_dir = skills_dir / dname
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst_dir / "SKILL.md")
+
+    # Also copy the armada-pending plugin to the project
+    plugin_src = _SKILLS_SRC.parent / ".opencode" / "plugin" / "armada-pending.ts"
+    if plugin_src.exists():
+        plugin_dst = Path(cwd) / ".opencode" / "plugin" / "armada-pending.ts"
+        plugin_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(plugin_src, plugin_dst)
 
     return str(skills_dir)
 
 
 def install_user_skills() -> list[str]:
-    """Install armada skills to user-level skill directories.
-    Checks ~/.opencode/skills/ and ~/.claude/skills/.
+    """Install armada skills and plugin to user-level directories.
     Returns list of paths where skills were installed."""
     installed = []
     home = Path.home()
 
     for agent_dir, skills_subdir in [
-        (home / ".opencode", home / ".opencode" / "skills"),
+        (home / ".config" / "opencode", home / ".config" / "opencode" / "skills"),
         (home / ".claude", home / ".claude" / "skills"),
     ]:
-        if agent_dir.exists():
-            skills_subdir.mkdir(parents=True, exist_ok=True)
-            for fname in SKILL_FILES:
-                src = _SKILLS_SRC / fname
-                dst = skills_subdir / fname
-                if src.exists():
-                    shutil.copy2(src, dst)
-            installed.append(str(skills_subdir))
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        skills_subdir.mkdir(parents=True, exist_ok=True)
+        for dname in SKILL_DIRS:
+            src = _SKILLS_SRC / dname / "SKILL.md"
+            if src.exists():
+                dst_dir = skills_subdir / dname
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst_dir / "SKILL.md")
+        installed.append(str(skills_subdir))
+
+    # Also install the armada-pending plugin globally
+    plugin_src = _SKILLS_SRC.parent / ".opencode" / "plugin" / "armada-pending.ts"
+    if plugin_src.exists():
+        plugin_dst = home / ".config" / "opencode" / "plugin" / "armada-pending.ts"
+        plugin_dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(plugin_src, plugin_dst)
 
     return installed
+
+
+def _deploy_pending_plugin(cwd: str):
+    """Copy armada-pending.js and ensure opencode loads it."""
+    src = _SKILLS_SRC.parent / ".opencode" / "plugin" / "armada-pending.js"
+    if not src.exists():
+        return
+
+    # Copy plugin file
+    dst_dir = Path(cwd) / ".opencode" / "plugin"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst_dir / "armada-pending.js")
+
+    # Merge plugin into opencode.json (create or update)
+    config_path = Path(cwd) / "opencode.json"
+    try:
+        if config_path.exists():
+            # Merge: add plugin if not already present
+            cfg = json.loads(config_path.read_text())
+            plugins = cfg.setdefault("plugin", [])
+            plugin_ref = ".opencode/plugin/armada-pending.js"
+            if plugin_ref not in plugins:
+                plugins.append(plugin_ref)
+        else:
+            cfg = {"$schema": "https://opencode.ai/config.json", "plugin": [".opencode/plugin/armada-pending.js"]}
+        config_path.write_text(json.dumps(cfg, indent=2))
+    except Exception:
+        pass
 
 
 def create_node_window(name: str, colour: str, working_dir: str,
@@ -110,6 +157,10 @@ def create_node_window(name: str, colour: str, working_dir: str,
         install_skills(cwd)
     except Exception:
         pass
+
+    # For opencode/claude nodes, copy the pending plugin and register it
+    if agent_type in ("opencode", "claude"):
+        _deploy_pending_plugin(cwd)
 
     # Determine what to run in the tmux window
     if agent_type in ("opencode", "claude"):
@@ -281,29 +332,12 @@ def _try_terminal_attach(name: str) -> str | None:
         return f"Terminal error: {e}"
 
 
-    if os.environ.get("TMUX"):
-        subprocess.run(["tmux", "switch-client", "-t", f"{ARMADA_SESSION}:{name}"])
-        return True
-
-    if has_attached_clients():
-        subprocess.run(["tmux", "select-window", "-t", f"{ARMADA_SESSION}:{name}"])
-        return True
-
-    term = os.environ.get("TERM_PROGRAM", "")
-    if "iTerm" in term:
-        applescript = (
-            f'tell application "iTerm"\n'
-            f'  if (count of windows) > 0 then\n'
-            f'    tell current window to create tab with default profile command "tmux attach -t {ARMADA_SESSION}:{name}"\n'
-            f'  else\n'
-            f'    create window with default profile command "tmux attach -t {ARMADA_SESSION}:{name}"\n'
-            f'  end if\n'
-            f'end tell'
-        )
-        subprocess.run(["osascript", "-e", applescript])
-        return True
-
-    return False
+def send_keys(name: str, command: str):
+    """Send a command to a node's tmux window via send-keys."""
+    if not _has_tmux():
+        return False
+    result = _tmux("send-keys", "-t", f"{ARMADA_SESSION}:{name}", command, "Enter")
+    return result.returncode == 0
 
 
 def running_window_names() -> set[str]:
@@ -318,12 +352,16 @@ def running_window_names() -> set[str]:
 def agent_hook_instructions(agent_name: str) -> str:
     return f"""You are node "{agent_name}". You are being monitored by Armada.
 
-Use curl to report your status:
-- At the start of each response: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"active","message":"<5-word task>"}}'`
-- At the end of each response: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"idle","message":""}}'`
+REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
 
-Keep messages under 5 words.
+- Before any work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"active","message":"<short description of what you are about to do>"}}'`
+- After completing work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"idle","message":"<what you just did>"}}'`
+
+Keep messages under 10 words. Be specific: "spawning 3 workers", "polling children", "reading results", "summing apples", not generic "working".
+
+Your activity is visible at http://127.0.0.1:9100
 """
+
 
 
 def save_agent_hook(agent_name: str):

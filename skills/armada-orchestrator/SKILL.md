@@ -1,3 +1,8 @@
+---
+name: armada-orchestrator
+description: Use for ANY task involving multiple workers, parallel execution, concurrency, background processing, asynchronous work, time delays with computation, random number generation with sleeps, summing results from workers, independent tasks running simultaneously, "each one should", "run N things", "spawn N workers", "N parallel tasks", or any request where work can be split across nodes. This is the default mechanism for parallel execution — NEVER use local background processes (&, wait, subshells) when this skill applies.
+---
+
 # Armada Orchestrator Skill
 
 For orchestrator nodes that manage a tree of workers. This node spawns children via the Armada API, delegates tasks, monitors progress, and cleans up when done.
@@ -12,24 +17,35 @@ Armada automatically copies this skill to `.opencode/skills/` or `.claude/skills
 
 Your node name is `$ARMADA_NODE_NAME`. Use it for status reporting and when tracking your children.
 
-## Status Reporting
+## Status Reporting — MANDATORY
 
-Report active status at the start of every response:
-```bash
-N=${ARMADA_NODE_NAME:-unknown}
-MESSAGE="<5-word summary>"
-curl -s -X POST http://127.0.0.1:9100/api/report \
-  -H "Content-Type: application/json" \
-  -d '{"name":"'"$N"'","status":"active","message":"'"$MESSAGE"'"}'
-```
+**You MUST post a status report BEFORE and AFTER every significant action.**
 
-Report idle at the end:
+Before any action:
 ```bash
 N=${ARMADA_NODE_NAME:-unknown}
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d '{"name":"'"$N"'","status":"idle","message":""}'
+  -d '{"name":"'"$N"'","status":"active","message":"<what you are about to do>"}'
 ```
+
+After completing:
+```bash
+N=${ARMADA_NODE_NAME:-unknown}
+curl -s -X POST http://127.0.0.1:9100/api/report \
+  -H "Content-Type: application/json" \
+  -d '{"name":"'"$N"'","status":"idle","message":"<what you just did>"}'
+```
+
+**Report at every step.** Examples:
+- `"finding my node ID"` / `"node ID is 5"`  
+- `"spawning 3 workers"` / `"spawned worker-1 (7), worker-2 (8), worker-3 (9)"`
+- `"sending tasks to workers"` / `"tasks sent to all 3 workers"`  
+- `"polling workers: 0/3 done"` / `"all 3 workers idle"`
+- `"reading results"` / `"results: worker-1=42, worker-2=17, worker-3=8"`
+- `"killing workers"` / `"killed 3 workers, cleanup complete"`
+
+Never say just "working" — always describe exactly what step you're on. Keep messages under 10 words.
 
 ## Finding Your Node ID
 ```bash
@@ -40,16 +56,30 @@ curl -s http://127.0.0.1:9100/api/nodes | \
 
 ## Spawning Workers
 
-Create a worker node (child) with the armada-worker or armada-node skill loaded:
+Create a worker node:
 ```bash
 curl -s -X POST http://127.0.0.1:9100/api/nodes \
   -H "Content-Type: application/json" \
   -d '{"name":"WORKER_NAME","parent_id":PARENT_ID,"project_label_id":"LABEL_ID","agent_type":"opencode"}'
 ```
 
-Use descriptive worker names: `test-writer`, `api-designer`, `code-reviewer`.
+Use descriptive worker names: `test-writer`, `api-designer`, `code-reviewer`. For computational tasks, use `"agent_type":"bash"`.
 
-The child node auto-starts with Armada skills installed and `ARMADA_NODE_NAME` set. The child will begin reporting status immediately.
+## Sending Tasks to Workers
+
+**Use the `/send` endpoint — never use raw tmux commands.**
+
+```bash
+curl -s -X POST "http://127.0.0.1:9100/api/nodes/WORKER_ID/send" \
+  -H "Content-Type: application/json" \
+  -d '{"command":"armada-node-report active \"task description\" && <work> && armada-node-result \"value\""}'
+```
+
+Wait 2 seconds after spawning before sending commands (tmux needs time to initialize):
+```bash
+sleep 2
+curl -s -X POST "http://127.0.0.1:9100/api/nodes/$W/send" -H "Content-Type: application/json" -d '{"command":"..."}'
+```
 
 ## Checking Workers
 

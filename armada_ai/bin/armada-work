@@ -1,0 +1,31 @@
+#!/bin/bash
+# armada-work — wrap a command with automatic Armada status reporting
+# Usage: armada-work "task label" "shell command"
+#
+# Reports active with the label BEFORE running the command,
+# then reports idle with the command's stdout as the result value.
+#
+# Examples:
+#   armada-work "generating number" "sleep 30 && N=\$RANDOM && echo \$N"
+#   armada-work "building project" "make -j4"
+
+set -e
+
+LABEL="${1:-working}"
+COMMAND="${2:-true}"
+
+armada-node-report active "$LABEL"
+
+output=$(eval "$COMMAND" 2>&1) || {
+    armada-node-report error "failed: $LABEL"
+    exit 1
+}
+
+if [ -n "$output" ]; then
+    first_line="${output%%$'\n'*}"
+    armada-node-result "$first_line"
+else
+    armada-node-report idle "completed: $LABEL"
+fi
+
+echo "$output"

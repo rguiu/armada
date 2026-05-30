@@ -1,3 +1,8 @@
+---
+name: armada-worker
+description: Use ONLY when ARMADA_NODE_NAME environment variable is set and you are a LEAF node (should NOT spawn children). This skill teaches mandatory status reporting via curl to http://127.0.0.1:9100/api/report on EVERY turn. Triggers on: armada worker, ARMADA_NODE_NAME, leaf node, report status.
+---
+
 # Armada Worker Skill
 
 A simplified skill for worker nodes that report status but don't spawn children. Use this for leaf nodes in the hierarchy that perform focused tasks.
@@ -12,24 +17,27 @@ Armada automatically copies this skill to `.opencode/skills/` or `.claude/skills
 
 Your node name is available in `$ARMADA_NODE_NAME`. Use it in all status reports.
 
-## Status Reporting
+## Status Reporting — MANDATORY
 
-At the **start** of every response, run:
-```bash
-N=${ARMADA_NODE_NAME:-unknown}
-MESSAGE="<5-word task summary>"
-curl -s -X POST http://127.0.0.1:9100/api/report \
-  -H "Content-Type: application/json" \
-  -d '{"name":"'"$N"'","status":"active","message":"'"$MESSAGE"'"}'
-```
+**You MUST post a status report BEFORE and AFTER every significant action.**
 
-At the **end** of every response, run:
+Before any action (mark yourself active):
 ```bash
 N=${ARMADA_NODE_NAME:-unknown}
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d '{"name":"'"$N"'","status":"idle","message":""}'
+  -d '{"name":"'"$N"'","status":"active","message":"<what you are about to do>"}'
 ```
+
+After completing the action (mark yourself idle with what you did):
+```bash
+N=${ARMADA_NODE_NAME:-unknown}
+curl -s -X POST http://127.0.0.1:9100/api/report \
+  -H "Content-Type: application/json" \
+  -d '{"name":"'"$N"'","status":"idle","message":"<what you just completed>"}'
+```
+
+Be specific. Good messages: "reading config file", "running tests", "generating report". Bad: "working".
 
 ## Guidelines
 

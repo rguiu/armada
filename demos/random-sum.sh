@@ -43,13 +43,13 @@ echo ""
 echo "Assigning tasks to workers..."
 
 tmux send-keys -t "armada:Random-1" \
-    "sleep \$((60 + RANDOM % 61)) && N=\$RANDOM && armada_report_result \"\$N\" && echo \"Random-1: \$N\"" Enter
+    "armada-node-report active 'generating' && sleep \$((60 + RANDOM % 61)) && N=\$RANDOM && armada-node-result \"\$N\" && echo \"Random-1: \$N\"" Enter
 
 tmux send-keys -t "armada:Random-2" \
-    "sleep \$((60 + RANDOM % 61)) && N=\$RANDOM && armada_report_result \"\$N\" && echo \"Random-2: \$N\"" Enter
+    "armada-node-report active 'generating' && sleep \$((60 + RANDOM % 61)) && N=\$RANDOM && armada-node-result \"\$N\" && echo \"Random-2: \$N\"" Enter
 
 tmux send-keys -t "armada:Random-3" \
-    "sleep \$((60 + RANDOM % 61)) && N=\$RANDOM && armada_report_result \"\$N\" && echo \"Random-3: \$N\"" Enter
+    "armada-node-report active 'generating' && sleep \$((60 + RANDOM % 61)) && N=\$RANDOM && armada-node-result \"\$N\" && echo \"Random-3: \$N\"" Enter
 
 echo ""
 echo "Waiting for workers to finish..."

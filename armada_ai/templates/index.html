@@ -40,6 +40,13 @@ a { color: #58a6ff; }
 }
 #tree .node-item .badge.active { background: rgba(34,197,94,0.15); color: #22c55e; }
 #tree .node-item .badge.error { background: rgba(239,68,68,0.15); color: #ef4444; }
+#tree .node-item .badge.pending { background: rgba(251,191,36,0.18); color: #fbbf24; animation: pulse-pending 1.5s ease-in-out infinite; }
+#tree .node-item .badge.dead { background: rgba(139,148,158,0.08); color: #484f58; }
+#tree .node-item.dead { opacity: 0.5; }
+@keyframes pulse-pending {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
 #tree .children { padding-left: 12px; }
 .toggle-icon {
   width: 14px; font-size: 10px; color: #484f58; flex-shrink: 0; text-align: center;
@@ -116,6 +123,7 @@ a { color: #58a6ff; }
 .status-active { background: rgba(34,197,94,0.15); color: #22c55e; }
 .status-idle { background: rgba(139,148,158,0.15); color: #8b949e; }
 .status-error { background: rgba(239,68,68,0.15); color: #ef4444; }
+.status-pending { background: rgba(251,191,36,0.18); color: #fbbf24; animation: pulse-pending 1.5s ease-in-out infinite; }
 .status-dead { background: rgba(139,148,158,0.1); color: #484f58; }
 
 /* ── Report history ── */
@@ -163,7 +171,12 @@ a { color: #58a6ff; }
 <div id="sidebar">
   <div id="sidebar-header">
     <h2>Fleet</h2>
-    <button class="btn btn-primary" onclick="openModal('node-modal')" style="padding:4px 12px;font-size:12px">+ Node</button>
+    <div style="display:flex;align-items:center;gap:8px">
+      <label id="hide-dead-label" style="font-size:10px;color:#8b949e;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px">
+        <input type="checkbox" id="hide-dead" onchange="refreshTree()"> Hide ended
+      </label>
+      <button class="btn btn-primary" onclick="openModal('node-modal')" style="padding:4px 12px;font-size:12px">+ Node</button>
+    </div>
   </div>
   <div id="tree"></div>
   <div id="labels-section">
@@ -250,7 +263,8 @@ function renderTree(nodes, container, depth = 0) {
   container.innerHTML = '';
   nodes.forEach(n => {
     const row = document.createElement('div');
-    row.className = 'node-item' + (n.id === selectedNodeId ? ' selected' : '');
+    const isDead = n.status === 'dead';
+    row.className = 'node-item' + (n.id === selectedNodeId ? ' selected' : '') + (isDead ? ' dead' : '');
     row.style.paddingLeft = (8 + depth * 12) + 'px';
 
     const hasChildren = n.children && n.children.length > 0;
@@ -261,14 +275,15 @@ function renderTree(nodes, container, depth = 0) {
 
     const dot = document.createElement('span');
     dot.className = 'dot';
-    dot.style.background = n.colour || '#8b949e';
+    dot.style.background = isDead ? '#3a3f47' : (n.colour || '#8b949e');
 
     const name = document.createElement('span');
     name.className = 'name';
     name.textContent = n.name;
 
     const badge = document.createElement('span');
-    badge.className = 'badge ' + (n.status === 'active' ? 'active' : n.status === 'error' ? 'error' : '');
+    const badgeStatus = n.status === 'active' ? 'active' : n.status === 'error' ? 'error' : n.status === 'pending' ? 'pending' : n.status === 'dead' ? 'dead' : '';
+    badge.className = 'badge ' + badgeStatus;
     badge.textContent = n.status;
 
     row.appendChild(toggle);
@@ -323,17 +338,21 @@ async function loadNodeDetail(nodeId) {
 
   const statusCls = n.status === 'active' ? 'status-active'
     : n.status === 'error' ? 'status-error'
+    : n.status === 'pending' ? 'status-pending'
     : n.status === 'dead' ? 'status-dead' : 'status-idle';
 
   let metaHtml = `<span class="meta-item"><span>Agent:</span> ${esc(n.agent_type)}</span>`;
   if (n.project_label_name) metaHtml += `<span class="meta-item"><span>Project:</span> ${esc(n.project_label_name)}</span>`;
   if (n.parent_id) metaHtml += `<span class="meta-item"><span>Parent ID:</span> ${n.parent_id}</span>`;
   metaHtml += `<span class="meta-item"><span>Created:</span> ${esc(n.created_at)}</span>`;
+  if (n.killed_at) metaHtml += `<span class="meta-item"><span>Ended:</span> ${esc(n.killed_at)}</span>`;
 
   let actionHtml = '';
   if (n.status !== 'dead') {
     actionHtml += `<button class="btn btn-outline-blue" onclick="attachNode(${n.id})">Attach</button>`;
     actionHtml += `<button class="btn btn-danger" onclick="killNode(${n.id})">Kill</button>`;
+  } else {
+    actionHtml += `<button class="btn btn-outline" onclick="hideNode(${n.id})" style="color:#484f58">Delete</button>`;
   }
 
   document.getElementById('header-actions').innerHTML = actionHtml;
@@ -343,7 +362,7 @@ async function loadNodeDetail(nodeId) {
     reportsHtml = data.reports.map(r => `
       <div class="report-row">
         <span class="report-time">${timeAgo(r.timestamp)}</span>
-        <span class="badge ${r.status === 'active' ? 'active' : ''}">${r.status}</span>
+        <span class="badge ${r.status === 'active' ? 'active' : r.status === 'pending' ? 'pending' : ''}">${r.status}</span>
         <span class="report-msg">${esc(r.message || '--')}</span>
       </div>
     `).join('');
@@ -379,6 +398,20 @@ async function killNode(id) {
   await api('/api/nodes/' + id, {method:'DELETE'});
   selectedNodeId = null;
   document.getElementById('detail').innerHTML = '<div class="empty-detail">Node killed</div>';
+  document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('main-title').textContent = 'Select a node';
+  refreshTree();
+}
+
+async function hideNode(id) {
+  if (!confirm('Permanently hide this node from the tree?')) return;
+  await api('/api/nodes/' + id, {
+    method: 'PATCH',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({action:'hide'})
+  });
+  selectedNodeId = null;
+  document.getElementById('detail').innerHTML = '<div class="empty-detail">Node removed</div>';
   document.getElementById('header-actions').innerHTML = '';
   document.getElementById('main-title').textContent = 'Select a node';
   refreshTree();
@@ -432,7 +465,8 @@ async function deleteLabel(id) {
 
 /* ── Refresh ── */
 async function refreshTree() {
-  treeData = await api('/api/tree');
+  const hide = document.getElementById('hide-dead').checked;
+  treeData = await api('/api/tree?hide_dead=' + hide);
   renderTree(treeData, document.getElementById('tree'));
 }
 
@@ -453,7 +487,7 @@ async function refreshLabels() {
 
 async function refreshNodeModalDropdowns() {
   const labels = await api('/api/project-labels');
-  const tree = await api('/api/tree');
+  const tree = await api('/api/tree?hide_dead=true');
 
   function addNodes(nodes, prefix = '') {
     let opts = '';

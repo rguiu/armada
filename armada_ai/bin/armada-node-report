@@ -7,7 +7,7 @@
 API="${ARMADA_API:-http://127.0.0.1:9100}"
 NODE="${ARMADA_NODE_NAME:-unknown}"
 STATUS="${1:-idle}"
-MESSAGE="${2:-}"
+MESSAGE="${2:-${STATUS}}"
 
 curl -s -X POST "$API/api/report" \
     -H "Content-Type: application/json" \

@@ -21,7 +21,7 @@ def start_health_loop(interval: int = 15):
 
 
 def _run_health_check():
-    nodes = db.get_all_nodes()
+    nodes = db.get_all_nodes(include_dead=False)
     running_windows = tmux.running_window_names()
 
     for node in nodes:

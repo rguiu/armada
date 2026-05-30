@@ -32,7 +32,7 @@ armada_report_active() {
 }
 
 armada_report_idle() {
-    armada_report idle ""
+    armada_report idle "${1:-completed}"
 }
 
 armada_report_error() {
@@ -47,8 +47,8 @@ armada_report_result() {
 
 # ── Auto-report on command execution ──
 # Trap DEBUG fires before every command — auto-reports active status
-_armada_last_cmd=""
-trap '_armada_cmd="$BASH_COMMAND"; if [ "$_armada_cmd" != "$_armada_last_cmd" ] && [[ ! "$_armada_cmd" =~ ^_armada_ ]] && [[ ! "$_armada_cmd" =~ ^armada_report ]]; then _armada_last_cmd="$_armada_cmd"; armada_report_active "$_armada_cmd" & fi' DEBUG
+_armada_last_msg=""
+trap '_armada_cmd="$BASH_COMMAND"; if [[ "$_armada_cmd" =~ ^(sleep|curl|python3|[[:\space:]]*$) ]]; then true; elif [[ ! "$_armada_cmd" =~ ^_armada_ ]] && [[ ! "$_armada_cmd" =~ ^armada_report ]] && [[ ! "$_armada_cmd" =~ ^armada-node- ]]; then _short="${_armada_cmd:0:50}"; if [ "$_short" != "$_armada_last_msg" ]; then _armada_last_msg="$_short"; armada_report_active "$_short" & fi; fi' DEBUG
 
 # ── Child Node Spawning ──
 

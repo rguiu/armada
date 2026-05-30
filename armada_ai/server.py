@@ -42,13 +42,13 @@ def dashboard_page():
 # --- Tree & Nodes ---
 
 @app.get("/api/tree")
-def get_tree():
-    return JSONResponse(db.build_tree())
+def get_tree(hide_dead: bool = False):
+    return JSONResponse(db.build_tree(include_dead=not hide_dead))
 
 
 @app.get("/api/nodes")
-def list_nodes():
-    return JSONResponse(db.get_all_nodes())
+def list_nodes(hide_dead: bool = False):
+    return JSONResponse(db.get_all_nodes(include_dead=not hide_dead))
 
 
 @app.get("/api/nodes/{node_id}")
@@ -89,7 +89,7 @@ async def create_node(request: Request):
             raise HTTPException(status_code=400, detail="Project label not found")
         working_dir = row[0]
     else:
-        working_dir = os.getcwd()
+        working_dir = os.path.expanduser("~")
 
     if parent_id:
         parent = db.get_node(parent_id)
@@ -113,7 +113,8 @@ async def create_node(request: Request):
         agent_type=agent_type,
     )
 
-    db.add_status_report(node_id, "idle", "node created")
+    db.add_status_report(node_id, "idle",
+        f"node created (agent={agent_type}, project={project_label_id or 'cwd'})")
     tmux.save_agent_hook(agent_name)
 
     node = db.get_node(node_id)
@@ -128,9 +129,49 @@ def delete_node(node_id: int):
 
     killed = db.kill_node(node_id)
     for entry in killed:
-        tmux.kill_node_window(entry["name"])
+        try:
+            tmux.kill_node_window(entry["name"])
+        except Exception:
+            pass
 
     return JSONResponse({"ok": True, "killed": len(killed)})
+
+
+@app.post("/api/nodes/{node_id}/send")
+async def send_to_node(node_id: int, request: Request):
+    body = await request.json()
+    command = body.get("command", "").strip()
+    if not command:
+        raise HTTPException(status_code=400, detail="command is required")
+
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if node.get("status") == "dead":
+        raise HTTPException(status_code=410, detail="Node is dead")
+
+    if not tmux.window_exists(node["name"]):
+        raise HTTPException(status_code=410, detail="Node window no longer exists")
+
+    ok = tmux.send_keys(node["name"], command)
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to send command")
+
+    return JSONResponse({"ok": True})
+
+
+@app.patch("/api/nodes/{node_id}")
+async def patch_node(node_id: int, request: Request):
+    body = await request.json()
+    action = body.get("action")
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    if action == "hide":
+        hidden = db.hide_node(node_id)
+        return JSONResponse({"ok": True, "hidden": len(hidden)})
+    raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
 
 @app.post("/api/nodes/{node_id}/attach")
@@ -146,6 +187,11 @@ def attach(node_id: int):
         raise HTTPException(status_code=500, detail=error)
 
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/nodes/history")
+def list_killed_nodes(limit: int = 50):
+    return JSONResponse(db.get_killed_nodes(limit))
 
 
 # --- Project Labels ---
@@ -192,7 +238,7 @@ async def agent_report(request: Request):
 
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
-    if status not in ("active", "idle", "error"):
+    if status not in ("active", "idle", "error", "pending"):
         raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
     node = db.get_node_by_name(name)
