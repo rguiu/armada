@@ -1,18 +1,12 @@
 # Armada Node Skill
 
-This skill equips an agent to act as a managed node in an Armada cluster. The agent reports its status on every turn, can spawn child nodes, and can query its children.
+This skill equips an agent to act as a managed node in an Armada cluster. The agent reports its status on every turn and can spawn child nodes.
+
+The agent discovers its node name from the `ARMADA_NODE_NAME` environment variable, which is set automatically when the tmux window is created.
 
 ## Installation
 
-```bash
-# Open Code
-mkdir -p .opencode/skills && cp skills/armada-node.md .opencode/skills/
-
-# Claude Code
-mkdir -p .claude/skills && cp skills/armada-node.md .claude/skills/
-```
-
-The skill activates automatically for any Open Code or Claude Code session launched through Armada.
+Armada automatically copies this skill to `.opencode/skills/` or `.claude/skills/` when a node is created. No manual steps needed.
 
 ## Prerequisites
 
@@ -22,44 +16,50 @@ The Armada server must be running at `http://127.0.0.1:9100`. Start it with:
 armada start
 ```
 
-Then create a node from the Armada dashboard (http://127.0.0.1:9100) or via the API.
-
 ---
 
-You are an Armada node named "{NODE_NAME}". You are being monitored through the Armada multi-agent orchestration system.
+Your node name is available in the `ARMADA_NODE_NAME` environment variable. Use it in all status reports.
 
 ## Status Reporting
 
-At the **start** of every response, before any other output, internally run:
+At the **start** of every response, before any other output, run:
 ```bash
+N=${ARMADA_NODE_NAME:-unknown}
+MESSAGE="<5-word task description>"
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d '{"name":"{NODE_NAME}","status":"active","message":"<5-word summary of what you are about to do>"}'
+  -d '{"name":"'"$N"'","status":"active","message":"'"$MESSAGE"'"}'
 ```
 
-At the **end** of every response, after all other output, internally run:
+At the **end** of every response, run:
 ```bash
+N=${ARMADA_NODE_NAME:-unknown}
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d '{"name":"{NODE_NAME}","status":"idle","message":""}'
+  -d '{"name":"'"$N"'","status":"idle","message":""}'
 ```
 
 Keep status messages under 5 words. Examples: "fixing authentication bug", "reviewing pull request", "writing unit tests".
 
+## Finding Your Node ID
+
+Your node ID is needed for spawning children:
+```bash
+N=${ARMADA_NODE_NAME:-unknown}
+curl -s http://127.0.0.1:9100/api/nodes | \
+  python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='$N']"
+```
+
 ## Spawning Child Nodes
 
-You can spawn child nodes to delegate work. Children appear under you in the Armada dashboard tree.
-
+To create a child worker node:
 ```bash
 curl -s -X POST http://127.0.0.1:9100/api/nodes \
   -H "Content-Type: application/json" \
-  -d '{"name":"worker-1","parent_id":PARENT_ID,"project_label_id":"my-project","agent_type":"opencode"}'
+  -d '{"name":"worker-name","parent_id":PARENT_ID,"project_label_id":"my-project","agent_type":"opencode"}'
 ```
 
-Replace `PARENT_ID` with your own node ID. Find your ID by querying:
-```bash
-curl -s http://127.0.0.1:9100/api/nodes | python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='{NODE_NAME}']"
-```
+Replace `PARENT_ID` with your node ID. The child will auto-start with Armada skills loaded.
 
 ## Checking Children
 

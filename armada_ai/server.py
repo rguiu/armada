@@ -101,6 +101,7 @@ async def create_node(request: Request):
 
     pane_id = tmux.create_node_window(
         name=agent_name, colour=colour, working_dir=working_dir,
+        agent_type=agent_type,
     )
 
     node_id = db.create_node(

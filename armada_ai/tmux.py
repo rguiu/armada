@@ -2,9 +2,13 @@ import subprocess
 import shutil
 import os
 import time
+from pathlib import Path
 
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
+
+SKILL_FILES = ["armada-node.md", "armada-worker.md", "armada-orchestrator.md"]
+_SKILLS_SRC = Path(__file__).parent.parent / "skills"
 
 
 def _has_tmux() -> bool:
@@ -23,7 +27,34 @@ def ensure_armada_session():
         _tmux("new-session", "-d", "-s", ARMADA_SESSION, "-n", "overview")
 
 
-def create_node_window(name: str, colour: str, working_dir: str) -> str | None:
+def install_skills(project_dir: str):
+    """Copy armada skill files into a project's skills directory."""
+    cwd = os.path.abspath(project_dir)
+
+    # Try opencode first, then claude
+    skills_dir = None
+    for d in [".opencode", ".claude"]:
+        sd = Path(cwd) / d / "skills"
+        if (Path(cwd) / d).exists():
+            skills_dir = sd
+            break
+
+    if not skills_dir:
+        skills_dir = Path(cwd) / ".opencode" / "skills"
+
+    skills_dir.mkdir(parents=True, exist_ok=True)
+
+    for fname in SKILL_FILES:
+        src = _SKILLS_SRC / fname
+        dst = skills_dir / fname
+        if src.exists() and not dst.exists():
+            shutil.copy2(src, dst)
+
+    return str(skills_dir)
+
+
+def create_node_window(name: str, colour: str, working_dir: str,
+                       agent_type: str = "auto") -> str | None:
     if not _has_tmux():
         return None
 
@@ -31,12 +62,39 @@ def create_node_window(name: str, colour: str, working_dir: str) -> str | None:
 
     cwd = os.path.abspath(working_dir)
     safe_dir = cwd.replace("'", "'\\''")
+    safe_name = name.replace("'", "'\\''")
 
-    shell_cmd = (
-        f"cd '{safe_dir}' && "
-        f"printf '\\033]2;{name}\\033\\\\' && "
-        f"exec {os.environ.get('SHELL', '/bin/zsh')} -l"
-    )
+    # Install armada skills into the project so the agent loads them
+    try:
+        install_skills(cwd)
+    except Exception:
+        pass
+
+    # Determine what to run in the tmux window
+    if agent_type in ("opencode", "claude"):
+        agent_bin = shutil.which(agent_type)
+        if agent_bin:
+            shell_cmd = (
+                f"cd '{safe_dir}' && "
+                f"printf '\\033]2;{name}\\033\\\\' && "
+                f"export ARMADA_NODE_NAME='{safe_name}' && "
+                f"exec {agent_bin}"
+            )
+        else:
+            shell_cmd = (
+                f"cd '{safe_dir}' && "
+                f"printf '\\033]2;{name}\\033\\\\' && "
+                f"export ARMADA_NODE_NAME='{safe_name}' && "
+                f"exec {os.environ.get('SHELL', '/bin/zsh')} -l"
+            )
+    else:
+        # bash or auto: just a shell with the env var set
+        shell_cmd = (
+            f"cd '{safe_dir}' && "
+            f"printf '\\033]2;{name}\\033\\\\' && "
+            f"export ARMADA_NODE_NAME='{safe_name}' && "
+            f"exec {os.environ.get('SHELL', '/bin/zsh')} -l"
+        )
 
     result = _tmux(
         "new-window", "-t", ARMADA_SESSION, "-n", name,
@@ -46,7 +104,7 @@ def create_node_window(name: str, colour: str, working_dir: str) -> str | None:
     if result.returncode != 0:
         return None
 
-    time.sleep(0.2)
+    time.sleep(0.3)
     pane_result = _tmux("display-message", "-p", "-t", f"{ARMADA_SESSION}:{name}", "#{pane_id}")
     pane_id = pane_result.stdout.strip() if pane_result.returncode == 0 else None
 
@@ -80,7 +138,6 @@ def has_attached_clients() -> bool:
 
 
 def attach_node(name: str) -> bool:
-    """Open a terminal attached to the named tmux window. Returns True if successful."""
     if not _has_tmux():
         return False
 
@@ -110,7 +167,6 @@ def attach_node(name: str) -> bool:
 
 
 def running_window_names() -> set[str]:
-    """Return the set of window names currently in the armada tmux session."""
     if not _has_tmux():
         return set()
     result = _tmux("list-windows", "-t", ARMADA_SESSION, "-F", "#{window_name}")

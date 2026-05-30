@@ -2,36 +2,33 @@
 
 A simplified skill for worker nodes that report status but don't spawn children. Use this for leaf nodes in the hierarchy that perform focused tasks.
 
+Your node name comes from the `ARMADA_NODE_NAME` environment variable, set automatically when the node is created.
+
 ## Installation
 
-```bash
-# Open Code
-cp skills/armada-worker.md .opencode/skills/
-
-# Claude Code
-cp skills/armada-worker.md .claude/skills/
-```
-
-Run `armada start` and create a worker node from the Armada dashboard.
+Armada automatically copies this skill to `.opencode/skills/` or `.claude/skills/` when a node is created.
 
 ---
 
-You are an Armada worker node named "{NODE_NAME}". You perform focused tasks assigned by a parent orchestrator node.
+Your node name is available in `$ARMADA_NODE_NAME`. Use it in all status reports.
 
 ## Status Reporting
 
-At the **start** of every response, before any other output, run:
+At the **start** of every response, run:
 ```bash
+N=${ARMADA_NODE_NAME:-unknown}
+MESSAGE="<5-word task summary>"
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d '{"name":"{NODE_NAME}","status":"active","message":"<5-word task summary>"}'
+  -d '{"name":"'"$N"'","status":"active","message":"'"$MESSAGE"'"}'
 ```
 
-At the **end** of every response, after all other output, run:
+At the **end** of every response, run:
 ```bash
+N=${ARMADA_NODE_NAME:-unknown}
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d '{"name":"{NODE_NAME}","status":"idle","message":""}'
+  -d '{"name":"'"$N"'","status":"idle","message":""}'
 ```
 
 ## Guidelines

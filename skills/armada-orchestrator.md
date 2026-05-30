@@ -1,39 +1,55 @@
 # Armada Orchestrator Skill
 
-For orchestrator nodes that manage a tree of workers. This node spawns children, delegates tasks via their tmux terminals, monitors progress, and cleans up when done.
+For orchestrator nodes that manage a tree of workers. This node spawns children via the Armada API, delegates tasks, monitors progress, and cleans up when done.
+
+Your node name comes from the `ARMADA_NODE_NAME` environment variable.
 
 ## Installation
 
-```bash
-# Open Code
-cp skills/armada-orchestrator.md .opencode/skills/
-
-# Claude Code
-cp skills/armada-orchestrator.md .claude/skills/
-```
+Armada automatically copies this skill to `.opencode/skills/` or `.claude/skills/` when a node is created.
 
 ---
 
-You are an Armada orchestrator node named "{NODE_NAME}". You manage a team of worker nodes and coordinate parallel work.
+Your node name is `$ARMADA_NODE_NAME`. Use it for status reporting and when tracking your children.
 
 ## Status Reporting
 
-Report status via:
+Report active status at the start of every response:
 ```bash
-curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{"name":"{NODE_NAME}","status":"active","message":"<5-word summary>"}'
-curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{"name":"{NODE_NAME}","status":"idle","message":""}'
+N=${ARMADA_NODE_NAME:-unknown}
+MESSAGE="<5-word summary>"
+curl -s -X POST http://127.0.0.1:9100/api/report \
+  -H "Content-Type: application/json" \
+  -d '{"name":"'"$N"'","status":"active","message":"'"$MESSAGE"'"}'
+```
+
+Report idle at the end:
+```bash
+N=${ARMADA_NODE_NAME:-unknown}
+curl -s -X POST http://127.0.0.1:9100/api/report \
+  -H "Content-Type: application/json" \
+  -d '{"name":"'"$N"'","status":"idle","message":""}'
+```
+
+## Finding Your Node ID
+```bash
+N=${ARMADA_NODE_NAME:-unknown}
+curl -s http://127.0.0.1:9100/api/nodes | \
+  python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='$N']"
 ```
 
 ## Spawning Workers
 
-To create a worker node:
+Create a worker node (child) with the armada-worker or armada-node skill loaded:
 ```bash
 curl -s -X POST http://127.0.0.1:9100/api/nodes \
   -H "Content-Type: application/json" \
   -d '{"name":"WORKER_NAME","parent_id":PARENT_ID,"project_label_id":"LABEL_ID","agent_type":"opencode"}'
 ```
 
-Use meaningful names: `test-writer`, `api-designer`, `code-reviewer`.
+Use descriptive worker names: `test-writer`, `api-designer`, `code-reviewer`.
+
+The child node auto-starts with Armada skills installed and `ARMADA_NODE_NAME` set. The child will begin reporting status immediately.
 
 ## Checking Workers
 
@@ -57,17 +73,16 @@ Kills the worker and its descendants (cascade).
 ## Orchestration Pattern
 
 1. **Analyze** the task and break it into parallel workstreams
-2. **Spawn** a worker node per workstream with `armada-node` or `armada-worker` skill loaded
-3. **Attach** to each worker's tmux window and give it a specific task
-4. **Monitor** worker status reports via the Armada dashboard or `GET /api/tree`
-5. **Collect** results by asking workers to write output files
-6. **Kill** workers when done
-7. **Report** your own completion
+2. **Spawn** a worker node per workstream with descriptive names
+3. **Monitor** their status via the tree endpoint or dashboard
+4. **Collect** results by having workers write output files
+5. **Kill** workers when done to keep the tree clean
+6. **Report** your own completion
 
 ## Guidelines
 
-- Always spawn workers through the Armada API, not manually
-- Workers should have the `armada-node` or `armada-worker` skill loaded
-- Check the dashboard (http://127.0.0.1:9100) regularly to visualize your tree
+- Always spawn workers through the Armada API: `POST /api/nodes`
+- Workers auto-load armada skills and start reporting immediately
+- Check the dashboard (http://127.0.0.1:9100) to visualize your tree
 - Keep the tree clean — kill workers when they finish
-- Escalate issues to the user if a worker gets stuck
+- Workers inherit the project label; ensure skills are installed there
