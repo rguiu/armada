@@ -141,7 +141,7 @@ def attach(node_id: int):
     if not tmux.window_exists(node["name"]):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    error = tmux.attach_node(node["name"])
+    error = tmux.attach_node(node["name"], node["colour"])
     if error:
         raise HTTPException(status_code=500, detail=error)
 

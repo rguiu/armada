@@ -160,7 +160,7 @@ def has_attached_clients() -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
-def attach_node(name: str) -> str | None:
+def attach_node(name: str, colour: str = "#8b949e") -> str | None:
     """Open a terminal attached to the named tmux window.
     Returns None on success, or an error message string."""
     if not _has_tmux():
@@ -172,7 +172,7 @@ def attach_node(name: str) -> str | None:
         return None
 
     # Try AppleScript to open iTerm (works regardless of TERM_PROGRAM on macOS)
-    result = _try_iterm_attach(name)
+    result = _try_iterm_attach(name, colour)
     if result is None:
         return None
 
@@ -181,12 +181,19 @@ def attach_node(name: str) -> str | None:
     if result2 is None:
         return None
 
-    # Nothing worked — return the first error message
     return result or "Cannot auto-open terminal. Run: tmux attach -t armada"
 
 
-def _try_iterm_attach(name: str) -> str | None:
-    """Try opening a new iTerm tab attached to the node."""
+def _try_iterm_attach(name: str, colour: str) -> str | None:
+    """Try opening a new iTerm tab attached to the node, with tab colour."""
+    # Write colour escape sequences to a temp file (avoids AppleScript escaping hell)
+    r, g, b = _hex_to_rgb(colour)
+    colour_file = f"/tmp/_armada_colour_{os.getpid()}.sh"
+    with open(colour_file, "w") as f:
+        f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
+        f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
+        f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
+
     try:
         applescript = (
             f'tell application "iTerm"\n'
@@ -196,6 +203,7 @@ def _try_iterm_attach(name: str) -> str | None:
             f'      set newTab to (create tab with default profile)\n'
             f'      tell current session of newTab\n'
             f'        set name to "{name}"\n'
+            f'        write text "source {colour_file} > /dev/null 2>&1 && rm -f {colour_file}"\n'
             f'        write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
             f'      end tell\n'
             f'    end tell\n'
@@ -203,6 +211,7 @@ def _try_iterm_attach(name: str) -> str | None:
             f'    set newWindow to (create window with default profile)\n'
             f'    tell current session of newWindow\n'
             f'      set name to "{name}"\n'
+            f'      write text "source {colour_file} > /dev/null 2>&1 && rm -f {colour_file}"\n'
             f'      write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
             f'    end tell\n'
             f'  end try\n'
@@ -216,6 +225,18 @@ def _try_iterm_attach(name: str) -> str | None:
         return "osascript not available"
     except Exception as e:
         return f"iTerm error: {e}"
+    finally:
+        # Clean up temp file if it wasn't consumed
+        try:
+            os.remove(colour_file)
+        except OSError:
+            pass
+
+
+def _hex_to_rgb(hex_colour: str) -> tuple[int, int, int]:
+    """Convert '#EF4444' to (r, g, b) tuple with 0-255 range."""
+    h = hex_colour.lstrip("#")
+    return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
 def _try_terminal_attach(name: str) -> str | None:
