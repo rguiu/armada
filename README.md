@@ -42,20 +42,24 @@ Each node is a tmux window running an AI agent (Open Code or Claude Code). Nodes
 ```bash
 git clone https://github.com/your-username/armada.git
 cd armada
+bash install.sh
+```
+
+That's it. `armada` is now available in your terminal. Open a new shell or run `source ~/.zshrc`.
+
+<details>
+<summary>Manual install (click to expand)</summary>
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
-
-# Install skills to user profile (once, works for all projects)
 armada setup
-```
-
-Add the wrapper to your PATH for the `armada` command anywhere:
-
-```bash
-echo 'export PATH="$HOME/Projects/armada/bin:$PATH"' >> ~/.zshrc
+echo 'export PATH="$PWD/bin:$PATH"' >> ~/.zshrc
 source ~/.zshrc
 ```
+
+</details>
 
 ## Quick Start
 
