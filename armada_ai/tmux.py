@@ -177,11 +177,22 @@ def attach_node(name: str) -> str | None:
         try:
             applescript = (
                 f'tell application "iTerm"\n'
-                f'  if (count of windows) > 0 then\n'
-                f'    tell current window to create tab with default profile command "tmux attach -t {ARMADA_SESSION}:{name}"\n'
-                f'  else\n'
-                f'    create window with default profile command "tmux attach -t {ARMADA_SESSION}:{name}"\n'
-                f'  end if\n'
+                f'  activate\n'
+                f'  try\n'
+                f'    tell current window\n'
+                f'      set newTab to (create tab with default profile)\n'
+                f'      tell current session of newTab\n'
+                f'        set name to "{name}"\n'
+                f'        write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+                f'      end tell\n'
+                f'    end tell\n'
+                f'  on error\n'
+                f'    set newWindow to (create window with default profile)\n'
+                f'    tell current session of newWindow\n'
+                f'      set name to "{name}"\n'
+                f'      write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+                f'    end tell\n'
+                f'  end try\n'
                 f'end tell'
             )
             result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
