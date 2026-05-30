@@ -4,7 +4,7 @@
 
 Manage multiple AI coding agents as a **hierarchy of tmux nodes** with a live dashboard. Orchestrator nodes can **spawn worker children**, delegate tasks, monitor progress, and clean up — all through a local web UI.
 
-![Screenshot placeholder](https://via.placeholder.com/800x400/0f1117/58a6ff?text=Armada+Dashboard)
+![Armada demo](demo.gif)
 
 ## How It Works
 
@@ -200,6 +200,16 @@ The dashboard shows the full tree updating in real time. Each worker reports "ac
 ## Architecture
 
 See [PLAN.md](PLAN.md) for the full architecture, database schema, and development roadmap.
+
+## Demo
+
+Generate the demo GIF shown above:
+
+```bash
+brew install vhs
+vhs demo.tape
+# Output: demo.gif
+```
 
 ## License
 
