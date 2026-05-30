@@ -1,6 +1,7 @@
 import os
 import sys
 import signal
+import subprocess
 
 
 def main():
@@ -48,11 +49,24 @@ def _stop_server():
             pid = int(f.read().strip())
         os.kill(pid, signal.SIGTERM)
         print(f"Stopped Armada server (PID {pid}).")
+        return
     except FileNotFoundError:
-        print("Armada server is not running (no PID file).")
+        pass
     except ProcessLookupError:
-        print("Armada server is not running (stale PID file).")
         try:
             os.remove(pid_file)
         except OSError:
             pass
+
+    # No PID file — try to kill by port
+    try:
+        result = subprocess.run(["lsof", "-ti", ":9100"], capture_output=True, text=True)
+        if result.returncode == 0 and result.stdout.strip():
+            pid = int(result.stdout.strip().split("\n")[0])
+            os.kill(pid, signal.SIGTERM)
+            print(f"Stopped Armada server (PID {pid}, found via port).")
+            return
+    except Exception:
+        pass
+
+    print("Armada server is not running (no PID file and no process on port 9100).")
