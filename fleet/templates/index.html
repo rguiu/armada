@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Fleet Dashboard</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0f1117; color: #e1e4e8; min-height: 100vh; display: flex;
+}
+a { color: #58a6ff; }
+
+/* ── Sidebar ── */
+#sidebar {
+  width: 280px; min-width: 280px; background: #161b22; border-right: 1px solid #21262d;
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#sidebar-header {
+  padding: 16px; border-bottom: 1px solid #21262d;
+  display: flex; justify-content: space-between; align-items: center;
+}
+#sidebar-header h2 { font-size: 14px; color: #58a6ff; font-weight: 600; }
+#sidebar-header { display: flex; justify-content: space-between; align-items: center; }
+#tree { flex: 1; overflow-y: auto; padding: 8px; }
+#tree .node-item {
+  padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; gap: 6px; margin: 1px 0;
+}
+#tree .node-item:hover { background: #1c2128; }
+#tree .node-item.selected { background: #1f2937; border: 1px solid #30363d; }
+#tree .node-item .dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+#tree .node-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#tree .node-item .badge {
+  font-size: 10px; padding: 1px 6px; border-radius: 8px;
+  background: rgba(139,148,158,0.15); color: #8b949e;
+}
+#tree .node-item .badge.active { background: rgba(34,197,94,0.15); color: #22c55e; }
+#tree .node-item .badge.error { background: rgba(239,68,68,0.15); color: #ef4444; }
+#tree .children { padding-left: 12px; }
+.toggle-icon {
+  width: 14px; font-size: 10px; color: #484f58; flex-shrink: 0; text-align: center;
+  cursor: pointer; user-select: none;
+}
+#tree .no-nodes { padding: 24px 12px; color: #484f58; font-size: 13px; text-align: center; }
+
+/* ── Labels section ── */
+#labels-section { border-top: 1px solid #21262d; padding: 8px; }
+#labels-section .section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; margin-bottom: 4px;
+}
+#labels-section .section-title {
+  font-size: 11px; color: #484f58; text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#labels-section .section-add {
+  font-size: 10px; color: #8b949e; background: none; border: none;
+  cursor: pointer; padding: 0 4px;
+}
+#labels-section .section-add:hover { color: #e1e4e8; }
+.label-item {
+  padding: 4px 8px; font-size: 12px; color: #8b949e;
+  display: flex; justify-content: space-between; align-items: center;
+  border-radius: 3px;
+}
+.label-item:hover { background: #1c2128; }
+.label-item .label-path { font-size: 10px; color: #484f58; }
+.label-item .label-del {
+  color: #f85149; cursor: pointer; font-size: 12px; visibility: hidden;
+}
+.label-item:hover .label-del { visibility: visible; }
+
+/* ── Main Panel ── */
+#main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+#main-header {
+  padding: 12px 20px; border-bottom: 1px solid #21262d;
+  display: flex; justify-content: space-between; align-items: center;
+}
+#main-header h1 { font-size: 16px; color: #e1e4e8; }
+#main-header .header-btns { display: flex; gap: 8px; }
+.btn {
+  padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
+  border: 1px solid #30363d; cursor: pointer;
+}
+.btn-primary { background: #238636; color: #fff; border-color: #2ea043; }
+.btn-primary:hover { background: #2ea043; }
+.btn-danger { background: #da3633; color: #fff; border-color: #f85149; }
+.btn-danger:hover { background: #f85149; }
+.btn-outline { background: #21262d; color: #c9d1d9; }
+.btn-outline:hover { background: #30363d; }
+.btn-outline-blue { background: #21262d; color: #58a6ff; border-color: #30363d; }
+.btn-outline-blue:hover { background: #1f6feb33; }
+
+#detail { flex: 1; overflow-y: auto; padding: 20px; }
+.empty-detail {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: #484f58; font-size: 14px;
+}
+.node-title {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
+}
+.node-title .dot { width: 12px; height: 12px; border-radius: 50%; }
+.node-title h2 { font-size: 20px; }
+.node-meta { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
+.meta-item { font-size: 13px; }
+.meta-item span { color: #484f58; }
+.actions { display: flex; gap: 8px; margin-bottom: 20px; }
+.status-badge {
+  display: inline-block; padding: 4px 10px; border-radius: 12px;
+  font-size: 12px; font-weight: 600; text-transform: uppercase;
+}
+.status-active { background: rgba(34,197,94,0.15); color: #22c55e; }
+.status-idle { background: rgba(139,148,158,0.15); color: #8b949e; }
+.status-error { background: rgba(239,68,68,0.15); color: #ef4444; }
+.status-dead { background: rgba(139,148,158,0.1); color: #484f58; }
+
+/* ── Report history ── */
+#reports h3 { font-size: 14px; color: #8b949e; margin-bottom: 12px; }
+.report-row {
+  display: flex; gap: 12px; align-items: center; padding: 6px 0;
+  border-bottom: 1px solid #21262d; font-size: 13px;
+}
+.report-row:last-child { border-bottom: none; }
+.report-time { color: #484f58; font-size: 12px; min-width: 100px; }
+.report-msg { color: #c9d1d9; flex: 1; }
+
+/* ── Modals ── */
+.modal-overlay {
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.6); align-items: center; justify-content: center; z-index: 100;
+}
+.modal-overlay.show { display: flex; }
+.modal {
+  background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+  padding: 24px; width: 420px; max-width: 90vw;
+}
+.modal h3 { font-size: 16px; margin-bottom: 16px; color: #e1e4e8; }
+.modal label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; margin-top: 12px; }
+.modal input, .modal select {
+  width: 100%; padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d;
+  background: #0d1117; color: #e1e4e8; font-size: 13px;
+}
+.modal input:focus, .modal select:focus { outline: none; border-color: #58a6ff; }
+.modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+</style>
+</head>
+<body>
+
+<!-- ── Sidebar ── -->
+<div id="sidebar">
+  <div id="sidebar-header">
+    <h2>Fleet</h2>
+    <button class="btn btn-primary" onclick="openModal('node-modal')" style="padding:4px 12px;font-size:12px">+ Node</button>
+  </div>
+  <div id="tree"></div>
+  <div id="labels-section">
+    <div class="section-header">
+      <span class="section-title">Projects</span>
+      <button class="section-add" onclick="openModal('label-modal')" title="Add project">+ Add</button>
+    </div>
+    <div id="labels-list"></div>
+  </div>
+</div>
+
+<!-- ── Main ── -->
+<div id="main">
+  <div id="main-header">
+    <h1 id="main-title">Select a node</h1>
+    <div class="header-btns" id="header-actions"></div>
+  </div>
+  <div id="detail">
+    <div class="empty-detail">Select a node from the sidebar to view details</div>
+  </div>
+</div>
+
+<!-- ── New Node Modal ── -->
+<div class="modal-overlay" id="node-modal">
+  <div class="modal">
+    <h3>New Node</h3>
+    <label>Name (leave blank for auto)</label>
+    <input type="text" id="node-name" placeholder="Aragorn, frost-blade...">
+    <label>Parent (optional)</label>
+    <select id="node-parent"><option value="">None (root node)</option></select>
+    <label>Project Label</label>
+    <select id="node-label"><option value="">Current directory</option></select>
+    <label>Agent</label>
+    <select id="node-agent">
+      <option value="opencode">Open Code</option>
+      <option value="claude">Claude Code</option>
+      <option value="bash">Bash</option>
+    </select>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('node-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createNode()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── New Label Modal ── -->
+<div class="modal-overlay" id="label-modal">
+  <div class="modal">
+    <h3>New Project Label</h3>
+    <label>ID (slug)</label>
+    <input type="text" id="label-id" placeholder="my-project">
+    <label>Name</label>
+    <input type="text" id="label-name" placeholder="My Project">
+    <label>Path (leave blank for current dir)</label>
+    <input type="text" id="label-path" placeholder="/Users/...">
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('label-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createLabel()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── JS ── -->
+<script>
+let treeData = [];
+let selectedNodeId = null;
+const POLL = 10000;
+
+async function api(url, opts = {}) {
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({detail: res.statusText}));
+    throw new Error(err.detail || 'Request failed');
+  }
+  return res.json();
+}
+
+/* ── Tree rendering ── */
+function renderTree(nodes, container, depth = 0) {
+  if (!nodes.length) {
+    container.innerHTML = '<div class="no-nodes">No nodes. Click + to create one.</div>';
+    return;
+  }
+  container.innerHTML = '';
+  nodes.forEach(n => {
+    const row = document.createElement('div');
+    row.className = 'node-item' + (n.id === selectedNodeId ? ' selected' : '');
+    row.style.paddingLeft = (8 + depth * 12) + 'px';
+
+    const hasChildren = n.children && n.children.length > 0;
+    const toggle = document.createElement('span');
+    toggle.className = 'toggle-icon';
+    toggle.textContent = hasChildren ? '▼' : '';
+    toggle.dataset.expanded = '1';
+
+    const dot = document.createElement('span');
+    dot.className = 'dot';
+    dot.style.background = n.colour || '#8b949e';
+
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = n.name;
+
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + (n.status === 'active' ? 'active' : n.status === 'error' ? 'error' : '');
+    badge.textContent = n.status;
+
+    row.appendChild(toggle);
+    row.appendChild(dot);
+    row.appendChild(name);
+    row.appendChild(badge);
+
+    row.onclick = (e) => {
+      if (e.target === toggle) {
+        toggleChildren(toggle, row.nextSibling);
+        return;
+      }
+      selectNode(n);
+    };
+
+    toggle.onclick = (e) => {
+      e.stopPropagation();
+      toggleChildren(toggle, row.nextSibling);
+    };
+
+    container.appendChild(row);
+
+    if (hasChildren) {
+      const childContainer = document.createElement('div');
+      childContainer.className = 'children';
+      container.appendChild(childContainer);
+      renderTree(n.children, childContainer, depth + 1);
+    }
+  });
+}
+
+function toggleChildren(toggle, container) {
+  if (!container) return;
+  const expanded = toggle.dataset.expanded === '1';
+  container.style.display = expanded ? 'none' : 'block';
+  toggle.textContent = expanded ? '▶' : '▼';
+  toggle.dataset.expanded = expanded ? '0' : '1';
+}
+
+function selectNode(n) {
+  selectedNodeId = n.id;
+  refreshTree();
+  loadNodeDetail(n.id);
+}
+
+/* ── Detail Panel ── */
+async function loadNodeDetail(nodeId) {
+  const data = await api('/api/nodes/' + nodeId);
+  const n = data.node;
+  const detail = document.getElementById('detail');
+  document.getElementById('main-title').textContent = n.name;
+
+  const statusCls = n.status === 'active' ? 'status-active'
+    : n.status === 'error' ? 'status-error'
+    : n.status === 'dead' ? 'status-dead' : 'status-idle';
+
+  let metaHtml = `<span class="meta-item"><span>Agent:</span> ${esc(n.agent_type)}</span>`;
+  if (n.project_label_name) metaHtml += `<span class="meta-item"><span>Project:</span> ${esc(n.project_label_name)}</span>`;
+  if (n.parent_id) metaHtml += `<span class="meta-item"><span>Parent ID:</span> ${n.parent_id}</span>`;
+  metaHtml += `<span class="meta-item"><span>Created:</span> ${esc(n.created_at)}</span>`;
+
+  let actionHtml = '';
+  if (n.status !== 'dead') {
+    actionHtml += `<button class="btn btn-outline-blue" onclick="attachNode(${n.id})">Attach</button>`;
+    actionHtml += `<button class="btn btn-danger" onclick="killNode(${n.id})">Kill</button>`;
+  }
+
+  document.getElementById('header-actions').innerHTML = actionHtml;
+
+  let reportsHtml = '';
+  if (data.reports && data.reports.length) {
+    reportsHtml = data.reports.map(r => `
+      <div class="report-row">
+        <span class="report-time">${timeAgo(r.timestamp)}</span>
+        <span class="badge ${r.status === 'active' ? 'active' : ''}">${r.status}</span>
+        <span class="report-msg">${esc(r.message || '--')}</span>
+      </div>
+    `).join('');
+  } else {
+    reportsHtml = '<div style="color:#484f58;padding:12px 0">No reports yet</div>';
+  }
+
+  detail.innerHTML = `
+    <div class="node-title">
+      <span class="dot" style="background:${n.colour}"></span>
+      <h2>${esc(n.name)}</h2>
+      <span class="status-badge ${statusCls}">${n.status}</span>
+    </div>
+    <div class="node-meta">${metaHtml}</div>
+    <div id="reports">
+      <h3>Activity Log</h3>
+      ${reportsHtml}
+    </div>
+  `;
+}
+
+async function attachNode(id) {
+  await api('/api/nodes/' + id + '/attach', {method:'POST'});
+}
+
+async function killNode(id) {
+  if (!confirm('Kill this node and all its children?')) return;
+  await api('/api/nodes/' + id, {method:'DELETE'});
+  selectedNodeId = null;
+  document.getElementById('detail').innerHTML = '<div class="empty-detail">Node killed</div>';
+  document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('main-title').textContent = 'Select a node';
+  refreshTree();
+}
+
+/* ── Create Node ── */
+async function createNode() {
+  const name = document.getElementById('node-name').value || null;
+  const parent = document.getElementById('node-parent').value || null;
+  const label = document.getElementById('node-label').value || null;
+  const agent = document.getElementById('node-agent').value;
+
+  const node = await api('/api/nodes', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      name: name, parent_id: parent ? parseInt(parent) : null,
+      project_label_id: label, agent_type: agent
+    })
+  });
+  closeModal('node-modal');
+  selectedNodeId = node.id;
+  refreshTree();
+  loadNodeDetail(node.id);
+}
+
+/* ── Create Label ── */
+async function createLabel() {
+  const id = document.getElementById('label-id').value;
+  const name = document.getElementById('label-name').value;
+  const path = document.getElementById('label-path').value;
+
+  if (!id || !name) return alert('ID and Name are required');
+
+  await api('/api/project-labels', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({id, name, path})
+  });
+  closeModal('label-modal');
+  refreshLabels();
+  refreshNodeModalDropdowns();
+}
+
+async function deleteLabel(id) {
+  if (!confirm('Delete this label?')) return;
+  await api('/api/project-labels/' + id, {method:'DELETE'});
+  refreshLabels();
+  refreshNodeModalDropdowns();
+}
+
+/* ── Refresh ── */
+async function refreshTree() {
+  treeData = await api('/api/tree');
+  renderTree(treeData, document.getElementById('tree'));
+}
+
+async function refreshLabels() {
+  const data = await api('/api/project-labels');
+  const el = document.getElementById('labels-list');
+  if (!data.length) {
+    el.innerHTML = '<div class="label-item" style="color:#484f58">No labels</div>';
+    return;
+  }
+  el.innerHTML = data.map(l => `
+    <div class="label-item">
+      <div><span>${esc(l.name)}</span> <span class="label-path">${esc(l.path)}</span></div>
+      <span class="label-del" onclick="deleteLabel('${esc(l.id)}')">x</span>
+    </div>
+  `).join('');
+}
+
+async function refreshNodeModalDropdowns() {
+  const labels = await api('/api/project-labels');
+  const tree = await api('/api/tree');
+
+  function addNodes(nodes, prefix = '') {
+    let opts = '';
+    nodes.forEach(n => {
+      opts += `<option value="${n.id}">${prefix}${n.name}</option>`;
+      if (n.children) opts += addNodes(n.children, prefix + '  ');
+    });
+    return opts;
+  }
+
+  document.getElementById('node-parent').innerHTML = '<option value="">None (root node)</option>' + addNodes(tree);
+  document.getElementById('node-label').innerHTML =
+    '<option value="">Current directory</option>' +
+    labels.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+}
+
+async function refreshAll() {
+  await refreshTree();
+  await refreshLabels();
+  await refreshNodeModalDropdowns();
+  if (selectedNodeId) {
+    try { await loadNodeDetail(selectedNodeId); } catch(e) {}
+  }
+}
+
+/* ── Modals ── */
+function openModal(id) {
+  document.getElementById(id).classList.add('show');
+  if (id === 'node-modal') refreshNodeModalDropdowns();
+}
+function closeModal(id) {
+  document.getElementById(id).classList.remove('show');
+}
+
+/* ── Helpers ── */
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function timeAgo(ts) {
+  if (!ts) return '--';
+  const diff = Math.floor((Date.now() - new Date(ts + 'Z').getTime()) / 1000);
+  if (diff < 10) return 'just now';
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff/60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
+  return Math.floor(diff/86400) + 'd ago';
+}
+
+/* ── Init ── */
+refreshAll();
+setInterval(refreshAll, POLL);
+
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay) overlay.classList.remove('show');
+  });
+});
+</script>
+</body>
+</html>

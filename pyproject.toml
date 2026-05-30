@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fleet"
+version = "0.1.0"
+description = "Manage multiple Open Code / Claude Code agent sessions via tmux"
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.0",
+    "fastapi>=0.100",
+    "uvicorn>=0.20",
+    "jinja2>=3.0",
+]
+
+[project.scripts]
+fleet = "fleet.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]

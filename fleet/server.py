@@ -1,0 +1,243 @@
+import os
+import sys
+import threading
+from pathlib import Path
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, JSONResponse
+import uvicorn
+
+from . import db
+from . import naming
+from . import tmux
+from . import health
+
+app = FastAPI(title="Fleet Manager")
+TEMPLATE_DIR = Path(__file__).parent / "templates"
+PID_FILE = os.path.expanduser("~/.fleet/server.pid")
+HOST = "127.0.0.1"
+PORT = 9100
+
+
+@app.on_event("startup")
+def startup():
+    db.init_db()
+    try:
+        tmux.ensure_fleet_session()
+    except RuntimeError:
+        pass
+    health.start_health_loop()
+
+
+# --- Dashboard ---
+
+@app.get("/", response_class=HTMLResponse)
+def dashboard_page():
+    html_path = TEMPLATE_DIR / "index.html"
+    if html_path.exists():
+        return html_path.read_text()
+    return HTMLResponse("<h1>Dashboard not found</h1>")
+
+
+# --- Tree & Nodes ---
+
+@app.get("/api/tree")
+def get_tree():
+    return JSONResponse(db.build_tree())
+
+
+@app.get("/api/nodes")
+def list_nodes():
+    return JSONResponse(db.get_all_nodes())
+
+
+@app.get("/api/nodes/{node_id}")
+def get_node(node_id: int):
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    reports = db.get_node_reports(node_id)
+    children = db.get_node_children(node_id)
+    return JSONResponse({"node": node, "reports": reports, "children": children})
+
+
+@app.get("/api/nodes/{node_id}/reports")
+def get_reports(node_id: int, limit: int = 30):
+    return JSONResponse(db.get_node_reports(node_id, limit))
+
+
+@app.post("/api/nodes")
+async def create_node(request: Request):
+    body = await request.json()
+    name = body.get("name")
+    parent_id = body.get("parent_id")
+    project_label_id = body.get("project_label_id")
+    agent_type = body.get("agent_type", "auto")
+
+    existing_names = db.existing_names()
+
+    if name and name in existing_names:
+        raise HTTPException(status_code=409, detail=f"Node '{name}' already exists")
+
+    if project_label_id:
+        conn = db._connect()
+        row = conn.execute(
+            "SELECT path FROM project_labels WHERE id = ?", (project_label_id,)
+        ).fetchone()
+        conn.close()
+        if not row:
+            raise HTTPException(status_code=400, detail="Project label not found")
+        working_dir = row[0]
+    else:
+        working_dir = os.getcwd()
+
+    if parent_id:
+        parent = db.get_node(parent_id)
+        if not parent:
+            raise HTTPException(status_code=400, detail="Parent node not found")
+
+    colour = naming.next_colour(db.active_colours())
+    agent_name = name or naming.generate_name(existing_names)
+
+    pane_id = tmux.create_node_window(
+        name=agent_name, colour=colour, working_dir=working_dir,
+    )
+
+    node_id = db.create_node(
+        name=agent_name,
+        colour=colour,
+        parent_id=parent_id,
+        project_label_id=project_label_id,
+        tmux_pane_id=pane_id,
+        agent_type=agent_type,
+    )
+
+    db.add_status_report(node_id, "idle", "node created")
+    tmux.save_agent_hook(agent_name)
+
+    node = db.get_node(node_id)
+    return JSONResponse(node, status_code=201)
+
+
+@app.delete("/api/nodes/{node_id}")
+def delete_node(node_id: int):
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    killed = db.kill_node(node_id)
+    for entry in killed:
+        tmux.kill_node_window(entry["name"])
+
+    return JSONResponse({"ok": True, "killed": len(killed)})
+
+
+@app.post("/api/nodes/{node_id}/attach")
+def attach(node_id: int):
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if not tmux.window_exists(node["name"]):
+        raise HTTPException(status_code=410, detail="Node window no longer exists")
+    tmux.attach_node(node["name"])
+    return JSONResponse({"ok": True})
+
+
+# --- Project Labels ---
+
+@app.get("/api/project-labels")
+def list_project_labels():
+    return JSONResponse(db.list_project_labels())
+
+
+@app.post("/api/project-labels")
+async def create_project_label(request: Request):
+    body = await request.json()
+    id = body.get("id", "").strip()
+    name = body.get("name", "").strip()
+    path = body.get("path", "").strip()
+
+    if not id or not name:
+        raise HTTPException(status_code=400, detail="id and name are required")
+    if not path:
+        path = os.getcwd()
+
+    try:
+        db.add_project_label(id, name, os.path.abspath(path))
+    except ValueError as e:
+        raise HTTPException(status_code=409, detail=str(e))
+
+    return JSONResponse({"ok": True}, status_code=201)
+
+
+@app.delete("/api/project-labels/{label_id}")
+def delete_project_label(label_id: str):
+    db.delete_project_label(label_id)
+    return JSONResponse({"ok": True})
+
+
+# --- Agent Report ---
+
+@app.post("/api/report")
+async def agent_report(request: Request):
+    body = await request.json()
+    name = body.get("name")
+    status = body.get("status", "idle")
+    message = body.get("message")
+
+    if not name:
+        raise HTTPException(status_code=400, detail="name is required")
+    if status not in ("active", "idle", "error"):
+        raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+
+    node = db.get_node_by_name(name)
+    if not node:
+        raise HTTPException(status_code=404, detail=f"Unknown node: {name}")
+
+    db.add_status_report(node["id"], status, message)
+    return JSONResponse({"ok": True})
+
+
+# --- Daemon ---
+
+def _write_pid():
+    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    with open(PID_FILE, "w") as f:
+        f.write(str(os.getpid()))
+
+
+def _remove_pid():
+    try:
+        os.remove(PID_FILE)
+    except OSError:
+        pass
+
+
+def _daemonize():
+    if os.fork() > 0:
+        sys.exit(0)
+    os.setsid()
+    if os.fork() > 0:
+        sys.exit(0)
+    os.chdir("/")
+    os.umask(0)
+    devnull = os.open(os.devnull, os.O_RDWR)
+    os.dup2(devnull, 0)
+    os.dup2(devnull, 1)
+    os.dup2(devnull, 2)
+    os.close(devnull)
+    _write_pid()
+
+
+def start_server(daemon: bool = True, open_browser: bool = True):
+    if daemon:
+        _daemonize()
+
+    if open_browser:
+        import webbrowser
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
+
+    try:
+        uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    finally:
+        _remove_pid()
