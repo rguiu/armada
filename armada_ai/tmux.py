@@ -65,7 +65,7 @@ def install_skills(project_dir: str):
     for fname in SKILL_FILES:
         src = _SKILLS_SRC / fname
         dst = skills_dir / fname
-        if src.exists() and not dst.exists():
+        if src.exists():
             shutil.copy2(src, dst)
 
     return str(skills_dir)
