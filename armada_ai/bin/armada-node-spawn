@@ -1,0 +1,51 @@
+#!/bin/bash
+# armada-node-spawn — spawn a child node
+# Usage: armada-node-spawn "child-name" [parent_id]
+# Returns the new node's ID on stdout
+
+API="${ARMADA_API:-http://127.0.0.1:9100}"
+NODE="${ARMADA_NODE_NAME:-unknown}"
+CHILD_NAME="${1:-}"
+PARENT_ID="${2:-}"
+
+if [ -z "$CHILD_NAME" ]; then
+    echo "Usage: armada-node-spawn <name> [parent_id]" >&2
+    exit 1
+fi
+
+# If no parent_id given, look up own ID
+if [ -z "$PARENT_ID" ]; then
+    PARENT_ID=$(curl -s "$API/api/nodes" 2>/dev/null | python3 -c "
+import sys, json
+for n in json.load(sys.stdin):
+    if n.get('name') == '$NODE':
+        print(n['id'])
+        break
+" 2>/dev/null)
+fi
+
+if [ -z "$PARENT_ID" ]; then
+    echo "Cannot find own node ID" >&2
+    exit 1
+fi
+
+# Get the project label from our own node
+PROJ=$(curl -s "$API/api/nodes/$PARENT_ID" 2>/dev/null | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(d['node'].get('project_label_id',''))
+" 2>/dev/null)
+
+# Spawn
+resp=$(curl -s -X POST "$API/api/nodes" \
+    -H "Content-Type: application/json" \
+    -d "{\"name\":\"$CHILD_NAME\",\"parent_id\":$PARENT_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"bash\"}" 2>/dev/null)
+
+child_id=$(echo "$resp" | python3 -c "import sys,json; print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+
+if [ -n "$child_id" ]; then
+    echo "$child_id"
+else
+    echo "Failed to spawn $CHILD_NAME: $resp" >&2
+    exit 1
+fi

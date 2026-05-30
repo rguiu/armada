@@ -1,8 +1,10 @@
 import sqlite3
 import os
+import json
 
 DB_DIR = os.path.expanduser("~/.armada")
 DB_PATH = os.path.join(DB_DIR, "armada.db")
+PROJECTS_FILE = os.path.join(DB_DIR, "projects.json")
 
 
 def _ensure_dir():
@@ -53,6 +55,7 @@ def init_db():
     """)
     conn.commit()
     conn.close()
+    _sync_projects_from_json()
 
 
 # --- Project Labels ---
@@ -78,6 +81,15 @@ def add_project_label(id: str, name: str, path: str):
         raise
     finally:
         conn.close()
+    _save_projects_to_json()
+
+
+def delete_project_label(id: str):
+    conn = _connect()
+    conn.execute("DELETE FROM project_labels WHERE id = ?", (id,))
+    conn.commit()
+    conn.close()
+    _save_projects_to_json()
 
 
 def list_project_labels():
@@ -261,3 +273,46 @@ def active_colours():
     rows = conn.execute("SELECT colour FROM nodes WHERE killed_at IS NULL").fetchall()
     conn.close()
     return [r[0] for r in rows]
+
+
+# --- Projects JSON persistence ---
+
+def _save_projects_to_json():
+    """Write all project labels to ~/.armada/projects.json."""
+    projects = list_project_labels()
+    _ensure_dir()
+    with open(PROJECTS_FILE, "w") as f:
+        json.dump(projects, f, indent=2)
+
+
+def _sync_projects_from_json():
+    """Load projects from projects.json and sync to DB.
+    Projects in JSON but not in DB are added.
+    Projects in DB but not in JSON are added to JSON."""
+    if not os.path.exists(PROJECTS_FILE):
+        _save_projects_to_json()
+        return
+
+    try:
+        with open(PROJECTS_FILE) as f:
+            json_projects = json.load(f)
+    except (json.JSONDecodeError, IOError):
+        _save_projects_to_json()
+        return
+
+    db_projects = {p["id"]: p for p in list_project_labels()}
+
+    for jp in json_projects:
+        if jp["id"] not in db_projects:
+            add_project_label(jp["id"], jp["name"], jp["path"])
+            continue
+        db_p = db_projects[jp["id"]]
+        if jp["name"] != db_p["name"] or jp["path"] != db_p["path"]:
+            add_project_label(jp["id"], jp["name"], jp["path"])
+            continue
+
+    # Ensure JSON has everything DB has
+    db_ids = {p["id"] for p in db_projects.values()}
+    json_ids = {p["id"] for p in json_projects if isinstance(p, dict)}
+    if db_ids != json_ids:
+        _save_projects_to_json()

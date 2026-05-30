@@ -2,6 +2,7 @@ import subprocess
 import shutil
 import os
 import time
+import tempfile
 from pathlib import Path
 
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
@@ -9,6 +10,23 @@ ARMADA_SESSION = "armada"
 
 SKILL_FILES = ["armada-node.md", "armada-worker.md", "armada-orchestrator.md"]
 _SKILLS_SRC = Path(__file__).parent.parent / "skills"
+
+
+def _write_zsh_startup(zdotdir: str, tools_dir: str):
+    """Write .zshenv and .zshrc to ZDOTDIR, chaining to user's global configs."""
+    home_zshenv = os.path.expanduser("~/.zshenv")
+    home_zshrc = os.path.expanduser("~/.zshrc")
+
+    # .zshenv: environment — chain to global, then add tools
+    with open(os.path.join(zdotdir, ".zshenv"), "w") as f:
+        if os.path.exists(home_zshenv):
+            f.write(f'[[ -f "{home_zshenv}" ]] && source "{home_zshenv}"\n')
+        f.write(f'export PATH="{tools_dir}:$PATH"\n')
+
+    # .zshrc: interactive — chain to global as-is
+    with open(os.path.join(zdotdir, ".zshrc"), "w") as f:
+        if os.path.exists(home_zshrc):
+            f.write(f'[[ -f "{home_zshrc}" ]] && source "{home_zshrc}"\n')
 
 
 def _has_tmux() -> bool:
@@ -108,20 +126,25 @@ def create_node_window(name: str, colour: str, working_dir: str,
                 f"cd '{safe_dir}' && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
-                f"exec {os.environ.get('SHELL', '/bin/zsh')} -l"
+                f"exec {os.environ.get('SHELL', '/bin/zsh')}"
             )
     else:
-        # bash or auto: just a shell with the env var set
+        # bash or auto: inject armada tools via ZDOTDIR (chains user configs)
+        tools_dir = Path(__file__).parent / "bin"
+        zdotdir = tempfile.mkdtemp(prefix="_armada_zsh_")
+        _write_zsh_startup(zdotdir, tools_dir)
         shell_cmd = (
             f"cd '{safe_dir}' && "
             f"printf '\\033]2;{name}\\033\\\\' && "
             f"export ARMADA_NODE_NAME='{safe_name}' && "
-            f"exec {os.environ.get('SHELL', '/bin/zsh')} -l"
+            f"export ZDOTDIR='{zdotdir}' && "
+            f"echo '[armada] {safe_name} - tools ready' && "
+            f"exec zsh"
         )
 
     result = _tmux(
         "new-window", "-t", ARMADA_SESSION, "-n", name,
-        shutil.which("bash") or "/bin/bash", "-c", shell_cmd,
+        shell_cmd,
     )
 
     if result.returncode != 0:

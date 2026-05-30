@@ -1,0 +1,18 @@
+#!/bin/bash
+# armada-node-result — write or read a result value
+# Usage: armada-node-result <value>     — write result for parent to read
+#        armada-node-result             — read own result (for parent)
+
+API="${ARMADA_API:-http://127.0.0.1:9100}"
+RESULT_DIR="${ARMADA_RESULT_DIR:-/tmp/armada-results}"
+NODE="${ARMADA_NODE_NAME:-unknown}"
+
+if [ -n "${1:-}" ]; then
+    # Write mode
+    mkdir -p "$RESULT_DIR/$NODE"
+    echo "$1" > "$RESULT_DIR/$NODE/result"
+    armada-node-report idle "result: $1"
+else
+    # Read mode
+    cat "$RESULT_DIR/$NODE/result" 2>/dev/null || echo ""
+fi

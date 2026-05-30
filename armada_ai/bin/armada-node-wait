@@ -1,0 +1,44 @@
+#!/bin/bash
+# armada-node-wait — poll a child node until it finishes, return its result
+# Usage: armada-node-wait <child_id> [timeout_seconds]
+# Returns the child's result value on stdout (from result file)
+
+API="${ARMADA_API:-http://127.0.0.1:9100}"
+RESULT_DIR="${ARMADA_RESULT_DIR:-/tmp/armada-results}"
+CHILD_ID="${1:-}"
+TIMEOUT="${2:-120}"
+POLL=2
+ELAPSED=0
+
+if [ -z "$CHILD_ID" ]; then
+    echo "Usage: armada-node-wait <child_id> [timeout]" >&2
+    exit 1
+fi
+
+# Get child name for result file lookup
+CHILD_NAME=$(curl -s "$API/api/nodes/$CHILD_ID" 2>/dev/null | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(d['node']['name'])
+" 2>/dev/null)
+
+while [ "$ELAPSED" -lt "$TIMEOUT" ]; do
+    status=$(curl -s "$API/api/nodes/$CHILD_ID" 2>/dev/null | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(d['node']['status'])
+" 2>/dev/null)
+
+    if [ "$status" = "idle" ] || [ "$status" = "dead" ] || [ "$status" = "error" ]; then
+        if [ -n "$CHILD_NAME" ] && [ -f "$RESULT_DIR/$CHILD_NAME/result" ]; then
+            cat "$RESULT_DIR/$CHILD_NAME/result"
+        fi
+        exit 0
+    fi
+
+    sleep "$POLL"
+    ELAPSED=$((ELAPSED + POLL))
+done
+
+echo "timeout" >&2
+exit 1

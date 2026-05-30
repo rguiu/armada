@@ -1,0 +1,15 @@
+#!/bin/bash
+# armada-node-report — report node status to Armada API
+# Usage: armada-node-report active "fixing bug"
+#        armada-node-report idle
+#        armada-node-report result "42"
+
+API="${ARMADA_API:-http://127.0.0.1:9100}"
+NODE="${ARMADA_NODE_NAME:-unknown}"
+STATUS="${1:-idle}"
+MESSAGE="${2:-}"
+
+curl -s -X POST "$API/api/report" \
+    -H "Content-Type: application/json" \
+    -d "{\"name\":\"$NODE\",\"status\":\"$STATUS\",\"message\":\"$MESSAGE\"}" \
+    > /dev/null 2>&1 || true
