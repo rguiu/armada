@@ -1,6 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "instructions": ["ARMADA.md"],
   "skills": {
     "paths": [".opencode/skills"]
   },
