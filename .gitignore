@@ -8,3 +8,5 @@ dist/
 build/
 .opencode/
 .claude/
+/bin
+/demos
