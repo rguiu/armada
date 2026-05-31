@@ -4,7 +4,9 @@
 
 Manage multiple AI coding agents as a **hierarchy of tmux nodes** with a live dashboard. Orchestrator nodes spawn worker children, delegate tasks via API, monitor progress with per-step activity logs, and cascade-clean up — all through a local web UI.
 
-![Armada demo](demo.gif)
+## Architecture
+
+SQLite (WAL mode) with FastAPI REST server, daemonized. Each node is a tmux window running an AI agent. Nodes report status via `POST /api/report`. The dashboard polls every 10 seconds with live status, activity logs, and multi-select batch operations.
 
 ## Features
 
@@ -207,20 +209,6 @@ The dashboard shows the full tree updating in real time. Each worker reports "ac
 | `~/.armada/armada.db` | SQLite database |
 | `~/.armada/server.pid` | Daemon PID file |
 | `~/.armada/hooks/<name>.md` | Per-node hook instructions |
-
-## Architecture
-
-See [PLAN.md](PLAN.md) for the full architecture, database schema, and development roadmap.
-
-## Demo
-
-Generate the demo GIF shown above:
-
-```bash
-brew install vhs
-vhs demo.tape
-# Output: demo.gif
-```
 
 ## License
 
