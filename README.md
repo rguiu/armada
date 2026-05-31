@@ -2,9 +2,21 @@
 
 > Terminal orchestration for Open Code and Claude Code agents.
 
-Manage multiple AI coding agents as a **hierarchy of tmux nodes** with a live dashboard. Orchestrator nodes can **spawn worker children**, delegate tasks, monitor progress, and clean up — all through a local web UI.
+Manage multiple AI coding agents as a **hierarchy of tmux nodes** with a live dashboard. Orchestrator nodes spawn worker children, delegate tasks via API, monitor progress with per-step activity logs, and cascade-clean up — all through a local web UI.
 
 ![Armada demo](demo.gif)
+
+## Features
+
+- **Live tree dashboard** — dark themed, 10s auto-refresh, colour-coded node statuses
+- **Agent types** — OpenCode, Claude Code, or Bash workers (parallel computation)
+- **`/send` endpoint** — orchestrators assign tasks to workers via API, no raw tmux
+- **`armada-work` tool** — wraps any command with automatic before/after status reporting
+- **Pending status** — yellow pulsing badge when a node waits for user input/permission
+- **Per-step activity logs** — agents report status before and after every action
+- **Cascade kill & hide** — killing or deleting a parent also handles all descendants
+- **Multi-select batch ops** — checkboxes in the tree for bulk kill/delete/attach
+- **Plugin auto-reporting** — `tool.execute.before/after` hooks post pending on bash commands
 
 ## How It Works
 
@@ -100,13 +112,18 @@ The dashboard polls every 10 seconds. You can see each node's current status, la
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/tree` | Full node hierarchy |
-| `GET` | `/api/nodes` | Flat node list |
+| `GET` | `/api/tree?hide_dead=true` | Live-only tree |
+| `GET` | `/api/nodes` | Flat node list (includes dead) |
+| `GET` | `/api/nodes?hide_dead=true` | Live-only node list |
 | `POST` | `/api/nodes` | Create node |
 | `DELETE` | `/api/nodes/:id` | Kill node + cascade children |
+| `PATCH` | `/api/nodes/:id` | Hide node (`{"action":"hide"}`) — logical delete |
+| `POST` | `/api/nodes/:id/send` | Send a command to a bash worker |
 | `POST` | `/api/nodes/:id/attach` | Open terminal attached to node |
 | `GET` | `/api/nodes/:id` | Node detail + reports |
 | `GET` | `/api/nodes/:id/reports` | Node activity log |
-| `POST` | `/api/report` | Agent status report (hook) |
+| `POST` | `/api/report` | Agent status report (active/idle/error/pending) |
+| `GET` | `/api/nodes/history` | Recently killed nodes |
 | `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
 
 ## Agent Skills
@@ -115,31 +132,21 @@ Armada ships with three skills that teach agents how to operate as managed nodes
 
 | Skill | Purpose |
 |---|---|
-| [`armada-node.md`](skills/armada-node.md) | Full node: reports status, spawns/kills children |
-| [`armada-worker.md`](skills/armada-worker.md) | Leaf node: reports status, single-task focus |
-| [`armada-orchestrator.md`](skills/armada-orchestrator.md) | Orchestrator: spawns workers, delegates, monitors |
+| [`armada-node`](skills/armada-node/SKILL.md) | Full node: reports status, spawns/kills children, full orchestration |
+| [`armada-worker`](skills/armada-worker/SKILL.md) | Leaf node: reports status, single-task focus |
+| [`armada-orchestrator`](skills/armada-orchestrator/SKILL.md) | Orchestrator: spawns workers, delegates via /send, monitors |
+
+Skills are installed to `~/.config/opencode/skills/` (OpenCode global) and `~/.claude/skills/` (Claude Code). They auto-activate when `ARMADA_NODE_NAME` is set in the environment.
 
 ### Installing Skills
-
-Run once — installs to your user profile for all projects:
 
 ```bash
 armada setup
 ```
 
-This copies the skills to:
-- `~/.opencode/skills/` (Open Code user-wide)
-- `~/.claude/skills/` (Claude Code user-wide)
+### Installing Instructions (optional)
 
-Skills auto-activate when you launch an agent in an Armada-managed tmux window. The agent automatically reports status on every turn via `curl` to the Armada API.
-
-When creating a node, Armada also copies skills to the project's `.opencode/skills/` as a fallback.
-
-### Skill Behavior
-
-- **`armada-node`**: Reports status at start/end of every response. Can spawn child nodes, check their progress, and kill them when done.
-- **`armada-worker`**: Reports status only. Focused on completing a single task assigned by a parent.
-- **`armada-orchestrator`**: Manages a team. Breaks work into parallel streams, spawns workers per stream, monitors their status, collects results, and cleans up.
+Copy `ARMADA.md` and `opencode.json` to your project to make Armada workers the default delegation mechanism. The instructions tell the agent to use the Armada API for parallel work instead of local background processes.
 
 ## Example: Multi-Agent Code Review Pipeline
 

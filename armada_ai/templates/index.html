@@ -48,6 +48,16 @@ a { color: #58a6ff; }
   50% { opacity: 0.5; }
 }
 #tree .children { padding-left: 12px; }
+.node-check {
+  width: 14px; height: 14px; flex-shrink: 0; cursor: pointer;
+  accent-color: #58a6ff; margin: 0;
+}
+#batch-bar {
+  display: none; padding: 8px; border-top: 1px solid #21262d;
+  background: #161b22; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+#batch-bar.show { display: flex; }
+#batch-bar .count { font-size: 12px; color: #8b949e; margin-right: 8px; }
 .toggle-icon {
   width: 14px; font-size: 10px; color: #484f58; flex-shrink: 0; text-align: center;
   cursor: pointer; user-select: none;
@@ -179,6 +189,12 @@ a { color: #58a6ff; }
     </div>
   </div>
   <div id="tree"></div>
+  <div id="batch-bar">
+    <span class="count" id="batch-count">0 selected</span>
+    <button class="btn btn-outline-blue" onclick="batchAttach()" style="padding:4px 10px;font-size:11px">Attach</button>
+    <button class="btn btn-danger" onclick="batchKill()" style="padding:4px 10px;font-size:11px">Kill</button>
+    <button class="btn btn-outline" onclick="batchDelete()" style="padding:4px 10px;font-size:11px;color:#484f58">Delete</button>
+  </div>
   <div id="labels-section">
     <div class="section-header">
       <span class="section-title">Projects</span>
@@ -243,6 +259,7 @@ a { color: #58a6ff; }
 <script>
 let treeData = [];
 let selectedNodeId = null;
+let selectedSet = new Set();
 const POLL = 10000;
 
 async function api(url, opts = {}) {
@@ -273,6 +290,18 @@ function renderTree(nodes, container, depth = 0) {
     toggle.textContent = hasChildren ? '▼' : '';
     toggle.dataset.expanded = '1';
 
+    const check = document.createElement('input');
+    check.type = 'checkbox';
+    check.className = 'node-check';
+    check.checked = selectedSet.has(n.id);
+    check.onclick = (e) => {
+      e.stopPropagation();
+      if (check.checked) selectedSet.add(n.id);
+      else selectedSet.delete(n.id);
+      refreshBatchBar();
+      refreshTree();
+    };
+
     const dot = document.createElement('span');
     dot.className = 'dot';
     dot.style.background = isDead ? '#3a3f47' : (n.colour || '#8b949e');
@@ -286,6 +315,7 @@ function renderTree(nodes, container, depth = 0) {
     badge.className = 'badge ' + badgeStatus;
     badge.textContent = n.status;
 
+    row.appendChild(check);
     row.appendChild(toggle);
     row.appendChild(dot);
     row.appendChild(name);
@@ -325,6 +355,8 @@ function toggleChildren(toggle, container) {
 
 function selectNode(n) {
   selectedNodeId = n.id;
+  selectedSet.clear();
+  refreshBatchBar();
   refreshTree();
   loadNodeDetail(n.id);
 }
@@ -397,6 +429,8 @@ async function killNode(id) {
   if (!confirm('Kill this node and all its children?')) return;
   await api('/api/nodes/' + id, {method:'DELETE'});
   selectedNodeId = null;
+  selectedSet.delete(id);
+  refreshBatchBar();
   document.getElementById('detail').innerHTML = '<div class="empty-detail">Node killed</div>';
   document.getElementById('header-actions').innerHTML = '';
   document.getElementById('main-title').textContent = 'Select a node';
@@ -411,10 +445,70 @@ async function hideNode(id) {
     body: JSON.stringify({action:'hide'})
   });
   selectedNodeId = null;
+  selectedSet.delete(id);
+  refreshBatchBar();
   document.getElementById('detail').innerHTML = '<div class="empty-detail">Node removed</div>';
   document.getElementById('header-actions').innerHTML = '';
   document.getElementById('main-title').textContent = 'Select a node';
   refreshTree();
+}
+
+/* ── Batch operations ── */
+function refreshBatchBar() {
+  const bar = document.getElementById('batch-bar');
+  const count = document.getElementById('batch-count');
+  if (selectedSet.size > 0) {
+    bar.classList.add('show');
+    count.textContent = selectedSet.size + ' selected';
+  } else {
+    bar.classList.remove('show');
+  }
+}
+
+async function batchKill() {
+  const ids = [...selectedSet];
+  if (!ids.length) return;
+  if (!confirm(`Kill ${ids.length} node(s) and their children?`)) return;
+  for (const id of ids) {
+    try { await api('/api/nodes/' + id, {method:'DELETE'}); } catch(e) {}
+  }
+  selectedSet.clear();
+  selectedNodeId = null;
+  refreshBatchBar();
+  document.getElementById('detail').innerHTML = '<div class="empty-detail">Nodes killed</div>';
+  document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('main-title').textContent = 'Select a node';
+  refreshTree();
+}
+
+async function batchDelete() {
+  const ids = [...selectedSet];
+  if (!ids.length) return;
+  if (!confirm(`Permanently hide ${ids.length} node(s)?`)) return;
+  for (const id of ids) {
+    try {
+      await api('/api/nodes/' + id, {
+        method: 'PATCH',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({action:'hide'})
+      });
+    } catch(e) {}
+  }
+  selectedSet.clear();
+  selectedNodeId = null;
+  refreshBatchBar();
+  document.getElementById('detail').innerHTML = '<div class="empty-detail">Nodes removed</div>';
+  document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('main-title').textContent = 'Select a node';
+  refreshTree();
+}
+
+async function batchAttach() {
+  const ids = [...selectedSet];
+  for (const id of ids) {
+    try { await api('/api/nodes/' + id + '/attach', {method:'POST'}); } catch(e) {}
+  }
+  toast('Opened ' + ids.length + ' terminal(s).');
 }
 
 /* ── Create Node ── */
