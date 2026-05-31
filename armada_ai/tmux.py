@@ -110,12 +110,6 @@ def install_user_skills() -> list[str]:
         plugin_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(plugin_src, plugin_dst)
 
-    # Copy ARMADA.md instructions to user profile
-    armada_md = _SKILLS_SRC.parent / "ARMADA.md"
-    if armada_md.exists():
-        target = home / ".config" / "opencode" / "ARMADA.md"
-        shutil.copy2(armada_md, target)
-
     return installed
 
 
