@@ -144,9 +144,13 @@ Skills are installed to `~/.config/opencode/skills/` (OpenCode global) and `~/.c
 armada setup
 ```
 
-### Installing Instructions (optional)
+This copies skills, the pending plugin, and `ARMADA.md` to `~/.config/opencode/`. To activate the delegation instructions, add to your global opencode config:
 
-Copy `ARMADA.md` and `opencode.json` to your project to make Armada workers the default delegation mechanism. The instructions tell the agent to use the Armada API for parallel work instead of local background processes.
+```json
+{
+  "instructions": ["ARMADA.md"]
+}
+```
 
 ## Example: Multi-Agent Code Review Pipeline
 
