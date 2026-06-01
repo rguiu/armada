@@ -410,6 +410,18 @@ def send_keys(name: str, command: str):
     return result.returncode == 0
 
 
+def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
+    """Send an initial prompt to a node after a delay (allows agent to start)."""
+    import threading
+
+    def _send():
+        time.sleep(delay)
+        send_keys(name, prompt)
+
+    thread = threading.Thread(target=_send, daemon=True)
+    thread.start()
+
+
 def running_window_names() -> set[str]:
     if not _has_tmux():
         return set()

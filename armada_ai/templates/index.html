@@ -231,6 +231,9 @@ a { color: #58a6ff; }
       <option value="claude">Claude Code</option>
       <option value="bash">Bash</option>
     </select>
+    <label>Initial Prompt (optional)</label>
+    <textarea id="node-prompt" placeholder="e.g. /ebury:review-gh PR-123" rows="3"
+      style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e1e4e8;font-size:13px;resize:vertical;font-family:inherit"></textarea>
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeModal('node-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="createNode()">Create</button>
@@ -517,16 +520,19 @@ async function createNode() {
   const parent = document.getElementById('node-parent').value || null;
   const label = document.getElementById('node-label').value || null;
   const agent = document.getElementById('node-agent').value;
+  const prompt = document.getElementById('node-prompt').value.trim() || null;
 
   const node = await api('/api/nodes', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
       name: name, parent_id: parent ? parseInt(parent) : null,
-      project_label_id: label, agent_type: agent
+      project_label_id: label, agent_type: agent,
+      initial_prompt: prompt
     })
   });
   closeModal('node-modal');
+  document.getElementById('node-prompt').value = '';
   selectedNodeId = node.id;
   refreshTree();
   loadNodeDetail(node.id);

@@ -73,6 +73,7 @@ async def create_node(request: Request):
     parent_id = body.get("parent_id")
     project_label_id = body.get("project_label_id")
     agent_type = body.get("agent_type", "auto")
+    initial_prompt = body.get("initial_prompt", "").strip()
 
     existing_names = db.existing_names()
 
@@ -116,6 +117,9 @@ async def create_node(request: Request):
     db.add_status_report(node_id, "idle",
         f"node created (agent={agent_type}, project={project_label_id or 'cwd'})")
     tmux.save_agent_hook(agent_name)
+
+    if initial_prompt:
+        tmux.send_initial_prompt(agent_name, initial_prompt)
 
     node = db.get_node(node_id)
     return JSONResponse(node, status_code=201)
