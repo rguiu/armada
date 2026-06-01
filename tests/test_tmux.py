@@ -6,7 +6,7 @@ implementation, then mock only the underlying _tmux / _has_tmux calls.
 
 import sys
 import subprocess
-from unittest.mock import patch, call
+from unittest.mock import patch, MagicMock, call
 
 
 def _real_tmux_module():
@@ -24,6 +24,19 @@ def _make_completed(returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess(
         args=["tmux"], returncode=returncode, stdout=stdout, stderr=stderr
     )
+
+
+def _run_send_sync(tmux, name, prompt, delay=0):
+    """Call send_initial_prompt but force the internal thread to run
+    synchronously so tests don't depend on thread scheduling timing."""
+    def run_sync(**kwargs):
+        target = kwargs.get("target")
+        if target:
+            target()
+        return MagicMock()
+
+    with patch.object(tmux.threading, "Thread", side_effect=run_sync):
+        tmux.send_initial_prompt(name, prompt, delay=delay)
 
 
 class TestSendKeys:
@@ -107,10 +120,7 @@ class TestSendInitialPrompt:
                 _make_completed(stdout="> hello there\n"),
             ]
 
-            tmux.send_initial_prompt("test_node", "do work", delay=0)
-            import time
-            time.sleep(0.2)
-
+            _run_send_sync(tmux, "test_node", "do work")
             assert mock_send_keys.called
 
     def test_agent_never_appears(self):
@@ -123,10 +133,7 @@ class TestSendInitialPrompt:
             mock_send_keys.return_value = True
             mock_tmux.return_value = _make_completed(returncode=1)
 
-            tmux.send_initial_prompt("test_node", "do work", delay=0)
-            import time
-            time.sleep(0.2)
-
+            _run_send_sync(tmux, "test_node", "do work")
             assert mock_send_keys.called
 
     def test_exception_recovery(self):
@@ -139,8 +146,5 @@ class TestSendInitialPrompt:
             mock_send_keys.return_value = True
             mock_tmux.side_effect = RuntimeError("broken")
 
-            tmux.send_initial_prompt("test_node", "do work", delay=0)
-            import time
-            time.sleep(0.2)
-
+            _run_send_sync(tmux, "test_node", "do work")
             assert mock_send_keys.called
