@@ -2,8 +2,7 @@ import os
 import sys
 import tempfile
 import pytest
-from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 # Mock tmux BEFORE any armada import
 _mock_tmux = MagicMock()
@@ -15,6 +14,8 @@ _mock_tmux.kill_node_window.return_value = None
 _mock_tmux.ensure_armada_session.return_value = None
 _mock_tmux.install_skills.return_value = "/tmp/skills"
 _mock_tmux.save_agent_hook.return_value = "/tmp/hook.md"
+_mock_tmux.attach_node.return_value = None
+_mock_tmux.send_initial_prompt.return_value = None
 sys.modules["armada_ai.tmux"] = _mock_tmux
 
 # Mock health to avoid background thread
@@ -39,13 +40,13 @@ def temp_db(monkeypatch):
     monkeypatch.setattr(db_mod, "PROJECTS_FILE", projects_file)
     db_mod.init_db()
     yield db_mod
-    # Clean up ALL data between tests
     conn = db_mod._connect()
     conn.execute("DELETE FROM status_reports")
     conn.execute("DELETE FROM nodes")
     conn.execute("DELETE FROM project_labels")
     conn.commit()
     conn.close()
+    db_mod._local.conn = None
     # Also wipe the JSON cache so init_db doesn't restore labels
     try:
         os.remove(os.path.join(_test_dir, "projects.json"))

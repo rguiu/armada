@@ -51,6 +51,11 @@ def list_nodes(hide_dead: bool = False):
     return JSONResponse(db.get_all_nodes(include_dead=not hide_dead))
 
 
+@app.get("/api/nodes/history")
+def list_killed_nodes(limit: int = 50):
+    return JSONResponse(db.get_killed_nodes(limit))
+
+
 @app.get("/api/nodes/{node_id}")
 def get_node(node_id: int):
     node = db.get_node(node_id)
@@ -195,11 +200,6 @@ def attach(node_id: int):
         raise HTTPException(status_code=500, detail=error)
 
     return JSONResponse({"ok": True})
-
-
-@app.get("/api/nodes/history")
-def list_killed_nodes(limit: int = 50):
-    return JSONResponse(db.get_killed_nodes(limit))
 
 
 # --- Project Labels ---

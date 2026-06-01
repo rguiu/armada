@@ -32,7 +32,7 @@ class TestNodes:
 
     def test_create_with_parent(self, temp_db):
         pid = temp_db.create_node("parent", "#0000FF")
-        cid = temp_db.create_node("child", "#00FF00", parent_id=pid)
+        _ = temp_db.create_node("child", "#00FF00", parent_id=pid)
         children = temp_db.get_node_children(pid)
         assert len(children) == 1
         assert children[0]["name"] == "child"
