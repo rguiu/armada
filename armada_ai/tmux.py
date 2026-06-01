@@ -280,9 +280,14 @@ def create_node_window(name: str, colour: str, working_dir: str,
     if result.returncode != 0:
         return None
 
-    time.sleep(0.3)
-    pane_result = _tmux("display-message", "-p", "-t", f"{ARMADA_SESSION}:{name}", "#{pane_id}")
-    pane_id = pane_result.stdout.strip() if pane_result.returncode == 0 else None
+    pane_id = None
+    for attempt in range(5):
+        time.sleep(0.3)
+        pane_result = _tmux("display-message", "-p", "-t", f"{ARMADA_SESSION}:{name}", "#{pane_id}")
+        if pane_result.returncode == 0:
+            pane_id = pane_result.stdout.strip()
+            if pane_id:
+                break
 
     if pane_id:
         _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
@@ -416,14 +421,20 @@ def _try_terminal_attach(name: str) -> str | None:
 
 
 def send_keys(name: str, command: str):
-    """Send a command to a node's tmux window via send-keys."""
+    """Send a command to a node's tmux window via send-keys.
+    Uses literal mode (-l) so TUI apps receive characters as if typed.
+    Multi-line commands are joined with Enter between lines."""
     if not _has_tmux():
         return False
     target = f"{ARMADA_SESSION}:{name}"
-    # Use set-buffer + paste-buffer for reliable delivery to TUI apps
-    _tmux("set-buffer", command)
-    _tmux("paste-buffer", "-t", target)
-    time.sleep(0.1)
+    lines = command.split("\n")
+    for i, line in enumerate(lines):
+        if i > 0:
+            _tmux("send-keys", "-t", target, "Enter")
+        if line:
+            result = _tmux("send-keys", "-l", "-t", target, line)
+            if result.returncode != 0:
+                return False
     result = _tmux("send-keys", "-t", target, "Enter")
     return result.returncode == 0
 
@@ -433,33 +444,36 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
     Waits for the agent process to start, then for its input prompt."""
 
     def _send():
-        # Wait for the agent process to actually be running in the pane
-        target = f"{ARMADA_SESSION}:{name}"
-        for _ in range(60):
-            time.sleep(1)
-            result = _tmux("display-message", "-t", target, "-p", "#{pane_current_command}")
-            if result.returncode == 0:
-                cmd = result.stdout.strip().lower()
-                if cmd in ("node", "claude", "opencode", "deno"):
-                    break
-        else:
-            # Timeout — agent never appeared, send anyway
-            send_keys(name, prompt)
-            return
+        try:
+            target = f"{ARMADA_SESSION}:{name}"
+            for _ in range(60):
+                time.sleep(1)
+                result = _tmux("display-message", "-t", target, "-p", "#{pane_current_command}")
+                if result.returncode == 0:
+                    cmd = result.stdout.strip().lower()
+                    if cmd in ("node", "claude", "opencode", "deno"):
+                        break
+            else:
+                send_keys(name, prompt)
+                return
 
-        # Agent process is running — now wait for its REPL to be ready
-        time.sleep(delay)
-        for _ in range(30):
-            result = _tmux("capture-pane", "-t", target, "-p")
-            if result.returncode == 0:
-                content = result.stdout
-                if ">" in content or "❯" in content or "cost" in content.lower():
-                    time.sleep(0.5)
-                    send_keys(name, prompt)
-                    return
-            time.sleep(1)
-        # Timeout — send anyway
-        send_keys(name, prompt)
+            time.sleep(delay)
+            for _ in range(30):
+                result = _tmux("capture-pane", "-t", target, "-p")
+                if result.returncode == 0:
+                    content = result.stdout
+                    if ">" in content or "❯" in content or "cost" in content.lower():
+                        time.sleep(0.5)
+                        send_keys(name, prompt)
+                        return
+                time.sleep(1)
+            send_keys(name, prompt)
+        except Exception:
+            # Don't silently lose the prompt on any error
+            try:
+                send_keys(name, prompt)
+            except Exception:
+                pass
 
     thread = threading.Thread(target=_send, daemon=True)
     thread.start()
