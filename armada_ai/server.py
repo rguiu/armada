@@ -73,7 +73,7 @@ async def create_node(request: Request):
     parent_id = body.get("parent_id") or None
     project_label_id = body.get("project_label_id") or None
     agent_type = body.get("agent_type", "auto")
-    initial_prompt = body.get("initial_prompt", "").strip()
+    initial_prompt = (body.get("initial_prompt") or "").strip()
 
     existing_names = db.existing_names()
 
