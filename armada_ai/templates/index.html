@@ -198,7 +198,10 @@ a { color: #58a6ff; }
   <div id="labels-section">
     <div class="section-header">
       <span class="section-title">Projects</span>
-      <button class="section-add" onclick="openModal('label-modal')" title="Add project">+ Add</button>
+      <div style="display:flex;gap:4px">
+        <button class="section-add" onclick="refreshHooks()" title="Re-deploy hooks & skills to all projects">Sync</button>
+        <button class="section-add" onclick="openModal('label-modal')" title="Add project">+ Add</button>
+      </div>
     </div>
     <div id="labels-list"></div>
   </div>
@@ -311,7 +314,7 @@ function renderTree(nodes, container, depth = 0) {
 
     const name = document.createElement('span');
     name.className = 'name';
-    name.textContent = n.name;
+    name.textContent = n.project_label_name ? `${n.name} (${n.project_label_name})` : n.name;
 
     const badge = document.createElement('span');
     const badgeStatus = n.status === 'active' ? 'active' : n.status === 'error' ? 'error' : n.status === 'pending' ? 'pending' : n.status === 'dead' ? 'dead' : '';
@@ -522,20 +525,24 @@ async function createNode() {
   const agent = document.getElementById('node-agent').value;
   const prompt = document.getElementById('node-prompt').value.trim() || null;
 
-  const node = await api('/api/nodes', {
-    method: 'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({
-      name: name, parent_id: parent ? parseInt(parent) : null,
-      project_label_id: label, agent_type: agent,
-      initial_prompt: prompt
-    })
-  });
-  closeModal('node-modal');
-  document.getElementById('node-prompt').value = '';
-  selectedNodeId = node.id;
-  refreshTree();
-  loadNodeDetail(node.id);
+  try {
+    const node = await api('/api/nodes', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        name: name, parent_id: parent ? parseInt(parent) : null,
+        project_label_id: label, agent_type: agent,
+        initial_prompt: prompt
+      })
+    });
+    closeModal('node-modal');
+    document.getElementById('node-prompt').value = '';
+    selectedNodeId = node.id;
+    refreshTree();
+    loadNodeDetail(node.id);
+  } catch(e) {
+    toast('Create failed: ' + e.message, true);
+  }
 }
 
 /* ── Create Label ── */
@@ -638,6 +645,15 @@ function timeAgo(ts) {
   if (diff < 3600) return Math.floor(diff/60) + 'm ago';
   if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
   return Math.floor(diff/86400) + 'd ago';
+}
+
+async function refreshHooks() {
+  try {
+    const res = await api('/api/refresh-hooks', {method:'POST'});
+    toast('Hooks synced to ' + res.updated.length + ' project(s).');
+  } catch(e) {
+    toast('Sync failed: ' + e.message, true);
+  }
 }
 
 /* ── Init ── */

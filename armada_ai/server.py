@@ -69,9 +69,9 @@ def get_reports(node_id: int, limit: int = 30):
 @app.post("/api/nodes")
 async def create_node(request: Request):
     body = await request.json()
-    name = body.get("name")
-    parent_id = body.get("parent_id")
-    project_label_id = body.get("project_label_id")
+    name = body.get("name") or None
+    parent_id = body.get("parent_id") or None
+    project_label_id = body.get("project_label_id") or None
     agent_type = body.get("agent_type", "auto")
     initial_prompt = body.get("initial_prompt", "").strip()
 
@@ -81,14 +81,10 @@ async def create_node(request: Request):
         raise HTTPException(status_code=409, detail=f"Node '{name}' already exists")
 
     if project_label_id:
-        conn = db._connect()
-        row = conn.execute(
-            "SELECT path FROM project_labels WHERE id = ?", (project_label_id,)
-        ).fetchone()
-        conn.close()
-        if not row:
+        path = db.get_project_label_path(project_label_id)
+        if not path:
             raise HTTPException(status_code=400, detail="Project label not found")
-        working_dir = row[0]
+        working_dir = path
     else:
         working_dir = os.path.expanduser("~")
 
@@ -119,7 +115,8 @@ async def create_node(request: Request):
     tmux.save_agent_hook(agent_name)
 
     if initial_prompt:
-        tmux.send_initial_prompt(agent_name, initial_prompt)
+        delay = 8.0 if agent_type in ("opencode", "claude") else 3.0
+        tmux.send_initial_prompt(agent_name, initial_prompt, delay=delay)
 
     node = db.get_node(node_id)
     return JSONResponse(node, status_code=201)
@@ -229,6 +226,26 @@ async def create_project_label(request: Request):
 def delete_project_label(label_id: str):
     db.delete_project_label(label_id)
     return JSONResponse({"ok": True})
+
+
+# --- Maintenance ---
+
+@app.post("/api/refresh-hooks")
+def refresh_hooks():
+    """Re-deploy skills and hooks to all project label paths."""
+    labels = db.list_project_labels()
+    updated = []
+    for label in labels:
+        path = label["path"]
+        if not os.path.isdir(path):
+            continue
+        try:
+            tmux.install_skills(path)
+            tmux._deploy_claude_hooks(path)
+            updated.append(label["id"])
+        except Exception:
+            pass
+    return JSONResponse({"updated": updated})
 
 
 # --- Agent Report ---
