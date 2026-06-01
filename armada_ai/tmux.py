@@ -11,6 +11,7 @@ ARMADA_SESSION = "armada"
 
 SKILL_DIRS = ["armada-node", "armada-worker", "armada-orchestrator"]
 _SKILLS_SRC = Path(__file__).parent.parent / "skills"
+_HOOKS_SRC = Path(__file__).parent / "hooks"
 
 
 def _write_zsh_startup(zdotdir: str, tools_dir: str):
@@ -103,12 +104,23 @@ def install_user_skills() -> list[str]:
                 shutil.copy2(src, dst_dir / "SKILL.md")
         installed.append(str(skills_subdir))
 
-    # Also install the armada-pending plugin globally
+    # Also install the armada-pending plugin globally (OpenCode)
     plugin_src = _SKILLS_SRC.parent / ".opencode" / "plugin" / "armada-pending.ts"
     if plugin_src.exists():
         plugin_dst = home / ".config" / "opencode" / "plugin" / "armada-pending.ts"
         plugin_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(plugin_src, plugin_dst)
+
+    # Install Claude Code hooks globally
+    claude_hooks_dst = home / ".claude" / "hooks"
+    claude_hooks_dst.mkdir(parents=True, exist_ok=True)
+    for hook_file in ("claude-pre-tool.sh", "claude-post-tool.sh"):
+        src = _HOOKS_SRC / hook_file
+        if src.exists():
+            dst = claude_hooks_dst / hook_file
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+    installed.append(str(claude_hooks_dst))
 
     return installed
 
@@ -141,6 +153,57 @@ def _deploy_pending_plugin(cwd: str):
         pass
 
 
+def _deploy_claude_hooks(cwd: str):
+    """Install Claude Code hooks for pending status detection."""
+    hooks_dst = Path(cwd) / ".claude" / "hooks"
+    hooks_dst.mkdir(parents=True, exist_ok=True)
+
+    for hook_file in ("claude-pre-tool.sh", "claude-post-tool.sh"):
+        src = _HOOKS_SRC / hook_file
+        if src.exists():
+            dst = hooks_dst / hook_file
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+
+    settings_path = Path(cwd) / ".claude" / "settings.local.json"
+    pre_hook = ".claude/hooks/claude-pre-tool.sh"
+    post_hook = ".claude/hooks/claude-post-tool.sh"
+
+    if settings_path.exists():
+        try:
+            cfg = json.loads(settings_path.read_text())
+        except (json.JSONDecodeError, IOError):
+            cfg = {}
+    else:
+        cfg = {}
+
+    hooks = cfg.setdefault("hooks", {})
+
+    pre_hooks = hooks.setdefault("PreToolUse", [])
+    pre_entry = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": pre_hook, "timeout": 5}]
+    }
+    if not any(
+        h.get("hooks", [{}])[0].get("command") == pre_hook
+        for h in pre_hooks if isinstance(h, dict)
+    ):
+        pre_hooks.append(pre_entry)
+
+    post_hooks = hooks.setdefault("PostToolUse", [])
+    post_entry = {
+        "matcher": "",
+        "hooks": [{"type": "command", "command": post_hook, "timeout": 5}]
+    }
+    if not any(
+        h.get("hooks", [{}])[0].get("command") == post_hook
+        for h in post_hooks if isinstance(h, dict)
+    ):
+        post_hooks.append(post_entry)
+
+    settings_path.write_text(json.dumps(cfg, indent=2))
+
+
 def create_node_window(name: str, colour: str, working_dir: str,
                        agent_type: str = "auto") -> str | None:
     if not _has_tmux():
@@ -158,9 +221,16 @@ def create_node_window(name: str, colour: str, working_dir: str,
     except Exception:
         pass
 
-    # For opencode/claude nodes, copy the pending plugin and register it
-    if agent_type in ("opencode", "claude"):
+    # For opencode nodes, copy the pending plugin and register it
+    if agent_type == "opencode":
         _deploy_pending_plugin(cwd)
+
+    # For claude nodes, install hooks for pending status detection
+    if agent_type == "claude":
+        try:
+            _deploy_claude_hooks(cwd)
+        except Exception:
+            pass
 
     # Determine what to run in the tmux window
     if agent_type in ("opencode", "claude"):
