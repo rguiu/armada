@@ -8,6 +8,7 @@ DB_PATH = os.path.join(DB_DIR, "armada.db")
 PROJECTS_FILE = os.path.join(DB_DIR, "projects.json")
 _write_lock = threading.Lock()
 _local = threading.local()
+_conn_pool: list = []  # track all connections for cleanup
 
 
 def _ensure_dir():
@@ -15,7 +16,7 @@ def _ensure_dir():
 
 
 def _connect() -> sqlite3.Connection:
-    """Return a thread-local shared connection (reused across calls)."""
+    """Return a shared connection (reused within the same thread)."""
     conn = getattr(_local, "conn", None)
     if conn is not None:
         return conn
@@ -26,7 +27,19 @@ def _connect() -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
     _local.conn = conn
+    _conn_pool.append(conn)
     return conn
+
+
+def close_connection():
+    """Close all tracked connections (from any thread). Safe to call repeatedly."""
+    for conn in _conn_pool:
+        try:
+            conn.close()
+        except Exception:
+            pass
+    _conn_pool.clear()
+    _local.conn = None
 
 
 def init_db():

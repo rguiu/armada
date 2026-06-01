@@ -51,6 +51,11 @@ def list_nodes(hide_dead: bool = False):
     return JSONResponse(db.get_all_nodes(include_dead=not hide_dead))
 
 
+@app.get("/api/nodes/history")
+def list_killed_nodes(limit: int = 50):
+    return JSONResponse(db.get_killed_nodes(limit))
+
+
 @app.get("/api/nodes/{node_id}")
 def get_node(node_id: int):
     node = db.get_node(node_id)
@@ -84,6 +89,9 @@ async def create_node(request: Request):
         path = db.get_project_label_path(project_label_id)
         if not path:
             raise HTTPException(status_code=400, detail="Project label not found")
+        if not os.path.isdir(path):
+            raise HTTPException(status_code=400,
+                detail=f"Project path does not exist: {path}")
         working_dir = path
     else:
         working_dir = os.path.expanduser("~")
@@ -100,6 +108,10 @@ async def create_node(request: Request):
         name=agent_name, colour=colour, working_dir=working_dir,
         agent_type=agent_type,
     )
+
+    if pane_id is None:
+        raise HTTPException(status_code=500,
+            detail="Failed to create tmux window. Is tmux installed and running?")
 
     node_id = db.create_node(
         name=agent_name,
@@ -188,11 +200,6 @@ def attach(node_id: int):
         raise HTTPException(status_code=500, detail=error)
 
     return JSONResponse({"ok": True})
-
-
-@app.get("/api/nodes/history")
-def list_killed_nodes(limit: int = 50):
-    return JSONResponse(db.get_killed_nodes(limit))
 
 
 # --- Project Labels ---
