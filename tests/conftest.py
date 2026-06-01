@@ -1,5 +1,6 @@
 import os
 import sys
+import atexit
 import tempfile
 import pytest
 from unittest.mock import MagicMock
@@ -45,13 +46,23 @@ def temp_db(monkeypatch):
     conn.execute("DELETE FROM nodes")
     conn.execute("DELETE FROM project_labels")
     conn.commit()
-    conn.close()
-    db_mod._local.conn = None
-    # Also wipe the JSON cache so init_db doesn't restore labels
+    db_mod.close_connection()
     try:
         os.remove(os.path.join(_test_dir, "projects.json"))
     except OSError:
         pass
+
+
+def _cleanup_db_connections():
+    """Close any db connections from background threads (FastAPI/anyio)."""
+    try:
+        import armada_ai.db as db_mod
+        db_mod.close_connection()
+    except Exception:
+        pass
+
+
+atexit.register(_cleanup_db_connections)
 
 
 @pytest.fixture

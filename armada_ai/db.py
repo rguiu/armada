@@ -29,6 +29,17 @@ def _connect() -> sqlite3.Connection:
     return conn
 
 
+def close_connection():
+    """Close the thread-local connection if open. Safe to call multiple times."""
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+
 def init_db():
     conn = _connect()
     conn.executescript("""
