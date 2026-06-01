@@ -1,57 +1,12 @@
 # Armada
 
-> Terminal orchestration for Open Code and Claude Code agents.
+> Run multiple AI coding agents in parallel from a live web dashboard.
 
-Manage multiple AI coding agents as a **hierarchy of tmux nodes** with a live dashboard. Orchestrator nodes spawn worker children, delegate tasks via API, monitor progress with per-step activity logs, and cascade-clean up — all through a local web UI.
-
-## Architecture
-
-SQLite (WAL mode) with FastAPI REST server, daemonized. Each node is a tmux window running an AI agent. Nodes report status via `POST /api/report`. The dashboard polls every 10 seconds with live status, activity logs, and multi-select batch operations.
-
-## Features
-
-- **Live tree dashboard** — dark themed, 10s auto-refresh, colour-coded node statuses
-- **Agent types** — OpenCode, Claude Code, or Bash workers (parallel computation)
-- **`/send` endpoint** — orchestrators assign tasks to workers via API, no raw tmux
-- **`armada-work` tool** — wraps any command with automatic before/after status reporting
-- **Pending status** — yellow pulsing badge when a node waits for user input/permission
-- **Per-step activity logs** — agents report status before and after every action
-- **Cascade kill & hide** — killing or deleting a parent also handles all descendants
-- **Multi-select batch ops** — checkboxes in the tree for bulk kill/delete/attach
-- **Plugin auto-reporting** — `tool.execute.before/after` hooks post pending on bash commands
-
-## How It Works
-
-```
-┌──────────────────────────────────────────────────┐
-│  Armada Dashboard (http://127.0.0.1:9100)         │
-│  ┌─────────────┐  ┌─────────────────────────────┐│
-│  │ Tree        │  │ Detail: "Architect"         ││
-│  │             │  │ Status: active               ││
-│  │ Architect ● │  │ Project: shipping-api        ││
-│  │  ├─ Reviewer│  │ Message: "reviewing models"  ││
-│  │  └─ Tests   │  │ [Attach] [Kill]              ││
-│  │             │  │ Reports: ...                 ││
-│  │ + Node      │  └─────────────────────────────┘│
-│  │             │                                  │
-│  │ Projects    │                                  │
-│  │ shipping-api│                                  │
-│  │ + Add       │                                  │
-│  └─────────────┘                                  │
-└──────────────────────────────────────────────────┘
-         │
-    ┌────┴────┐
-    │  tmux   │
-    │  armada  │
-    │ session │
-    └─────────┘
-```
-
-Each node is a tmux window running an AI agent (Open Code or Claude Code). Nodes can have a parent-child relationship forming a tree. Orchestrator nodes spawn children via the Armada API. The dashboard shows the full hierarchy with live status, recent activity, and logs.
+Armada manages OpenCode and Claude Code agents as **tmux windows** organized in a tree. Orchestrator nodes spawn worker children, delegate tasks, monitor progress, and cascade-clean up — all from your browser.
 
 ## Installation
 
-**Prerequisites:** Python 3.10+, tmux (`brew install tmux`), Open Code or Claude Code.
+**Prerequisites:** Python 3.10+, tmux (`brew install tmux`), OpenCode or Claude Code.
 
 ```bash
 git clone https://github.com/rguiu/armada.git
@@ -78,26 +33,26 @@ source ~/.zshrc
 ## Quick Start
 
 ```bash
-armada              # Start the server (daemon) + open dashboard
+armada              # Start the server + open dashboard
 ```
 
-Open http://127.0.0.1:9100.
+Open **http://127.0.0.1:9100**.
 
-### Step 1: Register a project
+### 1. Register a project
 
 In the sidebar **Projects** section, click **+ Add**. Give it an ID (slug), a name, and a directory path (or leave blank for the current directory).
 
-### Step 2: Create a node
+### 2. Create a node
 
-Click **+ Node**. Choose a name (or leave blank for auto-generated), select a project, pick an agent type (opencode / claude / bash).
+Click **+ Node**. Choose a name (or leave blank for auto-generated), select a project, pick an agent type — OpenCode, Claude Code, or Bash. Optionally provide an initial prompt.
 
-### Step 3: Attach and work
+### 3. Attach and work
 
-Select the node in the tree and click **Attach**. This opens a terminal tab connected to the node's tmux window. The agent receives Armada status reporting instructions automatically.
+Select the node in the tree and click **Attach**. A terminal tab opens connected to the node's tmux window. The agent starts in the project directory with Armada status reporting configured.
 
-### Step 4: Monitor
+### 4. Monitor
 
-The dashboard polls every 10 seconds. You can see each node's current status, latest task, and full activity log. The tree shows parent-child relationships.
+The dashboard polls every 10 seconds. See each node's current status, latest task, and full activity log.
 
 ## Commands
 
@@ -109,50 +64,9 @@ The dashboard polls every 10 seconds. You can see each node's current status, la
 | `armada attach` | Start in foreground (debugging) |
 | `armada setup` | Install skills to user profile |
 
-## API Endpoints
+## Example: Multi-Agent Pipeline
 
-| Method | Path | Purpose |
-|---|---|---|
-| `GET` | `/api/tree` | Full node hierarchy |
-| `GET` | `/api/tree?hide_dead=true` | Live-only tree |
-| `GET` | `/api/nodes` | Flat node list (includes dead) |
-| `GET` | `/api/nodes?hide_dead=true` | Live-only node list |
-| `POST` | `/api/nodes` | Create node |
-| `DELETE` | `/api/nodes/:id` | Kill node + cascade children |
-| `PATCH` | `/api/nodes/:id` | Hide node (`{"action":"hide"}`) — logical delete |
-| `POST` | `/api/nodes/:id/send` | Send a command to a bash worker |
-| `POST` | `/api/nodes/:id/attach` | Open terminal attached to node |
-| `GET` | `/api/nodes/:id` | Node detail + reports |
-| `GET` | `/api/nodes/:id/reports` | Node activity log |
-| `POST` | `/api/report` | Agent status report (active/idle/error/pending) |
-| `GET` | `/api/nodes/history` | Recently killed nodes |
-| `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
-
-## Agent Skills
-
-Armada ships with three skills that teach agents how to operate as managed nodes:
-
-| Skill | Purpose |
-|---|---|
-| [`armada-node`](skills/armada-node/SKILL.md) | Full node: reports status, spawns/kills children, full orchestration |
-| [`armada-worker`](skills/armada-worker/SKILL.md) | Leaf node: reports status, single-task focus |
-| [`armada-orchestrator`](skills/armada-orchestrator/SKILL.md) | Orchestrator: spawns workers, delegates via /send, monitors |
-
-Skills are installed to `~/.config/opencode/skills/` (OpenCode global) and `~/.claude/skills/` (Claude Code). They auto-activate when `ARMADA_NODE_NAME` is set in the environment.
-
-### Installing Skills
-
-```bash
-armada setup
-```
-
-Copies skills and the pending-status plugin to `~/.config/opencode/`. Skills auto-activate when `ARMADA_NODE_NAME` is set in the environment (done automatically by Armada when creating a node).
-
-This project's `opencode.json` also references `ARMADA.md` as an instruction file — kept project-local for the armada repo itself.
-
-## Example: Multi-Agent Code Review Pipeline
-
-Let's say you're building `shipping-api` in `/Users/you/projects/shipping-api`. You want three agents working in parallel:
+Three agents working on `shipping-api` in parallel:
 
 ```
 Architect (orchestrator)
@@ -160,47 +74,83 @@ Architect (orchestrator)
 └── Tests (worker)     — writes and runs tests
 ```
 
-### Setup
+1. Start Armada: `armada`
+2. In the dashboard, register the project (`shipping-api`) and create an orchestrator node
+3. Attach to the orchestrator — it spawns workers, delegates tasks, and monitors results
 
-```bash
-# 1. Start Armada
-armada
+The dashboard updates in real time as each worker reports active/idle.
 
-# 2. Register project
-# In dashboard: Projects → + Add
-#   ID: shipping-api
-#   Name: Shipping API
-#   Path: /Users/you/projects/shipping-api
+## Features
 
-# 3. Create orchestrator
-# In dashboard: + Node
-#   Name: Architect
-#   Project: Shipping API
-#   Agent: opencode
+- **Live tree dashboard** — dark theme, 10s auto-refresh, colour-coded status badges
+- **Agent types** — OpenCode, Claude Code, or Bash workers
+- **Initial prompts** — auto-type a prompt when a node starts
+- **`/send` endpoint** — orchestrators assign tasks to workers via API
+- **Pending status** — yellow pulsing badge when a node waits for input
+- **Per-step activity logs** — agents report status before and after every action
+- **Cascade kill & hide** — killing a parent also handles all descendants
+- **Multi-select batch ops** — checkboxes in the tree for bulk kill/delete/attach
 
-# 4. Skills already installed globally by 'armada setup' — no per-project copy needed.
+## Architecture
 
-# 5. Attach to Architect and start working
-# Click Architect in tree → Attach
-# The agent now has the armada-orchestrator skill loaded
+SQLite (WAL mode) + FastAPI REST server, daemonized. Each node is a tmux window running an agent. Nodes report status via `POST /api/report`. The dashboard polls every 10 seconds.
+
+```
+┌──────────────────────────────────────────────────┐
+│  Armada Dashboard (http://127.0.0.1:9100)         │
+│  ┌─────────────┐  ┌─────────────────────────────┐│
+│  │ Tree        │  │ Detail: "Architect"         ││
+│  │             │  │ Status: active               ││
+│  │ Architect ● │  │ Project: shipping-api        ││
+│  │  ├─ Reviewer│  │ Message: "reviewing models"  ││
+│  │  └─ Tests   │  │ [Attach] [Kill]              ││
+│  │ + Node      │  │ Reports: ...                 ││
+│  │ Projects    │  └─────────────────────────────┘│
+│  │ + Add       │                                  │
+│  └─────────────┘                                  │
+└──────────────────────────────────────────────────┘
+         │
+    ┌────┴────┐
+    │  tmux   │
+    │  armada  │
+    │ session │
+    └─────────┘
 ```
 
-### Architect's Workflow
+## Agent Skills
 
-The Architect (with `armada-orchestrator` skill) will:
+Armada ships with three skills that teach agents how to operate as managed nodes:
 
-1. Analyze the codebase structure
-2. Spawn a `Reviewer` node for code review:
-   ```bash
-   curl -s -X POST http://127.0.0.1:9100/api/nodes \
-     -H "Content-Type: application/json" \
-     -d '{"name":"Reviewer","parent_id":1,"project_label_id":"shipping-api","agent_type":"opencode"}'
-   ```
-3. Spawn a `Tests` node for test writing
-4. Monitor both via `GET /api/tree`
-5. Collect results and kill workers when done
+| Skill | Purpose |
+|---|---|
+| [`armada-node`](skills/armada-node/SKILL.md) | Full node: reports status, spawns/kills children |
+| [`armada-worker`](skills/armada-worker/SKILL.md) | Leaf node: reports status, single-task focus |
+| [`armada-orchestrator`](skills/armada-orchestrator/SKILL.md) | Orchestrator: spawns workers, delegates via /send |
 
-The dashboard shows the full tree updating in real time. Each worker reports "active" / "idle" as it works.
+Skills install to `~/.config/opencode/skills/` and `~/.claude/skills/`. They auto-activate when `ARMADA_NODE_NAME` is set in the environment.
+
+```bash
+armada setup
+```
+
+## API Endpoints
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET` | `/api/tree` | Full node hierarchy |
+| `GET` | `/api/tree?hide_dead=true` | Live-only tree |
+| `GET` | `/api/nodes` | Flat node list |
+| `GET` | `/api/nodes?hide_dead=true` | Live-only node list |
+| `POST` | `/api/nodes` | Create node |
+| `GET` | `/api/nodes/:id` | Node detail + reports |
+| `GET` | `/api/nodes/:id/reports` | Activity log |
+| `GET` | `/api/nodes/history` | Recently killed nodes |
+| `DELETE` | `/api/nodes/:id` | Kill node + cascade |
+| `PATCH` | `/api/nodes/:id` | Hide node (`{"action":"hide"}`) |
+| `POST` | `/api/nodes/:id/send` | Send command to worker |
+| `POST` | `/api/nodes/:id/attach` | Open terminal attached to node |
+| `POST` | `/api/report` | Agent status report |
+| `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
 
 ## Development
 
@@ -209,34 +159,23 @@ python3 -m venv .venv && source .venv/bin/activate
 pip install -e ".[test]"
 ```
 
-### Running Tests
+### Tests
 
 ```bash
 pytest                          # Run all tests
 pytest --cov=armada_ai          # With coverage report
-pytest -v tests/test_server.py  # Specific test file
 ```
 
-### Linting
+### Lint
 
 ```bash
 pip install ruff
 ruff check armada_ai/ tests/
 ```
 
-### CI Pipeline
+### CI
 
-On push/PR to `main`, GitHub Actions runs:
-- **ruff** — code linting
-- **pytest-cov** — test suite on Python 3.10–3.13 with 80% coverage threshold
-
-## File Locations
-
-| Path | Purpose |
-|---|---|
-| `~/.armada/armada.db` | SQLite database |
-| `~/.armada/server.pid` | Daemon PID file |
-| `~/.armada/hooks/<name>.md` | Per-node hook instructions |
+On push/PR to `main`, GitHub Actions runs **ruff** + **pytest-cov** on Python 3.10–3.13 (80% coverage threshold).
 
 ## License
 
