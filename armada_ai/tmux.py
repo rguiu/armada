@@ -4,10 +4,18 @@ import os
 import json
 import time
 import tempfile
+import threading
 from pathlib import Path
 
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
+_attach_counter = 0
+
+
+def _next_attach_id():
+    global _attach_counter
+    _attach_counter += 1
+    return _attach_counter
 
 SKILL_DIRS = ["armada-node", "armada-worker", "armada-orchestrator"]
 _SKILLS_SRC = Path(__file__).parent.parent / "skills"
@@ -48,6 +56,8 @@ def ensure_armada_session():
     result = _tmux("has-session", "-t", ARMADA_SESSION)
     if result.returncode != 0:
         _tmux("new-session", "-d", "-s", ARMADA_SESSION, "-n", "overview")
+        _tmux("set-option", "-t", ARMADA_SESSION, "set-titles", "on")
+        _tmux("set-option", "-t", ARMADA_SESSION, "set-titles-string", "#{window_name}")
 
 
 def install_skills(project_dir: str):
@@ -114,7 +124,7 @@ def install_user_skills() -> list[str]:
     # Install Claude Code hooks globally
     claude_hooks_dst = home / ".claude" / "hooks"
     claude_hooks_dst.mkdir(parents=True, exist_ok=True)
-    for hook_file in ("claude-pre-tool.sh", "claude-post-tool.sh"):
+    for hook_file in ("claude-pre-tool.sh", "claude-post-tool.sh", "claude-stop.sh", "claude-permission.sh"):
         src = _HOOKS_SRC / hook_file
         if src.exists():
             dst = claude_hooks_dst / hook_file
@@ -154,11 +164,15 @@ def _deploy_pending_plugin(cwd: str):
 
 
 def _deploy_claude_hooks(cwd: str):
-    """Install Claude Code hooks for pending status detection."""
+    """Install Claude Code hooks for status reporting."""
     hooks_dst = Path(cwd) / ".claude" / "hooks"
     hooks_dst.mkdir(parents=True, exist_ok=True)
 
-    for hook_file in ("claude-pre-tool.sh", "claude-post-tool.sh"):
+    hook_files = (
+        "claude-pre-tool.sh", "claude-post-tool.sh",
+        "claude-stop.sh", "claude-permission.sh",
+    )
+    for hook_file in hook_files:
         src = _HOOKS_SRC / hook_file
         if src.exists():
             dst = hooks_dst / hook_file
@@ -166,8 +180,6 @@ def _deploy_claude_hooks(cwd: str):
             dst.chmod(0o755)
 
     settings_path = Path(cwd) / ".claude" / "settings.local.json"
-    pre_hook = ".claude/hooks/claude-pre-tool.sh"
-    post_hook = ".claude/hooks/claude-post-tool.sh"
 
     if settings_path.exists():
         try:
@@ -179,27 +191,24 @@ def _deploy_claude_hooks(cwd: str):
 
     hooks = cfg.setdefault("hooks", {})
 
-    pre_hooks = hooks.setdefault("PreToolUse", [])
-    pre_entry = {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": pre_hook, "timeout": 5}]
+    hook_config = {
+        "PreToolUse": ".claude/hooks/claude-pre-tool.sh",
+        "PostToolUse": ".claude/hooks/claude-post-tool.sh",
+        "Stop": ".claude/hooks/claude-stop.sh",
+        "PermissionRequest": ".claude/hooks/claude-permission.sh",
     }
-    if not any(
-        h.get("hooks", [{}])[0].get("command") == pre_hook
-        for h in pre_hooks if isinstance(h, dict)
-    ):
-        pre_hooks.append(pre_entry)
 
-    post_hooks = hooks.setdefault("PostToolUse", [])
-    post_entry = {
-        "matcher": "",
-        "hooks": [{"type": "command", "command": post_hook, "timeout": 5}]
-    }
-    if not any(
-        h.get("hooks", [{}])[0].get("command") == post_hook
-        for h in post_hooks if isinstance(h, dict)
-    ):
-        post_hooks.append(post_entry)
+    for event, command in hook_config.items():
+        event_hooks = hooks.setdefault(event, [])
+        entry = {
+            "matcher": "",
+            "hooks": [{"type": "command", "command": command, "timeout": 5}]
+        }
+        if not any(
+            h.get("hooks", [{}])[0].get("command") == command
+            for h in event_hooks if isinstance(h, dict)
+        ):
+            event_hooks.append(entry)
 
     settings_path.write_text(json.dumps(cfg, indent=2))
 
@@ -280,6 +289,10 @@ def create_node_window(name: str, colour: str, working_dir: str,
               "pane-active-border-style", f"fg={colour}")
         _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
               "pane-border-style", f"fg={colour}")
+        _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
+              "automatic-rename", "off")
+        _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
+              "allow-rename", "off")
 
     return pane_id
 
@@ -310,6 +323,9 @@ def attach_node(name: str, colour: str = "#8b949e") -> str | None:
     if not _has_tmux():
         return "tmux is not installed"
 
+    _tmux("set-option", "-t", ARMADA_SESSION, "set-titles", "on")
+    _tmux("set-option", "-t", ARMADA_SESSION, "set-titles-string", "#{window_name}")
+
     # Already inside tmux: switch client to the window
     if os.environ.get("TMUX"):
         subprocess.run(["tmux", "switch-client", "-t", f"{ARMADA_SESSION}:{name}"])
@@ -332,11 +348,12 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
     """Try opening a new iTerm tab attached to the node, with tab colour."""
     # Write colour escape sequences to a temp file (avoids AppleScript escaping hell)
     r, g, b = _hex_to_rgb(colour)
-    colour_file = f"/tmp/_armada_colour_{os.getpid()}.sh"
-    with open(colour_file, "w") as f:
+    attach_file = f"/tmp/_armada_attach_{os.getpid()}.sh"
+    with open(attach_file, "w") as f:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
+        f.write(f"exec tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}\n")
 
     try:
         applescript = (
@@ -347,16 +364,14 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
             f'      set newTab to (create tab with default profile)\n'
             f'      tell current session of newTab\n'
             f'        set name to "{name}"\n'
-            f'        write text "source {colour_file} > /dev/null 2>&1 && rm -f {colour_file}"\n'
-            f'        write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+            f'        write text "source {attach_file} && rm -f {attach_file}"\n'
             f'      end tell\n'
             f'    end tell\n'
             f'  on error\n'
             f'    set newWindow to (create window with default profile)\n'
             f'    tell current session of newWindow\n'
             f'      set name to "{name}"\n'
-            f'      write text "source {colour_file} > /dev/null 2>&1 && rm -f {colour_file}"\n'
-            f'      write text "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+            f'      write text "source {attach_file} && rm -f {attach_file}"\n'
             f'    end tell\n'
             f'  end try\n'
             f'end tell'
@@ -369,12 +384,6 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
         return "osascript not available"
     except Exception as e:
         return f"iTerm error: {e}"
-    finally:
-        # Clean up temp file if it wasn't consumed
-        try:
-            os.remove(colour_file)
-        except OSError:
-            pass
 
 
 def _hex_to_rgb(hex_colour: str) -> tuple[int, int, int]:
@@ -386,10 +395,14 @@ def _hex_to_rgb(hex_colour: str) -> tuple[int, int, int]:
 def _try_terminal_attach(name: str) -> str | None:
     """Try opening a Terminal.app window attached to the node."""
     try:
+        tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
+        attach_file = f"/tmp/_armada_term_attach_{os.getpid()}.sh"
+        with open(attach_file, "w") as f:
+            f.write(f"exec {tmux_cmd}\n")
         applescript = (
             f'tell application "Terminal"\n'
             f'  activate\n'
-            f'  do script "tmux attach -t {ARMADA_SESSION}:{name}"\n'
+            f'  do script "source {attach_file} && rm -f {attach_file}"\n'
             f'end tell'
         )
         result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
@@ -406,16 +419,46 @@ def send_keys(name: str, command: str):
     """Send a command to a node's tmux window via send-keys."""
     if not _has_tmux():
         return False
-    result = _tmux("send-keys", "-t", f"{ARMADA_SESSION}:{name}", command, "Enter")
+    target = f"{ARMADA_SESSION}:{name}"
+    # Use set-buffer + paste-buffer for reliable delivery to TUI apps
+    _tmux("set-buffer", command)
+    _tmux("paste-buffer", "-t", target)
+    time.sleep(0.1)
+    result = _tmux("send-keys", "-t", target, "Enter")
     return result.returncode == 0
 
 
 def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
-    """Send an initial prompt to a node after a delay (allows agent to start)."""
-    import threading
+    """Send an initial prompt to a node once the agent is ready.
+    Waits for the agent process to start, then for its input prompt."""
 
     def _send():
+        # Wait for the agent process to actually be running in the pane
+        target = f"{ARMADA_SESSION}:{name}"
+        for _ in range(60):
+            time.sleep(1)
+            result = _tmux("display-message", "-t", target, "-p", "#{pane_current_command}")
+            if result.returncode == 0:
+                cmd = result.stdout.strip().lower()
+                if cmd in ("node", "claude", "opencode", "deno"):
+                    break
+        else:
+            # Timeout — agent never appeared, send anyway
+            send_keys(name, prompt)
+            return
+
+        # Agent process is running — now wait for its REPL to be ready
         time.sleep(delay)
+        for _ in range(30):
+            result = _tmux("capture-pane", "-t", target, "-p")
+            if result.returncode == 0:
+                content = result.stdout
+                if ">" in content or "❯" in content or "cost" in content.lower():
+                    time.sleep(0.5)
+                    send_keys(name, prompt)
+                    return
+            time.sleep(1)
+        # Timeout — send anyway
         send_keys(name, prompt)
 
     thread = threading.Thread(target=_send, daemon=True)
