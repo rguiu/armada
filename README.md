@@ -1,8 +1,8 @@
 # Armada
 
-> Track, control, and reattach to AI coding agents running in persistent tmux sessions.
+> Command your fleet of AI agents from a single dashboard.
 
-Armada gives you a live dashboard to manage OpenCode and Claude Code agents. Each agent runs in its own tmux window — attach anytime to see what it's doing, detach and let it keep working, and monitor status and activity from your browser. Kill, hide, or batch-operate on nodes from the UI. Orchestrator agents can spawn worker children, delegate tasks, and cascade-clean up.
+Armada lets you launch OpenCode and Claude Code agents in persistent tmux sessions, track their status live, and attach to any agent in a keystroke. Spawn workers, delegate tasks, monitor progress — all from your browser. Attach when you need to steer, detach and let them run in the background.
 
 ## Installation
 
