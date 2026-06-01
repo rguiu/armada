@@ -202,6 +202,34 @@ The Architect (with `armada-orchestrator` skill) will:
 
 The dashboard shows the full tree updating in real time. Each worker reports "active" / "idle" as it works.
 
+## Development
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e ".[test]"
+```
+
+### Running Tests
+
+```bash
+pytest                          # Run all tests
+pytest --cov=armada_ai          # With coverage report
+pytest -v tests/test_server.py  # Specific test file
+```
+
+### Linting
+
+```bash
+pip install ruff
+ruff check armada_ai/ tests/
+```
+
+### CI Pipeline
+
+On push/PR to `main`, GitHub Actions runs:
+- **ruff** — code linting
+- **pytest-cov** — test suite on Python 3.10–3.13 with 80% coverage threshold
+
 ## File Locations
 
 | Path | Purpose |
