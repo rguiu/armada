@@ -33,12 +33,17 @@ echo "  ✓ tmux $(tmux -V 2>&1)"
 echo ""
 echo "2/4  Installing Python package..."
 
+if [ -d "$VENV_DIR" ] && ! "$VENV_DIR/bin/python3" -c "" 2>/dev/null; then
+    echo "  ⚠ Corrupt venv detected, recreating..."
+    rm -rf "$VENV_DIR"
+fi
+
 if [ ! -d "$VENV_DIR" ]; then
     python3 -m venv "$VENV_DIR"
 fi
 
 source "$VENV_DIR/bin/activate"
-pip install -e "$PROJECT_DIR" --quiet
+"$VENV_DIR/bin/pip" install -e "$PROJECT_DIR" --quiet
 echo "  ✓ armada-ai installed"
 
 # 3. Add to PATH

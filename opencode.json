@@ -6,7 +6,7 @@
   "command": {
     "armada": {
       "description": "Spawn and manage Armada parallel worker nodes",
-      "prompt": "Execute the user's request using Armada parallel workers. Spawn bash workers via POST /api/nodes, send tasks via POST /api/nodes/:id/send (single-quoted -d body), poll until idle, read results from /tmp/armada-results/, kill workers when done. Report status before/after every step."
+      "template": "Execute the user's request using Armada parallel workers. Spawn bash workers via POST /api/nodes, send tasks via POST /api/nodes/:id/send (single-quoted -d body), poll until idle, read results from /tmp/armada-results/, kill workers when done. Report status before/after every step."
     }
   },
   "plugin": [".opencode/plugin/armada-pending.ts"]
