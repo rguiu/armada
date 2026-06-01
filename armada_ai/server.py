@@ -84,6 +84,9 @@ async def create_node(request: Request):
         path = db.get_project_label_path(project_label_id)
         if not path:
             raise HTTPException(status_code=400, detail="Project label not found")
+        if not os.path.isdir(path):
+            raise HTTPException(status_code=400,
+                detail=f"Project path does not exist: {path}")
         working_dir = path
     else:
         working_dir = os.path.expanduser("~")
@@ -100,6 +103,10 @@ async def create_node(request: Request):
         name=agent_name, colour=colour, working_dir=working_dir,
         agent_type=agent_type,
     )
+
+    if pane_id is None:
+        raise HTTPException(status_code=500,
+            detail="Failed to create tmux window. Is tmux installed and running?")
 
     node_id = db.create_node(
         name=agent_name,
