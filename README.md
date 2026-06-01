@@ -54,7 +54,7 @@ Each node is a tmux window running an AI agent (Open Code or Claude Code). Nodes
 **Prerequisites:** Python 3.10+, tmux (`brew install tmux`), Open Code or Claude Code.
 
 ```bash
-git clone https://github.com/your-username/armada.git
+git clone https://github.com/rguiu/armada.git
 cd armada
 bash install.sh
 ```
