@@ -7,6 +7,7 @@ DB_DIR = os.path.expanduser("~/.armada")
 DB_PATH = os.path.join(DB_DIR, "armada.db")
 PROJECTS_FILE = os.path.join(DB_DIR, "projects.json")
 _write_lock = threading.Lock()
+_local = threading.local()
 
 
 def _ensure_dir():
@@ -14,12 +15,17 @@ def _ensure_dir():
 
 
 def _connect() -> sqlite3.Connection:
+    """Return a thread-local shared connection (reused across calls)."""
+    conn = getattr(_local, "conn", None)
+    if conn is not None:
+        return conn
     _ensure_dir()
-    conn = sqlite3.connect(DB_PATH, timeout=10)
+    conn = sqlite3.connect(DB_PATH, timeout=10, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA busy_timeout=5000")
     conn.row_factory = sqlite3.Row
+    _local.conn = conn
     return conn
 
 
@@ -58,7 +64,6 @@ def init_db():
             ON status_reports(node_id, timestamp DESC);
     """)
     conn.commit()
-    conn.close()
     _sync_projects_from_json()
     # Migrate: add hidden_at if schema predates it
     _migrate_add_hidden_at()
@@ -72,7 +77,6 @@ def _migrate_add_hidden_at():
             conn.commit()
         except sqlite3.OperationalError:
             pass
-        conn.close()
 
 
 # --- Project Labels ---
@@ -91,7 +95,6 @@ def add_project_label(id: str, name: str, path: str):
             existing = conn.execute(
                 "SELECT id FROM project_labels WHERE path = ? AND id != ?", (path, id)
             ).fetchone()
-            conn.close()
             if existing:
                 raise ValueError(
                     f"Path '{path}' is already registered as '{existing[0]}'. "
@@ -99,7 +102,7 @@ def add_project_label(id: str, name: str, path: str):
                 ) from e
             raise
         finally:
-            conn.close()
+            pass
     _save_projects_to_json()
 
 
@@ -108,15 +111,19 @@ def delete_project_label(id: str):
         conn = _connect()
         conn.execute("DELETE FROM project_labels WHERE id = ?", (id,))
         conn.commit()
-        conn.close()
     _save_projects_to_json()
 
 
 def list_project_labels():
     conn = _connect()
     rows = conn.execute("SELECT id, name, path FROM project_labels ORDER BY name").fetchall()
-    conn.close()
     return [dict(r) for r in rows]
+
+
+def get_project_label_path(label_id: str) -> str | None:
+    conn = _connect()
+    row = conn.execute("SELECT path FROM project_labels WHERE id = ?", (label_id,)).fetchone()
+    return row[0] if row else None
 
 
 # --- Nodes ---
@@ -134,7 +141,6 @@ def create_node(name: str, colour: str, parent_id: int | None = None,
         )
         conn.commit()
         sid = cursor.lastrowid
-        conn.close()
     return sid
 
 
@@ -158,7 +164,6 @@ def kill_node(node_id: int) -> list[dict]:
                 (current,),
             )
         conn.commit()
-        conn.close()
     return killed
 
 
@@ -173,7 +178,6 @@ def update_node_status(node_id: int, status: str, tmux_pane_id: str | None = Non
         params.append(node_id)
         conn.execute(f"UPDATE nodes SET {', '.join(parts)} WHERE id = ?", params)
         conn.commit()
-        conn.close()
 
 
 def add_status_report(node_id: int, status: str, message: str | None = None):
@@ -185,7 +189,6 @@ def add_status_report(node_id: int, status: str, message: str | None = None):
         )
         conn.execute("UPDATE nodes SET status = ? WHERE id = ?", (status, node_id))
         conn.commit()
-        conn.close()
 
 
 def get_node(node_id: int):
@@ -195,7 +198,6 @@ def get_node(node_id: int):
         "FROM nodes n LEFT JOIN project_labels p ON n.project_label_id = p.id "
         "WHERE n.id = ?", (node_id,)
     ).fetchone()
-    conn.close()
     return dict(row) if row else None
 
 
@@ -204,7 +206,6 @@ def get_node_by_name(name: str):
     row = conn.execute(
         "SELECT * FROM nodes WHERE name = ? AND killed_at IS NULL AND hidden_at IS NULL", (name,)
     ).fetchone()
-    conn.close()
     return dict(row) if row else None
 
 
@@ -213,7 +214,6 @@ def get_node_children(node_id: int):
     rows = conn.execute(
         "SELECT * FROM nodes WHERE parent_id = ? AND killed_at IS NULL AND hidden_at IS NULL", (node_id,)
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -249,7 +249,6 @@ def get_all_nodes(include_dead: bool = True):
             WHERE n.killed_at IS NULL AND n.hidden_at IS NULL
             ORDER BY n.created_at DESC
         """).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -260,7 +259,6 @@ def get_node_reports(node_id: int, limit: int = 30):
         "WHERE node_id = ? ORDER BY timestamp DESC LIMIT ?",
         (node_id, limit),
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -272,7 +270,6 @@ def get_root_nodes():
         "FROM nodes WHERE parent_id IS NULL AND killed_at IS NULL AND hidden_at IS NULL "
         "ORDER BY created_at DESC"
     ).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -309,7 +306,6 @@ def get_killed_nodes(limit: int = 50):
         ORDER BY n.killed_at DESC
         LIMIT ?
     """, (limit,)).fetchall()
-    conn.close()
     return [dict(r) for r in rows]
 
 
@@ -333,21 +329,18 @@ def hide_node(node_id: int) -> list[dict]:
                 (current,),
             )
         conn.commit()
-        conn.close()
     return hidden
 
 
 def existing_names():
     conn = _connect()
     rows = conn.execute("SELECT name FROM nodes WHERE killed_at IS NULL AND hidden_at IS NULL").fetchall()
-    conn.close()
     return {r[0] for r in rows}
 
 
 def active_colours():
     conn = _connect()
     rows = conn.execute("SELECT colour FROM nodes WHERE killed_at IS NULL AND hidden_at IS NULL").fetchall()
-    conn.close()
     return [r[0] for r in rows]
 
 
