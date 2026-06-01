@@ -6,7 +6,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
-BIN_DIR="$PROJECT_DIR/bin"
+BIN_DIR="$VENV_DIR/bin"
 
 echo ""
 echo "⚓ Armada Installer"
@@ -43,7 +43,7 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 source "$VENV_DIR/bin/activate"
-"$VENV_DIR/bin/pip" install -e "$PROJECT_DIR" --quiet
+"$VENV_DIR/bin/pip" install -e "$PROJECT_DIR" --quiet --index-url https://pypi.org/simple
 echo "  ✓ armada-ai installed"
 
 # 3. Add to PATH
