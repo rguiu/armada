@@ -41,12 +41,18 @@ def temp_db(monkeypatch):
     monkeypatch.setattr(db_mod, "PROJECTS_FILE", projects_file)
     db_mod.init_db()
     yield db_mod
-    conn = db_mod._connect()
-    conn.execute("DELETE FROM status_reports")
-    conn.execute("DELETE FROM nodes")
-    conn.execute("DELETE FROM project_labels")
-    conn.commit()
     db_mod.close_connection()
+    # Clean up test files for next test
+    try:
+        db_file = os.path.join(_test_dir, "armada.db")
+        if os.path.exists(db_file):
+            os.remove(db_file)
+        for suffix in ("-wal", "-shm"):
+            wf = db_file + suffix
+            if os.path.exists(wf):
+                os.remove(wf)
+    except OSError:
+        pass
     try:
         os.remove(os.path.join(_test_dir, "projects.json"))
     except OSError:
