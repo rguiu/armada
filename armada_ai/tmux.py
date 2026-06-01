@@ -232,7 +232,10 @@ def create_node_window(name: str, colour: str, working_dir: str,
 
     # For opencode nodes, copy the pending plugin and register it
     if agent_type == "opencode":
-        _deploy_pending_plugin(cwd)
+        try:
+            _deploy_pending_plugin(cwd)
+        except Exception:
+            pass
 
     # For claude nodes, install hooks for pending status detection
     if agent_type == "claude":

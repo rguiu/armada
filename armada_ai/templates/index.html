@@ -605,10 +605,18 @@ async function refreshNodeModalDropdowns() {
     return opts;
   }
 
-  document.getElementById('node-parent').innerHTML = '<option value="">None (root node)</option>' + addNodes(tree);
-  document.getElementById('node-label').innerHTML =
+  const parentEl = document.getElementById('node-parent');
+  const labelEl = document.getElementById('node-label');
+  const savedParent = parentEl.value;
+  const savedLabel = labelEl.value;
+
+  parentEl.innerHTML = '<option value="">None (root node)</option>' + addNodes(tree);
+  labelEl.innerHTML =
     '<option value="">Current directory</option>' +
     labels.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
+
+  if (savedParent) parentEl.value = savedParent;
+  if (savedLabel) labelEl.value = savedLabel;
 }
 
 async function refreshAll() {
