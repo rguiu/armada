@@ -8,7 +8,8 @@ import subprocess
 def main():
     args = sys.argv[1:]
     lan = "--lan" in args
-    args = [a for a in args if a != "--lan"]
+    qr = "--qr" in args
+    args = [a for a in args if a not in ("--lan", "--qr")]
 
     if not args or args[0] in ("start", "serve"):
         from .server import start_server
@@ -29,16 +30,17 @@ def main():
         _setup_skills()
 
     elif args[0] == "token":
-        _print_token()
+        _print_token(qr=qr, lan=lan)
 
     else:
-        print("Usage: armada [start|stop|attach|setup|token] [--lan]")
+        print("Usage: armada [start|stop|attach|setup|token] [--lan] [--qr]")
         print("  start   Start the Armada server daemon + open dashboard")
         print("  stop    Stop the Armada server")
         print("  attach  Start server in foreground (for debugging)")
         print("  setup   Install Armada skills to user profile")
-        print("  token   Print the auth token for API/CLI access")
-        print("  --lan   Bind to 0.0.0.0:9100 (accessible from other devices on LAN)")
+        print("  token   Print the auth token (--qr for scannable QR code)")
+        print("  --lan   Bind to / use LAN IP (for other devices on network)")
+        print("  --qr    Show QR code (with token command)")
         sys.exit(1)
 
 
@@ -53,18 +55,29 @@ def _lan_ip():
         s.close()
 
 
-def _print_token():
+def _print_token(qr: bool = False, lan: bool = False):
     token_file = os.path.expanduser("~/.armada/token")
     try:
         token = open(token_file).read().strip()
-        if token:
-            print(token)
-        else:
-            print("No token found. Start Armada first with: armada start", file=sys.stderr)
-            sys.exit(1)
     except FileNotFoundError:
         print("No token found. Start Armada first with: armada start", file=sys.stderr)
         sys.exit(1)
+
+    if not token:
+        print("No token found. Start Armada first with: armada start", file=sys.stderr)
+        sys.exit(1)
+
+    if qr:
+        import qrcode
+        host = _lan_ip() if lan else "127.0.0.1"
+        url = f"http://{host}:9100?token={token}"
+        print(url)
+        print()
+        qr = qrcode.QRCode()
+        qr.add_data(url)
+        qr.print_ascii()
+    else:
+        print(token)
 
 
 def _setup_skills():

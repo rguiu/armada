@@ -680,6 +680,23 @@ class TestCLI:
         cli_mod._print_token()
         assert captured.getvalue().strip() == "my-token-123"
 
+    def test_print_token_qr(self, tmp_path, monkeypatch):
+        """_print_token --qr prints URL and QR code."""
+        import armada_ai.cli as cli_mod
+
+        token_file = tmp_path / "token"
+        token_file.write_text("my-token-123")
+        monkeypatch.setattr(cli_mod.os.path, "expanduser", lambda p: str(token_file) if "token" in p else p)
+
+        import io
+        import sys
+        captured = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", captured)
+        cli_mod._print_token(qr=True)
+        output = captured.getvalue()
+        assert "http://127.0.0.1:9100?token=my-token-123" in output
+        assert "█" in output
+
     def test_print_token_missing(self, tmp_path, monkeypatch):
         """_print_token exits 1 when no token file exists."""
         import armada_ai.cli as cli_mod
