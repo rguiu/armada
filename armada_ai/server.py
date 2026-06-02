@@ -1,6 +1,8 @@
 import os
 import sys
+import subprocess
 import threading
+import re
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
@@ -11,6 +13,8 @@ from . import db
 from . import naming
 from . import tmux
 from . import health
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 app = FastAPI(title="Armada")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -202,6 +206,42 @@ def attach(node_id: int):
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/nodes/{node_id}/terminal")
+def terminal_view(node_id: int):
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if not tmux.window_exists(node["name"]):
+        raise HTTPException(status_code=410, detail="Node window no longer exists")
+
+    target = f"armada:{node['name']}"
+
+    dims = subprocess.run(
+        ["tmux", "display-message", "-p", "-t", target,
+         "#{pane_width} #{pane_height}"],
+        capture_output=True, timeout=2,
+    )
+    cols, rows = 80, 24
+    if dims.returncode == 0:
+        parts = dims.stdout.decode().strip().split()
+        if len(parts) == 2:
+            cols, rows = int(parts[0]), int(parts[1])
+
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", target],
+        capture_output=True, timeout=2,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail="Failed to capture pane")
+
+    raw = _ANSI_RE.sub('', result.stdout.decode("utf-8", errors="replace")).replace('\r', '')
+    text_lines = raw.split('\n')
+    if text_lines and text_lines[-1] == '':
+        text_lines.pop()
+    text = ''.join(line.ljust(cols) for line in text_lines)
+    return JSONResponse({"text": text, "cols": cols, "rows": rows})
+
+
 # --- Project Labels ---
 
 @app.get("/api/project-labels")
@@ -308,15 +348,17 @@ def _daemonize():
     _write_pid()
 
 
-def start_server(daemon: bool = True, open_browser: bool = True):
+def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = False):
+    host = "0.0.0.0" if lan else HOST
+
     if daemon:
         _daemonize()
 
-    if open_browser:
+    if open_browser and not lan:
         import webbrowser
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}")).start()
 
     try:
-        uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+        uvicorn.run(app, host=host, port=PORT, log_level="warning")
     finally:
         _remove_pid()

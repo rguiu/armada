@@ -1,6 +1,7 @@
 """Tests for API endpoints."""
 
 import tempfile
+from unittest.mock import MagicMock
 
 
 def _mkproj(temp_db, id="proj", name="Project"):
@@ -236,6 +237,181 @@ class TestRemainingEndpoints:
         """Send to non-existent node should return 404."""
         r = client.post("/api/nodes/99999/send", json={"command": "echo hi"})
         assert r.status_code == 404
+
+    def test_terminal_view(self, temp_db, client, monkeypatch):
+        """GET /api/nodes/{id}/terminal returns pane content and dimensions."""
+        import subprocess
+        import armada_ai.server as server_mod
+
+        nid = temp_db.create_node("termtest", "#111")
+
+        call_count = 0
+        def fake_run(cmd, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            m = MagicMock()
+            if "display-message" in cmd:
+                m.returncode = 0
+                m.stdout = b"214 52"
+            elif "capture-pane" in cmd:
+                m.returncode = 0
+                m.stdout = b"line1\nline2\n"
+            else:
+                m.returncode = 0
+                m.stdout = b""
+            return m
+
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        r = client.get(f"/api/nodes/{nid}/terminal")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["cols"] == 214
+        assert data["rows"] == 52
+        assert "line1" in data["text"]
+        assert "line2" in data["text"]
+
+    def test_terminal_view_node_not_found(self, client):
+        """Terminal view for non-existent node returns 404."""
+        r = client.get("/api/nodes/99999/terminal")
+        assert r.status_code == 404
+
+    def test_terminal_view_window_gone(self, temp_db, client, monkeypatch):
+        """Terminal view when window doesn't exist returns 410."""
+        import armada_ai.server as server_mod
+
+        nid = temp_db.create_node("deadwin", "#222")
+        monkeypatch.setattr(server_mod.tmux, "window_exists", lambda _: False)
+
+        r = client.get(f"/api/nodes/{nid}/terminal")
+        assert r.status_code == 410
+
+    def test_terminal_view_capture_fails(self, temp_db, client, monkeypatch):
+        """Terminal view when capture-pane fails returns 500."""
+        import subprocess
+        import armada_ai.server as server_mod
+
+        nid = temp_db.create_node("failwin", "#333")
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            if "display-message" in cmd:
+                m.returncode = 0
+                m.stdout = b"80 24"
+            else:
+                m.returncode = 1
+                m.stdout = b""
+            return m
+
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        r = client.get(f"/api/nodes/{nid}/terminal")
+        assert r.status_code == 500
+
+    def test_terminal_view_default_dims(self, temp_db, client, monkeypatch):
+        """Terminal view uses default 80x24 when display-message fails."""
+        import subprocess
+        import armada_ai.server as server_mod
+
+        nid = temp_db.create_node("defdims", "#444")
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            if "display-message" in cmd:
+                m.returncode = 1
+                m.stdout = b""
+            else:
+                m.returncode = 0
+                m.stdout = b"hello\n"
+            return m
+
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        r = client.get(f"/api/nodes/{nid}/terminal")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["cols"] == 80
+        assert data["rows"] == 24
+
+    def test_terminal_view_carriage_return_stripped(self, temp_db, client, monkeypatch):
+        """Carriage returns are stripped from captured text."""
+        import subprocess
+        import armada_ai.server as server_mod
+
+        nid = temp_db.create_node("crnode", "#555")
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            if "display-message" in cmd:
+                m.returncode = 0
+                m.stdout = b"10 2"
+            else:
+                m.returncode = 0
+                m.stdout = b"hello\r\nworld\r\n"
+            return m
+
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        r = client.get(f"/api/nodes/{nid}/terminal")
+        assert r.status_code == 200
+        data = r.json()
+        assert "\r" not in data["text"]
+        assert "hello" in data["text"]
+        assert "world" in data["text"]
+
+    def test_terminal_view_ansi_stripped(self, temp_db, client, monkeypatch):
+        """ANSI escape codes are stripped from captured text."""
+        import subprocess
+        import armada_ai.server as server_mod
+
+        nid = temp_db.create_node("ansinode", "#666")
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            if "display-message" in cmd:
+                m.returncode = 0
+                m.stdout = b"5 1"
+            else:
+                m.returncode = 0
+                m.stdout = b"\x1b[38;2;255;0;0mRED\x1b[0m text\n"
+            return m
+
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        r = client.get(f"/api/nodes/{nid}/terminal")
+        assert r.status_code == 200
+        data = r.json()
+        assert "\x1b" not in data["text"]
+        assert "RED" in data["text"]
+        assert "text" in data["text"]
+
+    def test_terminal_view_lines_padded(self, temp_db, client, monkeypatch):
+        """Lines are padded to match pane column width."""
+        import subprocess
+        import armada_ai.server as server_mod
+
+        nid = temp_db.create_node("padnode", "#777")
+
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            if "display-message" in cmd:
+                m.returncode = 0
+                m.stdout = b"20 2"
+            else:
+                m.returncode = 0
+                m.stdout = b"short\nvery long line here\n"
+            return m
+
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        r = client.get(f"/api/nodes/{nid}/terminal")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["cols"] == 20
+        assert data["rows"] == 2
+        # Two lines, each padded to 20 chars → 40 chars total, no newlines
+        assert len(data["text"]) == 40
+        assert "\n" not in data["text"]
 
     def test_nodes_history(self, temp_db, client):
         """Killed nodes should appear in history."""
