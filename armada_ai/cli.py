@@ -63,18 +63,15 @@ def _print_startup_info(lan: bool = False, qr: bool = False):
         return
 
     local_url = f"http://127.0.0.1:9100?token={token}"
+    print(f"\n{local_url}")
     if lan:
         ip = _lan_ip()
-        lan_url = f"http://{ip}:9100?token={token}"
-        print(f"\n  Local  {local_url}")
-        print(f"  LAN    {lan_url}")
-    else:
-        print(f"\n  {local_url}")
+        print(f"http://{ip}:9100?token={token}")
     print()
 
     if qr:
         import qrcode
-        url = lan_url if lan else local_url
+        url = f"http://{_lan_ip()}:9100?token={token}" if lan else local_url
         qr_code = qrcode.QRCode()
         qr_code.add_data(url)
         qr_code.print_ascii()

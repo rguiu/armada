@@ -583,7 +583,7 @@ class TestAuth:
         assert "<html" in r.text.lower()
 
     def test_ensure_token_creates(self, monkeypatch, tmp_path):
-        """ensure_token creates a new token if none exists."""
+        """ensure_token always creates a new token."""
         import armada_ai.server as server_mod
 
         token_file = tmp_path / "token"
@@ -592,17 +592,6 @@ class TestAuth:
         token = server_mod._ensure_token()
         assert len(token) == 32
         assert token_file.read_text().strip() == token
-
-    def test_ensure_token_reuses(self, monkeypatch, tmp_path):
-        """ensure_token reuses existing token file."""
-        import armada_ai.server as server_mod
-
-        token_file = tmp_path / "token"
-        token_file.write_text("existing-token-1234567890ab")
-        monkeypatch.setattr(server_mod, "TOKEN_FILE", str(token_file))
-        monkeypatch.setattr(server_mod, "TOKEN", "")
-        token = server_mod._ensure_token()
-        assert token == "existing-token-1234567890ab"
 
     def test_lan_ip_returns_string(self):
         """_lan_ip returns a non-empty string."""
