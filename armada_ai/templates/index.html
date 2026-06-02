@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fleet Dashboard</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js" crossorigin="anonymous"></script>
 <script type="importmap">
 {
   "imports": {
@@ -102,6 +103,23 @@ a { color: #58a6ff; }
   color: #f85149; cursor: pointer; font-size: 12px; visibility: hidden;
 }
 .label-item:hover .label-del { visibility: visible; }
+
+/* ── QR Section ── */
+#qr-section { border-top: 1px solid #21262d; padding: 8px; }
+#qr-section .section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; margin-bottom: 4px;
+}
+#qr-section .section-title {
+  font-size: 11px; color: #484f58; text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#qr-section .section-add {
+  font-size: 10px; color: #8b949e; background: none; border: none;
+  cursor: pointer; padding: 0 4px;
+}
+#qr-section .section-add:hover { color: #e1e4e8; }
+#qr-canvas { max-width: 100%; border-radius: 4px; }
 
 /* ── Main Panel ── */
 #main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -250,6 +268,16 @@ a { color: #58a6ff; }
     </div>
     <div id="labels-list"></div>
   </div>
+  <div id="qr-section">
+    <div class="section-header">
+      <span class="section-title">Connect Phone</span>
+      <button class="section-add" id="qr-toggle" onclick="toggleQR()">Show</button>
+    </div>
+    <div id="qr-content" style="display:none;padding:8px;text-align:center">
+      <canvas id="qr-canvas"></canvas>
+      <div style="margin-top:6px;font-size:10px;color:#484f58;word-break:break-all" id="qr-url"></div>
+    </div>
+  </div>
 </div>
 
 <!-- ── Main ── -->
@@ -334,9 +362,32 @@ let activeTermNodeId = null;
 
 let xterm = null;
 
+/* ── Auth ── */
+let AUTH_TOKEN = '';
+
+(function initAuth() {
+  const params = new URLSearchParams(location.search);
+  const urlToken = params.get('token');
+  if (urlToken) {
+    localStorage.setItem('armada_token', urlToken);
+    history.replaceState({}, '', location.pathname);
+    AUTH_TOKEN = urlToken;
+  } else {
+    AUTH_TOKEN = localStorage.getItem('armada_token') || '';
+  }
+})();
+
 async function api(url, opts = {}) {
+  if (AUTH_TOKEN) {
+    opts.headers = opts.headers || {};
+    opts.headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+  }
   const res = await fetch(url, opts);
   if (!res.ok) {
+    if (res.status === 401) {
+      localStorage.removeItem('armada_token');
+      AUTH_TOKEN = '';
+    }
     const err = await res.json().catch(() => ({detail: res.statusText}));
     throw new Error(err.detail || 'Request failed');
   }
@@ -852,6 +903,22 @@ function toggleSidebar() {
 function closeSidebar() {
   document.getElementById('sidebar').classList.remove('open');
   document.getElementById('sidebar-overlay').classList.remove('show');
+}
+
+function toggleQR() {
+  const content = document.getElementById('qr-content');
+  const btn = document.getElementById('qr-toggle');
+  const canvas = document.getElementById('qr-canvas');
+  if (content.style.display === 'none') {
+    content.style.display = 'block';
+    btn.textContent = 'Hide';
+    const url = location.origin + location.pathname + '?token=' + AUTH_TOKEN;
+    document.getElementById('qr-url').textContent = url;
+    QRCode.toCanvas(canvas, url, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
+  } else {
+    content.style.display = 'none';
+    btn.textContent = 'Show';
+  }
 }
 
 /* ── Init ── */

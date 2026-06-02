@@ -3,6 +3,8 @@ import sys
 import subprocess
 import threading
 import re
+import secrets
+import socket
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
@@ -19,8 +21,51 @@ _ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 app = FastAPI(title="Armada")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 PID_FILE = os.path.expanduser("~/.armada/server.pid")
+TOKEN_FILE = os.path.expanduser("~/.armada/token")
 HOST = "127.0.0.1"
 PORT = 9100
+
+TOKEN = ""
+
+
+def _ensure_token():
+    global TOKEN
+    if os.path.exists(TOKEN_FILE):
+        TOKEN = Path(TOKEN_FILE).read_text().strip()
+    if not TOKEN:
+        TOKEN = secrets.token_hex(16)
+        os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+        Path(TOKEN_FILE).write_text(TOKEN)
+    return TOKEN
+
+
+def _lan_ip() -> str:
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
+
+def _check_token(request: Request) -> bool:
+    token = request.query_params.get("token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    return token == TOKEN
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if path.startswith("/api/") and path not in ("/api/report", "/api/auth/status"):
+        if not _check_token(request):
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+    return await call_next(request)
 
 
 @app.on_event("startup")
@@ -317,6 +362,18 @@ async def agent_report(request: Request):
     return JSONResponse({"ok": True})
 
 
+# --- Auth ---
+
+@app.get("/api/auth/status")
+def auth_status(request: Request):
+    token = request.query_params.get("token")
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    return JSONResponse({"valid": token == TOKEN, "has_token": bool(TOKEN)})
+
+
 # --- Daemon ---
 
 def _write_pid():
@@ -350,13 +407,21 @@ def _daemonize():
 
 def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = False):
     host = "0.0.0.0" if lan else HOST
+    token = _ensure_token()
+
+    if not daemon:
+        lan_ip = _lan_ip() if lan else HOST
+        print(f"\n  Dashboard   http://{HOST}:{PORT}?token={token}")
+        if lan:
+            print(f"  LAN         http://{lan_ip}:{PORT}?token={token}")
+        print(f"  Token       {token}\n")
 
     if daemon:
         _daemonize()
 
     if open_browser and not lan:
         import webbrowser
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}")).start()
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}?token={token}")).start()
 
     try:
         uvicorn.run(app, host=host, port=PORT, log_level="warning")

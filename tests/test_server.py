@@ -240,7 +240,6 @@ class TestRemainingEndpoints:
 
     def test_terminal_view(self, temp_db, client, monkeypatch):
         """GET /api/nodes/{id}/terminal returns pane content and dimensions."""
-        import subprocess
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("termtest", "#111")
@@ -288,7 +287,6 @@ class TestRemainingEndpoints:
 
     def test_terminal_view_capture_fails(self, temp_db, client, monkeypatch):
         """Terminal view when capture-pane fails returns 500."""
-        import subprocess
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("failwin", "#333")
@@ -310,7 +308,6 @@ class TestRemainingEndpoints:
 
     def test_terminal_view_default_dims(self, temp_db, client, monkeypatch):
         """Terminal view uses default 80x24 when display-message fails."""
-        import subprocess
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("defdims", "#444")
@@ -335,7 +332,6 @@ class TestRemainingEndpoints:
 
     def test_terminal_view_carriage_return_stripped(self, temp_db, client, monkeypatch):
         """Carriage returns are stripped from captured text."""
-        import subprocess
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("crnode", "#555")
@@ -361,7 +357,6 @@ class TestRemainingEndpoints:
 
     def test_terminal_view_ansi_stripped(self, temp_db, client, monkeypatch):
         """ANSI escape codes are stripped from captured text."""
-        import subprocess
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("ansinode", "#666")
@@ -387,7 +382,6 @@ class TestRemainingEndpoints:
 
     def test_terminal_view_lines_padded(self, temp_db, client, monkeypatch):
         """Lines are padded to match pane column width."""
-        import subprocess
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("padnode", "#777")
@@ -516,6 +510,141 @@ class TestRemainingEndpoints:
             "id": "cwdtag", "name": "CWD Tag",
         })
         assert r.status_code == 201
+
+
+class TestAuth:
+    def test_api_requires_token(self, temp_db, client, monkeypatch):
+        """API calls without token return 401."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/nodes")
+        assert r.status_code == 401
+
+    def test_api_with_query_token(self, temp_db, client, monkeypatch):
+        """API calls with valid token in query param succeed."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/nodes?token=secret123")
+        assert r.status_code == 200
+
+    def test_api_with_bearer_token(self, temp_db, client, monkeypatch):
+        """API calls with valid token in Authorization header succeed."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/nodes", headers={"Authorization": "Bearer secret123"})
+        assert r.status_code == 200
+
+    def test_api_wrong_token(self, temp_db, client, monkeypatch):
+        """API calls with wrong token return 401."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/nodes?token=wrong")
+        assert r.status_code == 401
+
+    def test_auth_status_valid(self, client, monkeypatch):
+        """Auth status with valid token returns true."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/auth/status?token=secret123")
+        assert r.json()["valid"] is True
+
+    def test_auth_status_invalid(self, client, monkeypatch):
+        """Auth status with invalid token returns false."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/auth/status?token=wrong")
+        assert r.json()["valid"] is False
+
+    def test_report_exempt_from_auth(self, temp_db, client, monkeypatch):
+        """Agent report endpoint is exempt from token requirement."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+        temp_db.create_node("reporter", "#888")
+
+        r = client.post("/api/report", json={
+            "name": "reporter", "status": "active", "message": "working",
+        })
+        assert r.status_code == 200
+
+    def test_dashboard_no_token(self, client, monkeypatch):
+        """Dashboard page loads without token."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "<html" in r.text.lower()
+
+    def test_ensure_token_creates(self, monkeypatch, tmp_path):
+        """ensure_token creates a new token if none exists."""
+        import armada_ai.server as server_mod
+
+        token_file = tmp_path / "token"
+        monkeypatch.setattr(server_mod, "TOKEN_FILE", str(token_file))
+        monkeypatch.setattr(server_mod, "TOKEN", "")
+        token = server_mod._ensure_token()
+        assert len(token) == 32
+        assert token_file.read_text().strip() == token
+
+    def test_ensure_token_reuses(self, monkeypatch, tmp_path):
+        """ensure_token reuses existing token file."""
+        import armada_ai.server as server_mod
+
+        token_file = tmp_path / "token"
+        token_file.write_text("existing-token-1234567890ab")
+        monkeypatch.setattr(server_mod, "TOKEN_FILE", str(token_file))
+        monkeypatch.setattr(server_mod, "TOKEN", "")
+        token = server_mod._ensure_token()
+        assert token == "existing-token-1234567890ab"
+
+    def test_lan_ip_returns_string(self):
+        """_lan_ip returns a non-empty string."""
+        import armada_ai.server as server_mod
+        ip = server_mod._lan_ip()
+        assert isinstance(ip, str)
+        assert len(ip) > 0
+
+    def test_check_token_valid(self, monkeypatch):
+        """_check_token returns True for valid Authorization header."""
+        import armada_ai.server as server_mod
+        from fastapi import Request
+        from unittest.mock import MagicMock
+
+        monkeypatch.setattr(server_mod, "TOKEN", "abc123")
+        mock_request = MagicMock(spec=Request)
+        mock_request.query_params = {}
+        mock_request.headers = {"Authorization": "Bearer abc123"}
+        assert server_mod._check_token(mock_request) is True
+
+    def test_check_token_query_param(self, monkeypatch):
+        """_check_token returns True for valid query param."""
+        import armada_ai.server as server_mod
+        from fastapi import Request
+        from unittest.mock import MagicMock
+
+        monkeypatch.setattr(server_mod, "TOKEN", "abc123")
+        mock_request = MagicMock(spec=Request)
+        mock_request.query_params = {"token": "abc123"}
+        mock_request.headers = {}
+        assert server_mod._check_token(mock_request) is True
+
+    def test_check_token_invalid(self, monkeypatch):
+        """_check_token returns False for invalid token."""
+        import armada_ai.server as server_mod
+        from fastapi import Request
+        from unittest.mock import MagicMock
+
+        monkeypatch.setattr(server_mod, "TOKEN", "abc123")
+        mock_request = MagicMock(spec=Request)
+        mock_request.query_params = {}
+        mock_request.headers = {}
+        assert server_mod._check_token(mock_request) is False
 
 
 class TestDBRemaining:
