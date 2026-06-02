@@ -9,16 +9,13 @@
 <script type="importmap">
 {
   "imports": {
-    "@xterm/xterm": "https://esm.sh/@xterm/xterm@5.5.0",
-    "@xterm/addon-fit": "https://esm.sh/@xterm/addon-fit@0.10.0"
+    "@xterm/xterm": "https://esm.sh/@xterm/xterm@5.5.0"
   }
 }
 </script>
 <script type="module">
 import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
 window.Terminal = Terminal;
-window.FitAddon = FitAddon;
 </script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -362,8 +359,8 @@ let termPollTimer = null;
 let activeTermNodeId = null;
 
 let xterm = null;
-let fitAddon = null;
 let termWs = null;
+let termResizeObs = null;
 
 /* ── Auth ── */
 let AUTH_TOKEN = '';
@@ -561,12 +558,19 @@ async function attachNode(id) {
   }
 }
 
-function ensureXterm() {
-  if (xterm) return;
+function ensureXterm(cols) {
+  if (xterm) {
+    if (cols && xterm.cols !== cols) {
+      xterm.resize(cols, Math.max(xterm.rows, 1));
+      fixWidth();
+    }
+    return;
+  }
   const container = document.getElementById('terminal-inner');
 
   xterm = new Terminal({
     cursorBlink: true,
+    disableStdin: false,
     fontSize: 12,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
@@ -576,32 +580,47 @@ function ensureXterm() {
       selectionForeground: '#0d1117',
       selectionBackground: '#c9d1d9',
     },
-    allowProposedApi: true,
+    cols: cols || 80,
+    rows: 24,
+    scrollback: 1000,
   });
 
-  fitAddon = new FitAddon();
-  xterm.loadAddon(fitAddon);
   xterm.open(container);
-
-  try { fitAddon.fit(); } catch(e) {}
+  fixWidth();
 
   const outer = document.getElementById('terminal-container');
-  new ResizeObserver(() => {
-    try { fitAddon.fit(); } catch(e) {}
+  termResizeObs = new ResizeObserver(() => {
+    const h = outer.clientHeight;
+    if (h && xterm) {
+      const cellH = xterm._core._renderService.dimensions.css.cell.height;
+      if (cellH) {
+        const rows = Math.floor(h / cellH);
+        if (rows > 0 && rows !== xterm.rows) {
+          xterm.resize(xterm.cols, rows);
+          fixWidth();
+        }
+      }
+    }
+  }).observe(outer);
+}
+
+function fixWidth() {
+  const container = document.getElementById('terminal-inner');
+  requestAnimationFrame(() => {
     const canvas = container.querySelector('canvas');
     if (canvas) container.style.width = canvas.style.width;
-  }).observe(outer);
+  });
 }
 
 function disposeXterm() {
   if (termWs) { termWs.close(); termWs = null; }
-  if (xterm) { xterm.dispose(); xterm = null; fitAddon = null; }
+  if (termResizeObs) { termResizeObs.disconnect(); termResizeObs = null; }
+  if (xterm) { xterm.dispose(); xterm = null; }
 }
 
 async function openTerminal(id) {
   closeTerminal();
   activeTermNodeId = id;
-  ensureXterm();
 
   const pane = document.getElementById('terminal-pane');
   document.getElementById('terminal-title').textContent = 'Terminal \u00b7 node ' + id;
@@ -609,43 +628,33 @@ async function openTerminal(id) {
   document.getElementById('detail').style.display = 'none';
   pane.classList.add('show');
 
-  setTimeout(() => {
-    try { fitAddon.fit(); } catch(e) {}
-  }, 50);
+  xterm = null;
+  try {
+    const info = await api('/api/nodes/' + id + '/terminal');
+    ensureXterm(info.cols);
+  } catch(e) {
+    ensureXterm(80);
+  }
 
   xterm.writeln('connecting...');
+  xterm.focus();
 
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = proto + '//' + location.host + '/api/nodes/' + id + '/ws?token=' + AUTH_TOKEN;
   termWs = new WebSocket(wsUrl);
 
-  const pollTimer = setInterval(() => {
-    if (activeTermNodeId !== id || !xterm) { clearInterval(pollTimer); return; }
-    api('/api/nodes/' + id + '/terminal').then(data => {
-      if (xterm && activeTermNodeId === id) {
-        xterm.write('\x1b[H' + data.text);
-      }
-    }).catch(() => {});
-  }, 800);
+  termWs.onopen = () => {
+    if (xterm) { xterm.clear(); xterm.writeln('connected'); }
+  };
 
   termWs.onmessage = e => {
-    if (!xterm || activeTermNodeId !== id) return;
-    clearInterval(pollTimer);
-    xterm.write('\x1b[H' + e.data);
+    if (xterm && activeTermNodeId === id) {
+      xterm.write('\x1b[H' + e.data);
+    }
   };
 
   termWs.onclose = () => {
-    if (activeTermNodeId === id && xterm) {
-      termWs = null;
-      const timer = setInterval(() => {
-        if (activeTermNodeId !== id || !xterm) { clearInterval(timer); return; }
-        api('/api/nodes/' + id + '/terminal').then(data => {
-          if (xterm && activeTermNodeId === id) {
-            xterm.write('\x1b[H' + data.text);
-          }
-        }).catch(() => {});
-      }, 800);
-    }
+    termWs = null;
   };
 
   xterm.onData(data => {
@@ -653,8 +662,6 @@ async function openTerminal(id) {
       termWs.send(data);
     }
   });
-
-  xterm.focus();
 }
 
 function closeTerminal() {

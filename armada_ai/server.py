@@ -314,9 +314,20 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
 
     async def poll_pane():
         nonlocal last_text
+        pane_cols = 80
         while True:
             await asyncio.sleep(poll_interval)
             try:
+                dims = await asyncio.to_thread(
+                    lambda: subprocess.run(
+                        ["tmux", "display-message", "-p", "-t", target,
+                         "#{pane_width}"],
+                        capture_output=True, timeout=2,
+                    )
+                )
+                if dims.returncode == 0 and dims.stdout.decode().strip().isdigit():
+                    pane_cols = int(dims.stdout.decode().strip())
+
                 result = await asyncio.to_thread(
                     lambda: subprocess.run(
                         ["tmux", "capture-pane", "-p", "-t", target],
@@ -330,7 +341,7 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                 text_lines = raw.split('\n')
                 if text_lines and text_lines[-1] == '':
                     text_lines.pop()
-                text = ''.join(line.ljust(80) for line in text_lines)
+                text = ''.join(line.ljust(pane_cols) for line in text_lines)
 
                 if text != last_text:
                     last_text = text

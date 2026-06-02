@@ -599,7 +599,7 @@ class TestAuth:
 
         nid = temp_db.create_node("wstest", "#111")
         try:
-            with client.websocket_connect(f"/api/nodes/{nid}/ws") as ws:
+            with client.websocket_connect(f"/api/nodes/{nid}/ws"):
                 pass
         except WebSocketDisconnect as e:
             assert e.code == 4001
@@ -632,7 +632,7 @@ class TestAuth:
         monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
         try:
-            with client.websocket_connect("/api/nodes/99999/ws?token=secret123") as ws:
+            with client.websocket_connect("/api/nodes/99999/ws?token=secret123"):
                 pass
         except WebSocketDisconnect as e:
             assert e.code == 4004
