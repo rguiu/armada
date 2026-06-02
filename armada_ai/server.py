@@ -5,16 +5,16 @@ import threading
 import re
 from pathlib import Path
 
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
-
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
 from . import db
 from . import naming
 from . import tmux
 from . import health
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 app = FastAPI(title="Armada")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
