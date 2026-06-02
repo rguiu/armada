@@ -300,7 +300,7 @@ a { color: #58a6ff; }
       <button class="term-close" onclick="closeTerminal()">X</button>
     </div>
     <div id="terminal-container"><div id="terminal-inner"></div></div>
-    <input type="text" id="terminal-in" placeholder="Type and press Enter..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <input type="text" id="terminal-in" placeholder="Type command or y/n/a and press Enter..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   </div>
 </div>
 
@@ -618,15 +618,12 @@ async function openTerminal(id) {
   async function poll() {
     if (activeTermNodeId !== id) return;
     try {
-      const res = await fetch('/api/nodes/' + id + '/terminal');
-      if (res.ok) {
-        const data = await res.json();
-        if (xterm || data.cols) {
-          ensureXterm(data.cols, data.rows);
-        }
-        if (xterm) {
-          xterm.write('\x1b[H' + data.text);
-        }
+      const data = await api('/api/nodes/' + id + '/terminal');
+      if (xterm || data.cols) {
+        ensureXterm(data.cols, data.rows);
+      }
+      if (xterm) {
+        xterm.write('\x1b[H' + data.text);
       }
     } catch(e) {}
     if (activeTermNodeId === id) termPollTimer = setTimeout(poll, 800);
