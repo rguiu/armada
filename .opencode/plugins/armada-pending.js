@@ -15,18 +15,29 @@ function post(status, message) {
   req.end();
 }
 
+var evtLog;
+try {
+  evtLog = require("fs").appendFileSync.bind(null, "/tmp/armada-events.log");
+} catch (_) {}
+
 export async function ArmadaPending() {
   return {
-    "tool.execute.before": async function (input, output) {
-      if (input && input.tool) post("active", "running " + input.tool);
-    },
-    "tool.execute.after": async function (input, output) {
-      if (input && input.tool) post("idle", input.tool + " completed");
-    },
-    "permission.ask": async function (input, output) {
-      if (output.status !== "ask") return;
-      var type = (input && input.type) || "?";
-      post("pending", "waiting for " + type + " permission");
+    event: async function (input) {
+      var event = input && input.event;
+      if (!event) return;
+      if (evtLog) {
+        try { evtLog(JSON.stringify(event) + "\n"); } catch (_) {}
+      }
+      if (event.type === "tool.execute.before") {
+        var props = event.properties || {};
+        if (props.tool) post("active", "running " + props.tool);
+      } else if (event.type === "tool.execute.after") {
+        var props2 = event.properties || {};
+        if (props2.tool) post("idle", props2.tool + " completed");
+      } else if (event.type === "permission.ask") {
+        var props3 = event.properties || {};
+        post("pending", "waiting for permission: " + (props3.type || "?"));
+      }
     },
   };
 }

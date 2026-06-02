@@ -3,7 +3,7 @@
 const API = "http://127.0.0.1:9100";
 const NODE = process.env.ARMADA_NODE_NAME;
 
-function post(status: string, message: string) {
+function post(status, message) {
   if (!NODE) return;
   const body = JSON.stringify({ name: NODE, status, message });
   try {
@@ -28,15 +28,22 @@ function post(status: string, message: string) {
   }
 }
 
-export default async () => ({
-  "tool.execute.before": async (input: any, _output: any) => {
-    if (input?.tool) post("active", "running " + input.tool);
-  },
-  "tool.execute.after": async (input: any, _output: any) => {
-    if (input?.tool) post("idle", input.tool + " completed");
-  },
-  "permission.ask": async (input: any, output: any) => {
-    if (output.status !== "ask") return;
-    post("pending", "waiting for " + (input?.type || "?") + " permission");
+let evtLog;
+try {
+  evtLog = require("fs").appendFileSync.bind(null, "/tmp/armada-events.log");
+} catch (_) {}
+
+export const ArmadaPending = async () => ({
+  event: async ({ event }) => {
+    if (evtLog) {
+      try { evtLog(JSON.stringify(event) + "\n"); } catch (_) {}
+    }
+    if (event.type === "tool.execute.before") {
+      post("active", "running " + event.properties.tool);
+    } else if (event.type === "tool.execute.after") {
+      post("idle", event.properties.tool + " completed");
+    } else if (event.type === "permission.ask") {
+      post("pending", "waiting for permission: " + (event.properties.type || "?"));
+    }
   },
 });
