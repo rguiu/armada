@@ -583,7 +583,7 @@ class TestAuth:
         assert "<html" in r.text.lower()
 
     def test_ensure_token_creates(self, monkeypatch, tmp_path):
-        """ensure_token always creates a new token."""
+        """ensure_token creates a new token when TOKEN is empty."""
         import armada_ai.server as server_mod
 
         token_file = tmp_path / "token"
@@ -592,6 +592,17 @@ class TestAuth:
         token = server_mod._ensure_token()
         assert len(token) == 32
         assert token_file.read_text().strip() == token
+
+    def test_ensure_token_idempotent(self, monkeypatch, tmp_path):
+        """ensure_token returns same token on subsequent calls."""
+        import armada_ai.server as server_mod
+
+        token_file = tmp_path / "token"
+        monkeypatch.setattr(server_mod, "TOKEN_FILE", str(token_file))
+        monkeypatch.setattr(server_mod, "TOKEN", "")
+        t1 = server_mod._ensure_token()
+        t2 = server_mod._ensure_token()
+        assert t1 == t2
 
     def test_lan_ip_returns_string(self):
         """_lan_ip returns a non-empty string."""

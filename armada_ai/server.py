@@ -30,9 +30,10 @@ TOKEN = ""
 
 def _ensure_token():
     global TOKEN
-    TOKEN = secrets.token_hex(16)
-    os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
-    Path(TOKEN_FILE).write_text(TOKEN)
+    if not TOKEN:
+        TOKEN = secrets.token_hex(16)
+        os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
+        Path(TOKEN_FILE).write_text(TOKEN)
     return TOKEN
 
 
