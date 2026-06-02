@@ -618,15 +618,12 @@ async function openTerminal(id) {
   async function poll() {
     if (activeTermNodeId !== id) return;
     try {
-      const res = await fetch('/api/nodes/' + id + '/terminal');
-      if (res.ok) {
-        const data = await res.json();
-        if (xterm || data.cols) {
-          ensureXterm(data.cols, data.rows);
-        }
-        if (xterm) {
-          xterm.write('\x1b[H' + data.text);
-        }
+      const data = await api('/api/nodes/' + id + '/terminal');
+      if (xterm || data.cols) {
+        ensureXterm(data.cols, data.rows);
+      }
+      if (xterm) {
+        xterm.write('\x1b[H' + data.text);
       }
     } catch(e) {}
     if (activeTermNodeId === id) termPollTimer = setTimeout(poll, 800);
