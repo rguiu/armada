@@ -34,9 +34,10 @@ export async function ArmadaPending() {
       } else if (event.type === "tool.execute.after") {
         var props2 = event.properties || {};
         if (props2.tool) post("idle", props2.tool + " completed");
-      } else if (event.type === "permission.ask") {
+      } else if (event.type === "permission.asked") {
         var props3 = event.properties || {};
-        post("pending", "waiting for permission: " + (props3.type || "?"));
+        var patterns = props3.patterns || [];
+        post("pending", (props3.permission || "?") + " permission: " + patterns.join(", "));
       }
     },
   };

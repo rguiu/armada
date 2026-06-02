@@ -42,8 +42,8 @@ export const ArmadaPending = async () => ({
       post("active", "running " + event.properties.tool);
     } else if (event.type === "tool.execute.after") {
       post("idle", event.properties.tool + " completed");
-    } else if (event.type === "permission.ask") {
-      post("pending", "waiting for permission: " + (event.properties.type || "?"));
+    } else if (event.type === "permission.asked") {
+      post("pending", event.properties.permission + " permission: " + (event.properties.patterns || []).join(", "));
     }
   },
 });
