@@ -23,9 +23,10 @@ export async function ArmadaPending() {
     "tool.execute.after": async function (input, output) {
       if (input && input.tool) post("idle", input.tool + " completed");
     },
-    "permission.asked": async function (input, output) {
-      var tool = (input && input.tool) || "?";
-      post("pending", "waiting for " + tool + " permission");
+    "permission.ask": async function (input, output) {
+      if (output.status !== "ask") return;
+      var type = (input && input.type) || "?";
+      post("pending", "waiting for " + type + " permission");
     },
   };
 }

@@ -35,7 +35,8 @@ export default async () => ({
   "tool.execute.after": async (input: any, _output: any) => {
     if (input?.tool) post("idle", input.tool + " completed");
   },
-  "permission.asked": async (input: any, _output: any) => {
-    post("pending", "waiting for " + (input?.tool || "?") + " permission");
+  "permission.ask": async (input: any, output: any) => {
+    if (output.status !== "ask") return;
+    post("pending", "waiting for " + (input?.type || "?") + " permission");
   },
 });

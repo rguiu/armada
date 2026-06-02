@@ -35,7 +35,8 @@ export const ArmadaPending = async () => ({
   "tool.execute.after": async (input, _output) => {
     if (input?.tool) post("idle", input.tool + " completed");
   },
-  "permission.asked": async (input, _output) => {
-    post("pending", "waiting for " + (input?.tool || "?") + " permission");
+  "permission.ask": async (input, output) => {
+    if (output.status !== "ask") return;
+    post("pending", "waiting for " + (input?.type || "?") + " permission");
   },
 });
