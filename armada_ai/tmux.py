@@ -136,28 +136,34 @@ def install_user_skills() -> list[str]:
 
 
 def _deploy_pending_plugin(cwd: str):
-    """Copy armada-pending.js and ensure opencode loads it."""
-    src = _SKILLS_SRC.parent / ".opencode" / "plugin" / "armada-pending.js"
-    if not src.exists():
-        return
-
-    # Copy plugin file
+    """Copy armada-pending plugins and ensure opencode loads them."""
+    plugin_src_dir = _SKILLS_SRC.parent / ".opencode" / "plugin"
     dst_dir = Path(cwd) / ".opencode" / "plugin"
     dst_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(src, dst_dir / "armada-pending.js")
 
-    # Merge plugin into opencode.json (create or update)
+    copied_plugins = []
+    for plugin_file in ("armada-pending.ts", "armada-pending.js"):
+        src = plugin_src_dir / plugin_file
+        if src.exists():
+            shutil.copy2(src, dst_dir / plugin_file)
+            copied_plugins.append(plugin_file)
+
+    if not copied_plugins:
+        return
+
+    # Merge plugins into opencode.json (create or update)
     config_path = Path(cwd) / "opencode.json"
     try:
         if config_path.exists():
-            # Merge: add plugin if not already present
             cfg = json.loads(config_path.read_text())
-            plugins = cfg.setdefault("plugin", [])
-            plugin_ref = ".opencode/plugin/armada-pending.js"
+        else:
+            cfg = {}
+        cfg.setdefault("$schema", "https://opencode.ai/config.json")
+        plugins = cfg.setdefault("plugin", [])
+        for plugin_file in copied_plugins:
+            plugin_ref = f".opencode/plugin/{plugin_file}"
             if plugin_ref not in plugins:
                 plugins.append(plugin_ref)
-        else:
-            cfg = {"$schema": "https://opencode.ai/config.json", "plugin": [".opencode/plugin/armada-pending.js"]}
         config_path.write_text(json.dumps(cfg, indent=2))
     except Exception:
         pass
