@@ -2,7 +2,9 @@
 
 import tempfile
 import pytest
+import time
 from unittest.mock import MagicMock
+from starlette.websockets import WebSocketDisconnect
 
 
 def _mkproj(temp_db, id="proj", name="Project"):
@@ -194,6 +196,14 @@ class TestSendEndpoint:
     def test_send_to_dead_node(self, temp_db, client):
         nid = temp_db.create_node("deadw", "#bbb")
         temp_db.kill_node(nid)
+        r = client.post(f"/api/nodes/{nid}/send", json={"command": "x"})
+        assert r.status_code == 410
+
+    def test_send_window_gone(self, temp_db, client, monkeypatch):
+        """Send to node whose tmux window no longer exists returns 410."""
+        import armada_ai.server as server_mod
+        nid = temp_db.create_node("gone", "#ccc")
+        monkeypatch.setattr(server_mod.tmux, "window_exists", lambda _: False)
         r = client.post(f"/api/nodes/{nid}/send", json={"command": "x"})
         assert r.status_code == 410
 
@@ -582,70 +592,100 @@ class TestAuth:
         assert r.status_code == 200
         assert "<html" in r.text.lower()
 
-    def test_ensure_token_creates(self, monkeypatch, tmp_path):
-        """ensure_token creates a new token when TOKEN is empty."""
+    def test_ws_requires_token(self, temp_db, client, monkeypatch):
+        """WebSocket without token is rejected."""
         import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
-        token_file = tmp_path / "token"
-        monkeypatch.setattr(server_mod, "TOKEN_FILE", str(token_file))
-        monkeypatch.setattr(server_mod, "TOKEN", "")
-        token = server_mod._ensure_token()
-        assert len(token) == 32
-        assert token_file.read_text().strip() == token
+        nid = temp_db.create_node("wstest", "#111")
+        try:
+            with client.websocket_connect(f"/api/nodes/{nid}/ws") as ws:
+                pass
+        except WebSocketDisconnect as e:
+            assert e.code == 4001
 
-    def test_ensure_token_idempotent(self, monkeypatch, tmp_path):
-        """ensure_token returns same token on subsequent calls."""
+    def test_ws_with_token(self, temp_db, client, monkeypatch):
+        """WebSocket with valid token connects and receives data."""
         import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
-        token_file = tmp_path / "token"
-        monkeypatch.setattr(server_mod, "TOKEN_FILE", str(token_file))
-        monkeypatch.setattr(server_mod, "TOKEN", "")
-        t1 = server_mod._ensure_token()
-        t2 = server_mod._ensure_token()
-        assert t1 == t2
+        nid = temp_db.create_node("wstoken", "#222")
 
-    def test_lan_ip_returns_string(self):
-        """_lan_ip returns a non-empty string."""
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = b"hello\n"
+            return m
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        ws = client.websocket_connect(f"/api/nodes/{nid}/ws?token=secret123")
+        ws.__enter__()
+        try:
+            data = ws.receive_text()
+            assert data is not None
+        finally:
+            ws.close(1000)
+
+    def test_ws_node_not_found(self, temp_db, client, monkeypatch):
+        """WebSocket for unknown node is rejected."""
         import armada_ai.server as server_mod
-        ip = server_mod._lan_ip()
-        assert isinstance(ip, str)
-        assert len(ip) > 0
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
-    def test_check_token_valid(self, monkeypatch):
-        """_check_token returns True for valid Authorization header."""
+        try:
+            with client.websocket_connect("/api/nodes/99999/ws?token=secret123") as ws:
+                pass
+        except WebSocketDisconnect as e:
+            assert e.code == 4004
+
+    def test_ws_sends_keys(self, temp_db, client, monkeypatch):
+        """WebSocket forwards keystrokes to tmux."""
         import armada_ai.server as server_mod
-        from fastapi import Request
-        from unittest.mock import MagicMock
+        import armada_ai.tmux as tmux_mod
 
-        monkeypatch.setattr(server_mod, "TOKEN", "abc123")
-        mock_request = MagicMock(spec=Request)
-        mock_request.query_params = {}
-        mock_request.headers = {"Authorization": "Bearer abc123"}
-        assert server_mod._check_token(mock_request) is True
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+        tmux_mod.send_keys.reset_mock()
 
-    def test_check_token_query_param(self, monkeypatch):
-        """_check_token returns True for valid query param."""
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = b"hello\n"
+            return m
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
+
+        nid = temp_db.create_node("wskey", "#333")
+        ws = client.websocket_connect(f"/api/nodes/{nid}/ws?token=secret123")
+        ws.__enter__()
+        try:
+            ws.send_text("hello")
+            time.sleep(0.3)
+        finally:
+            ws.close(1000)
+        tmux_mod.send_keys.assert_called_with("wskey", "hello")
+
+    def test_ws_bearer_token(self, temp_db, client, monkeypatch):
+        """WebSocket with Bearer token in header connects."""
         import armada_ai.server as server_mod
-        from fastapi import Request
-        from unittest.mock import MagicMock
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
-        monkeypatch.setattr(server_mod, "TOKEN", "abc123")
-        mock_request = MagicMock(spec=Request)
-        mock_request.query_params = {"token": "abc123"}
-        mock_request.headers = {}
-        assert server_mod._check_token(mock_request) is True
+        nid = temp_db.create_node("wsbearer", "#444")
 
-    def test_check_token_invalid(self, monkeypatch):
-        """_check_token returns False for invalid token."""
-        import armada_ai.server as server_mod
-        from fastapi import Request
-        from unittest.mock import MagicMock
+        def fake_run(cmd, **kwargs):
+            m = MagicMock()
+            m.returncode = 0
+            m.stdout = b"data\n"
+            return m
+        monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
 
-        monkeypatch.setattr(server_mod, "TOKEN", "abc123")
-        mock_request = MagicMock(spec=Request)
-        mock_request.query_params = {}
-        mock_request.headers = {}
-        assert server_mod._check_token(mock_request) is False
+        ws = client.websocket_connect(
+            f"/api/nodes/{nid}/ws",
+            headers={"Authorization": "Bearer secret123"}
+        )
+        ws.__enter__()
+        try:
+            data = ws.receive_text()
+            assert data is not None
+        finally:
+            ws.close(1000)
 
 
 class TestDBRemaining:

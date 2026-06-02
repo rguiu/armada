@@ -5,9 +5,10 @@ import threading
 import re
 import secrets
 import socket
+import asyncio
 from pathlib import Path
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
@@ -60,7 +61,8 @@ def _check_token(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    if path.startswith("/api/") and path not in ("/api/report", "/api/auth/status"):
+    exempt = ("/api/report", "/api/auth/status")
+    if path.startswith("/api/") and path not in exempt and not path.endswith("/ws"):
         if not _check_token(request):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     return await call_next(request)
@@ -283,6 +285,78 @@ def terminal_view(node_id: int):
         text_lines.pop()
     text = ''.join(line.ljust(cols) for line in text_lines)
     return JSONResponse({"text": text, "cols": cols, "rows": rows})
+
+
+@app.websocket("/api/nodes/{node_id}/ws")
+async def terminal_ws(websocket: WebSocket, node_id: int):
+    token = websocket.query_params.get("token")
+    if not token:
+        auth = websocket.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if token != TOKEN:
+        await websocket.close(code=4001)
+        return
+
+    node = db.get_node(node_id)
+    if not node:
+        await websocket.close(code=4004)
+        return
+    if not tmux.window_exists(node["name"]):
+        await websocket.close(code=4004)
+        return
+
+    target = f"armada:{node['name']}"
+    await websocket.accept()
+
+    poll_interval = 0.8
+    last_text = ""
+
+    async def poll_pane():
+        nonlocal last_text
+        while True:
+            await asyncio.sleep(poll_interval)
+            try:
+                result = await asyncio.to_thread(
+                    lambda: subprocess.run(
+                        ["tmux", "capture-pane", "-p", "-t", target],
+                        capture_output=True, timeout=2,
+                    )
+                )
+                if result.returncode != 0:
+                    continue
+
+                raw = _ANSI_RE.sub('', result.stdout.decode("utf-8", errors="replace")).replace('\r', '')
+                text_lines = raw.split('\n')
+                if text_lines and text_lines[-1] == '':
+                    text_lines.pop()
+                text = ''.join(line.ljust(80) for line in text_lines)
+
+                if text != last_text:
+                    last_text = text
+                    await websocket.send_text(text)
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                pass
+
+    async def recv_keys():
+        while True:
+            try:
+                data = await websocket.receive_text()
+                if data:
+                    await asyncio.to_thread(
+                        lambda: tmux.send_keys(node["name"], data)
+                    )
+            except WebSocketDisconnect:
+                break
+            except Exception:
+                pass
+
+    try:
+        await asyncio.gather(poll_pane(), recv_keys())
+    except WebSocketDisconnect:
+        pass
 
 
 # --- Project Labels ---
