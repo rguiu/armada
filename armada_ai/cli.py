@@ -14,7 +14,7 @@ def main():
     if not args or args[0] in ("start", "serve"):
         from .server import start_server, _ensure_token
         _ensure_token()
-        _print_startup_info(lan=lan)
+        _print_startup_info(lan=lan, qr=qr)
         start_server(daemon=True, open_browser=not lan, lan=lan)
 
     elif args[0] == "stop":
@@ -23,7 +23,7 @@ def main():
     elif args[0] == "attach":
         from .server import start_server, _ensure_token
         _ensure_token()
-        _print_startup_info(lan=lan)
+        _print_startup_info(lan=lan, qr=qr)
         start_server(daemon=False, open_browser=False, lan=lan)
 
     elif args[0] == "setup":
@@ -55,21 +55,30 @@ def _lan_ip():
         s.close()
 
 
-def _print_startup_info(lan: bool = False):
+def _print_startup_info(lan: bool = False, qr: bool = False):
     token_file = os.path.expanduser("~/.armada/token")
     token = open(token_file).read().strip()
 
     if not token:
         return
 
+    local_url = f"http://127.0.0.1:9100?token={token}"
     if lan:
         ip = _lan_ip()
-        print(f"\n  Local       http://127.0.0.1:9100?token={token}")
-        print(f"  LAN         http://{ip}:9100?token={token}")
+        lan_url = f"http://{ip}:9100?token={token}"
+        print(f"\n  Local  {local_url}")
+        print(f"  LAN    {lan_url}")
     else:
-        print(f"\n  Dashboard   http://127.0.0.1:9100?token={token}")
-    print(f"  Token       {token}")
+        print(f"\n  {local_url}")
     print()
+
+    if qr:
+        import qrcode
+        url = lan_url if lan else local_url
+        qr_code = qrcode.QRCode()
+        qr_code.add_data(url)
+        qr_code.print_ascii()
+        print()
 
 
 def _print_token(qr: bool = False, lan: bool = False):
@@ -90,9 +99,10 @@ def _print_token(qr: bool = False, lan: bool = False):
         url = f"http://{host}:9100?token={token}"
         print(url)
         print()
-        qr = qrcode.QRCode()
-        qr.add_data(url)
-        qr.print_ascii()
+        qr_code = qrcode.QRCode()
+        qr_code.add_data(url)
+        qr_code.print_ascii()
+        print()
     else:
         print(token)
 
