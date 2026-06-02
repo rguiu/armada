@@ -15,7 +15,7 @@ function post(status, message) {
   req.end();
 }
 
-export default async function () {
+export async function ArmadaPending() {
   return {
     "tool.execute.before": async function (input, output) {
       if (input && input.tool) post("active", "running " + input.tool);

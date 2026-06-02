@@ -3,7 +3,7 @@
 const API = "http://127.0.0.1:9100";
 const NODE = process.env.ARMADA_NODE_NAME;
 
-function post(status: string, message: string) {
+function post(status, message) {
   if (!NODE) return;
   const body = JSON.stringify({ name: NODE, status, message });
   try {
@@ -28,14 +28,14 @@ function post(status: string, message: string) {
   }
 }
 
-export default async () => ({
-  "tool.execute.before": async (input: any, _output: any) => {
+export const ArmadaPending = async () => ({
+  "tool.execute.before": async (input, _output) => {
     if (input?.tool) post("active", "running " + input.tool);
   },
-  "tool.execute.after": async (input: any, _output: any) => {
+  "tool.execute.after": async (input, _output) => {
     if (input?.tool) post("idle", input.tool + " completed");
   },
-  "permission.asked": async (input: any, _output: any) => {
+  "permission.asked": async (input, _output) => {
     post("pending", "waiting for " + (input?.tool || "?") + " permission");
   },
 });

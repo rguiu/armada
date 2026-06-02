@@ -115,11 +115,16 @@ def install_user_skills() -> list[str]:
         installed.append(str(skills_subdir))
 
     # Also install the armada-pending plugin globally (OpenCode)
-    plugin_src = _SKILLS_SRC.parent / ".opencode" / "plugin" / "armada-pending.ts"
+    plugin_src = _SKILLS_SRC.parent / ".opencode" / "plugins" / "armada-pending.ts"
     if plugin_src.exists():
-        plugin_dst = home / ".config" / "opencode" / "plugin" / "armada-pending.ts"
+        plugin_dst = home / ".config" / "opencode" / "plugins" / "armada-pending.ts"
         plugin_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(plugin_src, plugin_dst)
+    plugin_src_js = _SKILLS_SRC.parent / ".opencode" / "plugins" / "armada-pending.js"
+    if plugin_src_js.exists():
+        plugin_dst_js = home / ".config" / "opencode" / "plugins" / "armada-pending.js"
+        plugin_dst_js.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(plugin_src_js, plugin_dst_js)
 
     # Install Claude Code hooks globally
     claude_hooks_dst = home / ".claude" / "hooks"
@@ -137,8 +142,8 @@ def install_user_skills() -> list[str]:
 
 def _deploy_pending_plugin(cwd: str):
     """Copy armada-pending plugins and ensure opencode loads them."""
-    plugin_src_dir = _SKILLS_SRC.parent / ".opencode" / "plugin"
-    dst_dir = Path(cwd) / ".opencode" / "plugin"
+    plugin_src_dir = _SKILLS_SRC.parent / ".opencode" / "plugins"
+    dst_dir = Path(cwd) / ".opencode" / "plugins"
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     copied_plugins = []
@@ -161,7 +166,7 @@ def _deploy_pending_plugin(cwd: str):
         cfg.setdefault("$schema", "https://opencode.ai/config.json")
         plugins = cfg.setdefault("plugin", [])
         for plugin_file in copied_plugins:
-            plugin_ref = f".opencode/plugin/{plugin_file}"
+            plugin_ref = f".opencode/plugins/{plugin_file}"
             if plugin_ref not in plugins:
                 plugins.append(plugin_ref)
         config_path.write_text(json.dumps(cfg, indent=2))
