@@ -1,6 +1,7 @@
 """Tests for API endpoints."""
 
 import tempfile
+import pytest
 from unittest.mock import MagicMock
 
 
@@ -661,3 +662,30 @@ class TestDBRemaining:
         assert "root2" in root_names
         assert "parent_node" in root_names
         assert "child_node" not in root_names
+
+
+class TestCLI:
+    def test_print_token_exists(self, tmp_path, monkeypatch):
+        """_print_token prints the token from file."""
+        import armada_ai.cli as cli_mod
+
+        token_file = tmp_path / "token"
+        token_file.write_text("my-token-123")
+        monkeypatch.setattr(cli_mod.os.path, "expanduser", lambda p: str(token_file) if "token" in p else p)
+
+        import io
+        import sys
+        captured = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", captured)
+        cli_mod._print_token()
+        assert captured.getvalue().strip() == "my-token-123"
+
+    def test_print_token_missing(self, tmp_path, monkeypatch):
+        """_print_token exits 1 when no token file exists."""
+        import armada_ai.cli as cli_mod
+
+        monkeypatch.setattr(cli_mod.os.path, "expanduser", lambda p: str(tmp_path / "nonexistent"))
+
+        with pytest.raises(SystemExit) as exc:
+            cli_mod._print_token()
+        assert exc.value.code == 1

@@ -28,12 +28,16 @@ def main():
     elif args[0] == "setup":
         _setup_skills()
 
+    elif args[0] == "token":
+        _print_token()
+
     else:
-        print("Usage: armada [start|stop|attach|setup] [--lan]")
+        print("Usage: armada [start|stop|attach|setup|token] [--lan]")
         print("  start   Start the Armada server daemon + open dashboard")
         print("  stop    Stop the Armada server")
         print("  attach  Start server in foreground (for debugging)")
         print("  setup   Install Armada skills to user profile")
+        print("  token   Print the auth token for API/CLI access")
         print("  --lan   Bind to 0.0.0.0:9100 (accessible from other devices on LAN)")
         sys.exit(1)
 
@@ -47,6 +51,20 @@ def _lan_ip():
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def _print_token():
+    token_file = os.path.expanduser("~/.armada/token")
+    try:
+        token = open(token_file).read().strip()
+        if token:
+            print(token)
+        else:
+            print("No token found. Start Armada first with: armada start", file=sys.stderr)
+            sys.exit(1)
+    except FileNotFoundError:
+        print("No token found. Start Armada first with: armada start", file=sys.stderr)
+        sys.exit(1)
 
 
 def _setup_skills():
