@@ -50,7 +50,7 @@ Click **+ Node**. Choose a name (or leave blank for auto-generated), select a pr
 
 ### 3. Attach and work
 
-Select the node and click **Attach**. A terminal tab opens connected to the node's tmux window. The agent starts in the project directory with Armada status reporting configured. Close the tab anytime — the agent keeps running. Reattach later to pick up where you left off.
+Select the node and click **Attach**. On macOS, the node opens in a new iTerm tab by default. Uncheck "Attach to iTerm" to view the node's tmux pane directly in the browser — rendered with xterm.js at the pane's native dimensions. Close the tab anytime — the agent keeps running. Reattach later to pick up where you left off.
 
 ### 4. Monitor
 
@@ -94,6 +94,7 @@ The dashboard updates in real time as each worker reports active/idle.
 - **Per-step activity logs** — agents report status before and after every action
 - **Cascade kill & hide** — killing a parent also handles all descendants
 - **Multi-select batch ops** — checkboxes in the tree for bulk kill/delete/attach
+- **Web terminal** — view any node's tmux pane inline via xterm.js at native dimensions, horizontal scroll on narrow screens
 
 ## Architecture
 
@@ -153,6 +154,7 @@ armada setup
 | `PATCH` | `/api/nodes/:id` | Hide node (`{"action":"hide"}`) |
 | `POST` | `/api/nodes/:id/send` | Send command to worker |
 | `POST` | `/api/nodes/:id/attach` | Open terminal attached to node |
+| `GET` | `/api/nodes/:id/terminal` | Pane content + dimensions (web terminal) |
 | `POST` | `/api/report` | Agent status report |
 | `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
 
