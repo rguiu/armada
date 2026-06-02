@@ -409,13 +409,6 @@ def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = Fal
     host = "0.0.0.0" if lan else HOST
     token = _ensure_token()
 
-    if not daemon:
-        lan_ip = _lan_ip() if lan else HOST
-        print(f"\n  Dashboard   http://{HOST}:{PORT}?token={token}")
-        if lan:
-            print(f"  LAN         http://{lan_ip}:{PORT}?token={token}")
-        print(f"  Token       {token}\n")
-
     if daemon:
         _daemonize()
 

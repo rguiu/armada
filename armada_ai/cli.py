@@ -12,18 +12,18 @@ def main():
     args = [a for a in args if a not in ("--lan", "--qr")]
 
     if not args or args[0] in ("start", "serve"):
-        from .server import start_server
-        if lan:
-            print(f"  LAN mode — dashboard at http://{_lan_ip()}:9100")
-        start_server(daemon=True, open_browser=True, lan=lan)
+        from .server import start_server, _ensure_token
+        _ensure_token()
+        _print_startup_info(lan=lan)
+        start_server(daemon=True, open_browser=not lan, lan=lan)
 
     elif args[0] == "stop":
         _stop_server()
 
     elif args[0] == "attach":
-        from .server import start_server
-        if lan:
-            print(f"  LAN mode — dashboard at http://{_lan_ip()}:9100")
+        from .server import start_server, _ensure_token
+        _ensure_token()
+        _print_startup_info(lan=lan)
         start_server(daemon=False, open_browser=False, lan=lan)
 
     elif args[0] == "setup":
@@ -53,6 +53,23 @@ def _lan_ip():
         return "127.0.0.1"
     finally:
         s.close()
+
+
+def _print_startup_info(lan: bool = False):
+    token_file = os.path.expanduser("~/.armada/token")
+    token = open(token_file).read().strip()
+
+    if not token:
+        return
+
+    if lan:
+        ip = _lan_ip()
+        print(f"\n  Local       http://127.0.0.1:9100?token={token}")
+        print(f"  LAN         http://{ip}:9100?token={token}")
+    else:
+        print(f"\n  Dashboard   http://127.0.0.1:9100?token={token}")
+    print(f"  Token       {token}")
+    print()
 
 
 def _print_token(qr: bool = False, lan: bool = False):
