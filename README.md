@@ -46,6 +46,8 @@ In the sidebar **Projects** section, click **+ Add**. Give it an ID (slug), a na
 
 Click **+ Node**. Choose a name (or leave blank for auto-generated), select a project, pick an agent type — OpenCode, Claude Code, or Bash. Optionally provide an initial prompt.
 
+![Create node](img/armada_create_node.png)
+
 ### 3. Attach and work
 
 Select the node and click **Attach**. A terminal tab opens connected to the node's tmux window. The agent starts in the project directory with Armada status reporting configured. Close the tab anytime — the agent keeps running. Reattach later to pick up where you left off.
@@ -53,6 +55,8 @@ Select the node and click **Attach**. A terminal tab opens connected to the node
 ### 4. Monitor
 
 The dashboard polls every 10 seconds. See each node's current status, latest task, and full activity log.
+
+![Dashboard with nodes](img/armada_display_nodes.png)
 
 ## Commands
 
