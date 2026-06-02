@@ -1,10 +1,11 @@
 import os
 import sys
+import subprocess
 import threading
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
 import uvicorn
 
 from . import db
@@ -202,6 +203,24 @@ def attach(node_id: int):
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/nodes/{node_id}/terminal")
+def terminal_view(node_id: int):
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    if not tmux.window_exists(node["name"]):
+        raise HTTPException(status_code=410, detail="Node window no longer exists")
+
+    result = subprocess.run(
+        ["tmux", "capture-pane", "-p", "-t", f"armada:{node['name']}"],
+        capture_output=True, timeout=2,
+    )
+    if result.returncode != 0:
+        raise HTTPException(status_code=500, detail="Failed to capture pane")
+
+    return PlainTextResponse(result.stdout.decode("utf-8", errors="replace"))
+
+
 # --- Project Labels ---
 
 @app.get("/api/project-labels")
@@ -308,15 +327,17 @@ def _daemonize():
     _write_pid()
 
 
-def start_server(daemon: bool = True, open_browser: bool = True):
+def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = False):
+    host = "0.0.0.0" if lan else HOST
+
     if daemon:
         _daemonize()
 
-    if open_browser:
+    if open_browser and not lan:
         import webbrowser
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{HOST}:{PORT}")).start()
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}")).start()
 
     try:
-        uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+        uvicorn.run(app, host=host, port=PORT, log_level="warning")
     finally:
         _remove_pid()

@@ -1,33 +1,52 @@
 import os
 import sys
 import signal
+import socket
 import subprocess
 
 
 def main():
     args = sys.argv[1:]
+    lan = "--lan" in args
+    args = [a for a in args if a != "--lan"]
 
     if not args or args[0] in ("start", "serve"):
         from .server import start_server
-        start_server(daemon=True, open_browser=True)
+        if lan:
+            print(f"  LAN mode — dashboard at http://{_lan_ip()}:9100")
+        start_server(daemon=True, open_browser=True, lan=lan)
 
     elif args[0] == "stop":
         _stop_server()
 
     elif args[0] == "attach":
         from .server import start_server
-        start_server(daemon=False, open_browser=False)
+        if lan:
+            print(f"  LAN mode — dashboard at http://{_lan_ip()}:9100")
+        start_server(daemon=False, open_browser=False, lan=lan)
 
     elif args[0] == "setup":
         _setup_skills()
 
     else:
-        print("Usage: armada [start|stop|attach|setup]")
+        print("Usage: armada [start|stop|attach|setup] [--lan]")
         print("  start   Start the Armada server daemon + open dashboard")
         print("  stop    Stop the Armada server")
         print("  attach  Start server in foreground (for debugging)")
         print("  setup   Install Armada skills to user profile")
+        print("  --lan   Bind to 0.0.0.0:9100 (accessible from other devices on LAN)")
         sys.exit(1)
+
+
+def _lan_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        s.connect(("10.255.255.255", 1))
+        return s.getsockname()[0]
+    except Exception:
+        return "127.0.0.1"
+    finally:
+        s.close()
 
 
 def _setup_skills():
