@@ -8,16 +8,13 @@
 <script type="importmap">
 {
   "imports": {
-    "@xterm/xterm": "https://esm.sh/@xterm/xterm@5.5.0",
-    "@xterm/addon-fit": "https://esm.sh/@xterm/addon-fit@0.10.0"
+    "@xterm/xterm": "https://esm.sh/@xterm/xterm@5.5.0"
   }
 }
 </script>
 <script type="module">
 import { Terminal } from '@xterm/xterm';
-import { FitAddon } from '@xterm/addon-fit';
 window.Terminal = Terminal;
-window.FitAddon = FitAddon;
 </script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -196,8 +193,8 @@ a { color: #58a6ff; }
 #terminal-bar span { font-size: 12px; color: #8b949e; }
 #terminal-bar .term-close { background: none; border: none; color: #8b949e; cursor: pointer; font-size: 16px; }
 #terminal-bar .term-close:hover { color: #f85149; }
-#terminal-container { flex: 1; overflow: hidden; padding: 4px 0 0 8px; }
-#terminal-container .xterm { height: 100%; padding: 0; }
+#terminal-container { flex: 1; overflow-x: auto; overflow-y: hidden; }
+#terminal-inner { display: inline-block; min-width: 100%; min-height: 100%; }
 #terminal-in { width: 100%; padding: 8px 12px; border: none; border-top: 1px solid #21262d; background: #161b22; color: #e1e4e8; font-family: Menlo, Monaco, monospace; font-size: 12px; outline: none; }
 
 /* ── Toggle ── */
@@ -274,7 +271,7 @@ a { color: #58a6ff; }
       <span id="terminal-title">Terminal</span>
       <button class="term-close" onclick="closeTerminal()">X</button>
     </div>
-    <div id="terminal-container"></div>
+    <div id="terminal-container"><div id="terminal-inner"></div></div>
     <input type="text" id="terminal-in" placeholder="Type and press Enter..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   </div>
 </div>
@@ -336,8 +333,6 @@ let termPollTimer = null;
 let activeTermNodeId = null;
 
 let xterm = null;
-let fitAddon = null;
-let termResizeObserver = null;
 
 async function api(url, opts = {}) {
   const res = await fetch(url, opts);
@@ -512,14 +507,21 @@ async function attachNode(id) {
   }
 }
 
-function ensureXterm() {
-  if (xterm) return;
-  const container = document.getElementById('terminal-container');
+function ensureXterm(cols, rows) {
+  const container = document.getElementById('terminal-inner');
+
+  if (xterm) {
+    if (xterm.cols !== cols || xterm.rows !== rows) {
+      xterm.resize(cols, rows);
+      fixXtermWidth(container);
+    }
+    return;
+  }
 
   xterm = new Terminal({
     cursorBlink: false,
     disableStdin: true,
-    fontSize: 13,
+    fontSize: 12,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
       background: '#0d1117',
@@ -528,31 +530,31 @@ function ensureXterm() {
       selectionForeground: '#0d1117',
       selectionBackground: '#c9d1d9',
     },
-    allowProposedApi: true,
-    scrollback: 0,
+    cols: cols,
+    rows: rows,
+    scrollback: rows,
   });
 
-  fitAddon = new FitAddon();
-  xterm.loadAddon(fitAddon);
   xterm.open(container);
+  fixXtermWidth(container);
+}
 
-  try { fitAddon.fit(); } catch(e) {}
-
-  termResizeObserver = new ResizeObserver(() => {
-    try { fitAddon.fit(); } catch(e) {}
+function fixXtermWidth(container) {
+  requestAnimationFrame(() => {
+    const canvas = container.querySelector('canvas');
+    if (canvas) {
+      container.style.width = canvas.style.width;
+    }
   });
-  termResizeObserver.observe(container);
 }
 
 function disposeXterm() {
-  if (termResizeObserver) { termResizeObserver.disconnect(); termResizeObserver = null; }
-  if (xterm) { xterm.dispose(); xterm = null; fitAddon = null; }
+  if (xterm) { xterm.dispose(); xterm = null; }
 }
 
 async function openTerminal(id) {
   closeTerminal();
   activeTermNodeId = id;
-  ensureXterm();
 
   const pane = document.getElementById('terminal-pane');
   const inp = document.getElementById('terminal-in');
@@ -562,23 +564,18 @@ async function openTerminal(id) {
   document.getElementById('detail').style.display = 'none';
   pane.classList.add('show');
 
-  xterm.clear();
-  xterm.writeln('connecting...');
-
-  setTimeout(() => {
-    try { fitAddon.fit(); } catch(e) {}
-  }, 50);
-
   async function poll() {
     if (activeTermNodeId !== id) return;
     try {
       const res = await fetch('/api/nodes/' + id + '/terminal');
       if (res.ok) {
-        const text = await res.text();
-          if (xterm) {
-            xterm.write('\x1b[H\x1b[2J');
-            xterm.write(text);
-          }
+        const data = await res.json();
+        if (xterm || data.cols) {
+          ensureXterm(data.cols, data.rows);
+        }
+        if (xterm) {
+          xterm.write('\x1b[H' + data.text);
+        }
       }
     } catch(e) {}
     if (activeTermNodeId === id) termPollTimer = setTimeout(poll, 800);

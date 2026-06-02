@@ -2,7 +2,10 @@ import os
 import sys
 import subprocess
 import threading
+import re
 from pathlib import Path
+
+_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
@@ -211,14 +214,32 @@ def terminal_view(node_id: int):
     if not tmux.window_exists(node["name"]):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
+    target = f"armada:{node['name']}"
+
+    dims = subprocess.run(
+        ["tmux", "display-message", "-p", "-t", target,
+         "#{pane_width} #{pane_height}"],
+        capture_output=True, timeout=2,
+    )
+    cols, rows = 80, 24
+    if dims.returncode == 0:
+        parts = dims.stdout.decode().strip().split()
+        if len(parts) == 2:
+            cols, rows = int(parts[0]), int(parts[1])
+
     result = subprocess.run(
-        ["tmux", "capture-pane", "-p", "-t", f"armada:{node['name']}"],
+        ["tmux", "capture-pane", "-p", "-t", target],
         capture_output=True, timeout=2,
     )
     if result.returncode != 0:
         raise HTTPException(status_code=500, detail="Failed to capture pane")
 
-    return PlainTextResponse(result.stdout.decode("utf-8", errors="replace"))
+    raw = _ANSI_RE.sub('', result.stdout.decode("utf-8", errors="replace")).replace('\r', '')
+    text_lines = raw.split('\n')
+    if text_lines and text_lines[-1] == '':
+        text_lines.pop()
+    text = ''.join(line.ljust(cols) for line in text_lines)
+    return JSONResponse({"text": text, "cols": cols, "rows": rows})
 
 
 # --- Project Labels ---
