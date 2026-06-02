@@ -524,6 +524,7 @@ def agent_hook_instructions(agent_name: str) -> str:
 REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
 
 - Before any work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"active","message":"<short description of what you are about to do>"}}'`
+- When waiting for user input or permission: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"pending","message":"<what you are waiting for>"}}'`
 - After completing work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"idle","message":"<what you just did>"}}'`
 
 Keep messages under 10 words. Be specific: "spawning 3 workers", "polling children", "reading results", "summing apples", not generic "working".
