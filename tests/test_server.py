@@ -643,7 +643,7 @@ class TestAuth:
         import armada_ai.tmux as tmux_mod
 
         monkeypatch.setattr(server_mod, "TOKEN", "secret123")
-        tmux_mod.send_keys.reset_mock()
+        tmux_mod.send_raw_keys.reset_mock()
 
         def fake_run(cmd, **kwargs):
             m = MagicMock()
@@ -660,7 +660,7 @@ class TestAuth:
             time.sleep(0.3)
         finally:
             ws.close(1000)
-        tmux_mod.send_keys.assert_called_with("wskey", "hello")
+        tmux_mod.send_raw_keys.assert_called_with("wskey", "hello")
 
     def test_ws_bearer_token(self, temp_db, client, monkeypatch):
         """WebSocket with Bearer token in header connects."""

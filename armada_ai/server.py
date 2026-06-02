@@ -357,7 +357,7 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                 data = await websocket.receive_text()
                 if data:
                     await asyncio.to_thread(
-                        lambda: tmux.send_keys(node["name"], data)
+                        lambda: tmux.send_raw_keys(node["name"], data)
                     )
             except WebSocketDisconnect:
                 break

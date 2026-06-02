@@ -448,6 +448,27 @@ def send_keys(name: str, command: str):
     return result.returncode == 0
 
 
+def send_raw_keys(name: str, keys: str):
+    """Send raw keystrokes without trailing Enter. Used by interactive terminal."""
+    if not _has_tmux():
+        return False
+    target = f"{ARMADA_SESSION}:{name}"
+    if '\n' in keys or '\r' in keys:
+        lines = keys.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+        for i, line in enumerate(lines):
+            if i > 0:
+                _tmux("send-keys", "-t", target, "Enter")
+            if line:
+                result = _tmux("send-keys", "-l", "-t", target, line)
+                if result.returncode != 0:
+                    return False
+    else:
+        result = _tmux("send-keys", "-l", "-t", target, keys)
+        if result.returncode != 0:
+            return False
+    return True
+
+
 def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
     """Send an initial prompt to a node once the agent is ready.
     Waits for the agent process to start, then for its input prompt."""
