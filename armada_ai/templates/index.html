@@ -649,7 +649,14 @@ async function openTerminal(id) {
 
   termWs.onmessage = e => {
     if (xterm && activeTermNodeId === id) {
-      xterm.write('\x1b[H' + e.data);
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.cols && msg.cols !== xterm.cols) {
+          xterm.resize(msg.cols, xterm.rows);
+          fixWidth();
+        }
+        xterm.write('\x1b[H\x1b[J' + msg.text);
+      } catch (_) {}
     }
   };
 

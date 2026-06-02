@@ -3,6 +3,7 @@ import sys
 import subprocess
 import threading
 import re
+import json
 import secrets
 import socket
 import asyncio
@@ -330,22 +331,33 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
 
                 result = await asyncio.to_thread(
                     lambda: subprocess.run(
-                        ["tmux", "capture-pane", "-p", "-t", target],
+                        ["tmux", "capture-pane", "-e", "-p", "-t", target],
                         capture_output=True, timeout=2,
                     )
                 )
                 if result.returncode != 0:
                     continue
 
-                raw = _ANSI_RE.sub('', result.stdout.decode("utf-8", errors="replace")).replace('\r', '')
+                raw = result.stdout.decode("utf-8", errors="replace").replace('\r', '')
                 text_lines = raw.split('\n')
-                if text_lines and text_lines[-1] == '':
+                while text_lines and text_lines[-1] == '':
                     text_lines.pop()
-                text = ''.join(line.ljust(pane_cols) for line in text_lines)
+                if text_lines:
+                    text_lines.pop()
+                padded = []
+                for line in text_lines:
+                    vlen = len(_ANSI_RE.sub('', line))
+                    if vlen < pane_cols:
+                        line = line + ' ' * (pane_cols - vlen)
+                    padded.append(line)
+                text = ''.join(padded)
 
                 if text != last_text:
                     last_text = text
-                    await websocket.send_text(text)
+                    await websocket.send_text(json.dumps({
+                        "cols": pane_cols,
+                        "text": text,
+                    }))
             except WebSocketDisconnect:
                 break
             except Exception:
