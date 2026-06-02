@@ -614,7 +614,13 @@ class TestAuth:
         def fake_run(cmd, **kwargs):
             m = MagicMock()
             m.returncode = 0
-            m.stdout = b"hello\n"
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            if "display-message" in cmd_str:
+                m.stdout = b"80"
+            elif "capture-pane" in cmd_str:
+                m.stdout = b"line1\nline2\nstatusbar\n"
+            else:
+                m.stdout = b""
             return m
         monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
 
@@ -648,7 +654,13 @@ class TestAuth:
         def fake_run(cmd, **kwargs):
             m = MagicMock()
             m.returncode = 0
-            m.stdout = b"hello\n"
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            if "display-message" in cmd_str:
+                m.stdout = b"80"
+            elif "capture-pane" in cmd_str:
+                m.stdout = b"line1\nline2\nstatusbar\n"
+            else:
+                m.stdout = b""
             return m
         monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
 
@@ -672,7 +684,13 @@ class TestAuth:
         def fake_run(cmd, **kwargs):
             m = MagicMock()
             m.returncode = 0
-            m.stdout = b"data\n"
+            cmd_str = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+            if "display-message" in cmd_str:
+                m.stdout = b"80"
+            elif "capture-pane" in cmd_str:
+                m.stdout = b"data1\ndata2\nstatusbar\n"
+            else:
+                m.stdout = b""
             return m
         monkeypatch.setattr(server_mod.subprocess, "run", fake_run)
 
