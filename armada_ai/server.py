@@ -461,7 +461,15 @@ async def agent_report(request: Request):
     return JSONResponse({"ok": True})
 
 
-# --- Auth ---
+# --- Auth & Info ---
+
+@app.get("/api/info")
+def server_info():
+    return JSONResponse({
+        "lan_ip": _lan_ip(),
+        "port": PORT,
+    })
+
 
 @app.get("/api/auth/status")
 def auth_status(request: Request):

@@ -273,11 +273,14 @@ a { color: #58a6ff; }
   <div id="qr-section">
     <div class="section-header">
       <span class="section-title">Connect Phone</span>
-      <button class="section-add" id="qr-toggle" onclick="toggleQR()">Show</button>
+      <button class="section-add" id="qr-toggle" onclick="toggleQR()">Hide</button>
     </div>
-    <div id="qr-content" style="display:none;padding:8px;text-align:center">
+    <div id="qr-content" style="padding:8px;text-align:center">
+      <div style="margin-bottom:8px;font-size:11px;color:#8b949e;text-align:left">
+        <div id="qr-url-local" style="margin-bottom:4px;word-break:break-all"></div>
+        <div id="qr-url-lan" style="word-break:break-all"></div>
+      </div>
       <canvas id="qr-canvas"></canvas>
-      <div style="margin-top:6px;font-size:10px;color:#484f58;word-break:break-all" id="qr-url"></div>
     </div>
   </div>
 </div>
@@ -941,21 +944,33 @@ function closeSidebar() {
 function toggleQR() {
   const content = document.getElementById('qr-content');
   const btn = document.getElementById('qr-toggle');
-  const canvas = document.getElementById('qr-canvas');
   if (content.style.display === 'none') {
     content.style.display = 'block';
     btn.textContent = 'Hide';
-    const url = location.origin + location.pathname + '?token=' + AUTH_TOKEN;
-    document.getElementById('qr-url').textContent = url;
-    QRCode.toCanvas(canvas, url, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
   } else {
     content.style.display = 'none';
     btn.textContent = 'Show';
   }
 }
 
+async function initQR() {
+  const canvas = document.getElementById('qr-canvas');
+  const localUrl = `http://127.0.0.1:9100?token=${AUTH_TOKEN}`;
+  document.getElementById('qr-url-local').innerHTML = `<a href="${localUrl}" style="color:#58a6ff;font-size:10px">Local: 127.0.0.1:9100</a>`;
+
+  try {
+    const info = await api('/api/info');
+    const lanUrl = `http://${info.lan_ip}:${info.port}?token=${AUTH_TOKEN}`;
+    document.getElementById('qr-url-lan').innerHTML = `<a href="${lanUrl}" style="color:#58a6ff;font-size:10px">LAN: ${info.lan_ip}:${info.port}</a>`;
+    QRCode.toCanvas(canvas, lanUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
+  } catch(e) {
+    QRCode.toCanvas(canvas, localUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
+  }
+}
+
 /* ── Init ── */
 refreshAll();
+initQR();
 setInterval(refreshAll, POLL);
 
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
