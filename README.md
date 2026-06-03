@@ -50,11 +50,49 @@ Click **+ Node**. Choose a name (or leave blank for auto-generated), select a pr
 
 ### 3. Attach and work
 
-Select the node and click **Attach**. On macOS, the node opens in a new iTerm tab by default. Uncheck "Attach to iTerm" to view the node's tmux pane directly in the browser — rendered with xterm.js at the pane's native dimensions. Close the tab anytime — the agent keeps running. Reattach later to pick up where you left off.
+Select the node and click **Attach**. You have two ways to interact:
+
+**iTerm (macOS only)**
+
+For OpenCode and Claude Code nodes, the node opens in a new iTerm tab by default. This gives you the full interactive TUI experience — arrow keys, mouse, and inline rendering all work natively. Close the tab anytime — the agent keeps running. Reattach later to pick up where you left off.
+
+Toggle "Attach to iTerm" off to use the web terminal instead. Batch-attach multiple nodes at once using the **Attach** button in the toolbar (select checkboxes first).
+
+**Web Terminal (in-browser xterm.js)**
+
+When iTerm attachment is disabled (or you're on a non-macOS system), the node's tmux pane renders directly in the dashboard using xterm.js:
+
+- **Real keystrokes** — every keypress is forwarded to the agent via WebSocket, no input field needed. Arrow keys, Enter, and Ctrl+C all work.
+- **Interactive permission dialogs** — when the agent asks for permission (e.g. "Allow once / Allow always / Reject"), use **arrow keys + Enter** to navigate and select. The dialog is a keyboard-only TUI component — mouse clicks don't register.
+- **Live sizing** — the terminal resizes to fill the available pane height and syncs column width with the tmux pane.
+- **Horizontal scroll** on narrow screens.
+
+> **Tip:** If the terminal display looks misaligned, try resizing your browser window slightly — the ResizeObserver adjusts the terminal rows dynamically.
 
 ### 4. Monitor
 
 The dashboard polls every 10 seconds. See each node's current status, latest task, and full activity log.
+
+### 5. QR Codes — connect from other devices
+
+Armada supports two QR flows to open the dashboard on another device (phone, tablet, or another computer):
+
+**From the dashboard sidebar**
+
+Once the dashboard is open, the sidebar has a **QR** section at the bottom. Click **Show** to display a QR code encoding the full dashboard URL (including the auth token). Scan it with your phone's camera to open the dashboard instantly on that device — no typing required.
+
+The QR auto-generates using the current URL, so it works whether you're on `localhost` or accessing Armada via LAN IP.
+
+**From the CLI**
+
+```bash
+armada token --qr           # Print token + scannable QR (localhost)
+armada token --qr --lan     # Use LAN IP for remote devices
+armada --qr                 # Start server + show startup QR
+armada --lan --qr           # Start server on LAN + show QR
+```
+
+The `--qr` flag prints an ASCII QR code in the terminal. Scan it to authenticate from another device on the same network. Combine with `--lan` to bind the server to your LAN IP (needed when connecting from other machines).
 
 ![Dashboard with nodes](img/armada_display_nodes.png)
 
@@ -67,6 +105,11 @@ The dashboard polls every 10 seconds. See each node's current status, latest tas
 | `armada stop` | Stop the daemon |
 | `armada attach` | Start in foreground (debugging) |
 | `armada setup` | Install skills to user profile |
+| `armada token` | Print the auth token |
+| `armada token --qr` | Print token as scannable QR code |
+| `armada token --qr --lan` | QR with LAN IP for remote devices |
+| `armada --lan` | Start server bound to LAN IP |
+| `armada --lan --qr` | Start on LAN + show startup QR |
 
 ## Example: Multi-Agent Pipeline
 
@@ -94,7 +137,7 @@ The dashboard updates in real time as each worker reports active/idle.
 - **Per-step activity logs** — agents report status before and after every action
 - **Cascade kill & hide** — killing a parent also handles all descendants
 - **Multi-select batch ops** — checkboxes in the tree for bulk kill/delete/attach
-- **Web terminal** — view any node's tmux pane inline via xterm.js at native dimensions, horizontal scroll on narrow screens
+- **Web terminal** — view any node's tmux pane inline via xterm.js + WebSocket, bidirectional keystrokes, interactive permission navigation, horizontal scroll on narrow screens
 
 ## Architecture
 

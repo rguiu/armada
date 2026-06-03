@@ -5,6 +5,13 @@ import socket
 import subprocess
 
 
+def _hyperlink(url: str, text: str | None = None) -> str:
+    """Wrap a URL in OSC 8 escape sequence so modern terminals render it clickable."""
+    if text is None:
+        text = url
+    return f"\033]8;;{url}\007{text}\033]8;;\007"
+
+
 def main():
     args = sys.argv[1:]
     lan = "--lan" in args
@@ -15,7 +22,7 @@ def main():
         from .server import start_server, _ensure_token
         _ensure_token()
         _print_startup_info(lan=lan, qr=qr)
-        start_server(daemon=True, open_browser=not lan, lan=lan)
+        start_server(daemon=True, open_browser=True, lan=lan)
 
     elif args[0] == "stop":
         _stop_server()
@@ -41,6 +48,9 @@ def main():
         print("  token   Print the auth token (--qr for scannable QR code)")
         print("  --lan   Bind to / use LAN IP (for other devices on network)")
         print("  --qr    Show QR code (with token command)")
+        print()
+        print("  The dashboard opens in your default browser automatically.")
+        print("  URLs are printed as clickable hyperlinks (OSC 8).")
         sys.exit(1)
 
 
@@ -63,10 +73,10 @@ def _print_startup_info(lan: bool = False, qr: bool = False):
         return
 
     local_url = f"http://127.0.0.1:9100?token={token}"
-    print(f"\n{local_url}")
+    print(f"\n{_hyperlink(local_url)}")
     if lan:
         ip = _lan_ip()
-        print(f"http://{ip}:9100?token={token}")
+        print(_hyperlink(f"http://{ip}:9100?token={token}"))
     print()
 
     if qr:
@@ -94,7 +104,7 @@ def _print_token(qr: bool = False, lan: bool = False):
         import qrcode
         host = _lan_ip() if lan else "127.0.0.1"
         url = f"http://{host}:9100?token={token}"
-        print(url)
+        print(_hyperlink(url))
         print()
         qr_code = qrcode.QRCode()
         qr_code.add_data(url)
