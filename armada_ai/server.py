@@ -10,7 +10,7 @@ import asyncio
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 import uvicorn
 
 from . import db
@@ -67,7 +67,7 @@ def _check_token(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = ("/api/report", "/api/auth/status")
+    exempt = ("/api/report", "/api/auth/status", "/api/info", "/api/qr")
     if path.startswith("/api/") and path not in exempt and not path.endswith("/ws"):
         if not _check_token(request):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -469,6 +469,20 @@ def server_info():
         "lan_ip": _lan_ip(),
         "port": PORT,
     })
+
+
+@app.get("/api/qr")
+def qr_code(url: str = ""):
+    import io
+    import qrcode
+    import qrcode.image.svg
+
+    qr = qrcode.QRCode(border=1)
+    qr.add_data(url)
+    img = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
+    buf = io.BytesIO()
+    img.save(buf)
+    return Response(content=buf.getvalue(), media_type="image/svg+xml")
 
 
 @app.get("/api/auth/status")
