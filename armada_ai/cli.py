@@ -9,7 +9,7 @@ def _hyperlink(url: str, text: str | None = None) -> str:
     """Wrap a URL in OSC 8 escape sequence so modern terminals render it clickable."""
     if text is None:
         text = url
-    return f"\033]8;;{url}\033\\{text}\033]8;;\033\\"
+    return f"\033]8;;{url}\007{text}\033]8;;\007"
 
 
 def main():
