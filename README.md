@@ -200,6 +200,8 @@ armada setup
 | `GET` | `/api/nodes/:id/terminal` | Pane content + dimensions (web terminal) |
 | `POST` | `/api/report` | Agent status report |
 | `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
+| `GET` | `/api/info` | Server LAN IP and port |
+| `GET` | `/api/qr?url=` | SVG QR code for URL |
 
 ## Development
 
