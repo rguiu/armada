@@ -115,11 +115,16 @@ def install_user_skills() -> list[str]:
         installed.append(str(skills_subdir))
 
     # Also install the armada-pending plugin globally (OpenCode)
-    plugin_src = _SKILLS_SRC.parent / ".opencode" / "plugin" / "armada-pending.ts"
+    plugin_src = _SKILLS_SRC.parent / ".opencode" / "plugins" / "armada-pending.ts"
     if plugin_src.exists():
-        plugin_dst = home / ".config" / "opencode" / "plugin" / "armada-pending.ts"
+        plugin_dst = home / ".config" / "opencode" / "plugins" / "armada-pending.ts"
         plugin_dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(plugin_src, plugin_dst)
+    plugin_src_js = _SKILLS_SRC.parent / ".opencode" / "plugins" / "armada-pending.js"
+    if plugin_src_js.exists():
+        plugin_dst_js = home / ".config" / "opencode" / "plugins" / "armada-pending.js"
+        plugin_dst_js.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(plugin_src_js, plugin_dst_js)
 
     # Install Claude Code hooks globally
     claude_hooks_dst = home / ".claude" / "hooks"
@@ -137,8 +142,8 @@ def install_user_skills() -> list[str]:
 
 def _deploy_pending_plugin(cwd: str):
     """Copy armada-pending plugins and ensure opencode loads them."""
-    plugin_src_dir = _SKILLS_SRC.parent / ".opencode" / "plugin"
-    dst_dir = Path(cwd) / ".opencode" / "plugin"
+    plugin_src_dir = _SKILLS_SRC.parent / ".opencode" / "plugins"
+    dst_dir = Path(cwd) / ".opencode" / "plugins"
     dst_dir.mkdir(parents=True, exist_ok=True)
 
     copied_plugins = []
@@ -161,7 +166,7 @@ def _deploy_pending_plugin(cwd: str):
         cfg.setdefault("$schema", "https://opencode.ai/config.json")
         plugins = cfg.setdefault("plugin", [])
         for plugin_file in copied_plugins:
-            plugin_ref = f".opencode/plugin/{plugin_file}"
+            plugin_ref = f".opencode/plugins/{plugin_file}"
             if plugin_ref not in plugins:
                 plugins.append(plugin_ref)
         config_path.write_text(json.dumps(cfg, indent=2))
@@ -448,6 +453,27 @@ def send_keys(name: str, command: str):
     return result.returncode == 0
 
 
+def send_raw_keys(name: str, keys: str):
+    """Send raw keystrokes without trailing Enter. Used by interactive terminal."""
+    if not _has_tmux():
+        return False
+    target = f"{ARMADA_SESSION}:{name}"
+    if '\n' in keys or '\r' in keys:
+        lines = keys.replace('\r\n', '\n').replace('\r', '\n').split('\n')
+        for i, line in enumerate(lines):
+            if i > 0:
+                _tmux("send-keys", "-t", target, "Enter")
+            if line:
+                result = _tmux("send-keys", "-l", "-t", target, line)
+                if result.returncode != 0:
+                    return False
+    else:
+        result = _tmux("send-keys", "-l", "-t", target, keys)
+        if result.returncode != 0:
+            return False
+    return True
+
+
 def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
     """Send an initial prompt to a node once the agent is ready.
     Waits for the agent process to start, then for its input prompt."""
@@ -503,6 +529,7 @@ def agent_hook_instructions(agent_name: str) -> str:
 REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
 
 - Before any work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"active","message":"<short description of what you are about to do>"}}'`
+- When waiting for user input or permission: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"pending","message":"<what you are waiting for>"}}'`
 - After completing work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"idle","message":"<what you just did>"}}'`
 
 Keep messages under 10 words. Be specific: "spawning 3 workers", "polling children", "reading results", "summing apples", not generic "working".

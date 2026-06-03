@@ -213,7 +213,6 @@ a { color: #58a6ff; }
 #terminal-bar .term-close:hover { color: #f85149; }
 #terminal-container { flex: 1; overflow-x: auto; overflow-y: hidden; }
 #terminal-inner { display: inline-block; min-width: 100%; min-height: 100%; }
-#terminal-in { width: 100%; padding: 8px 12px; border: none; border-top: 1px solid #21262d; background: #161b22; color: #e1e4e8; font-family: Menlo, Monaco, monospace; font-size: 12px; outline: none; }
 
 /* ── Toggle ── */
 .toggle-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; color: #8b949e; }
@@ -300,7 +299,6 @@ a { color: #58a6ff; }
       <button class="term-close" onclick="closeTerminal()">X</button>
     </div>
     <div id="terminal-container"><div id="terminal-inner"></div></div>
-    <input type="text" id="terminal-in" placeholder="Type command or y/n/a and press Enter..." autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
   </div>
 </div>
 
@@ -361,6 +359,8 @@ let termPollTimer = null;
 let activeTermNodeId = null;
 
 let xterm = null;
+let termWs = null;
+let termResizeObs = null;
 
 /* ── Auth ── */
 let AUTH_TOKEN = '';
@@ -558,20 +558,19 @@ async function attachNode(id) {
   }
 }
 
-function ensureXterm(cols, rows) {
-  const container = document.getElementById('terminal-inner');
-
+function ensureXterm(cols) {
   if (xterm) {
-    if (xterm.cols !== cols || xterm.rows !== rows) {
-      xterm.resize(cols, rows);
-      fixXtermWidth(container);
+    if (cols && xterm.cols !== cols) {
+      xterm.resize(cols, Math.max(xterm.rows, 1));
+      fixWidth();
     }
     return;
   }
+  const container = document.getElementById('terminal-inner');
 
   xterm = new Terminal({
-    cursorBlink: false,
-    disableStdin: true,
+    cursorBlink: true,
+    disableStdin: false,
     fontSize: 12,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
     theme: {
@@ -581,25 +580,41 @@ function ensureXterm(cols, rows) {
       selectionForeground: '#0d1117',
       selectionBackground: '#c9d1d9',
     },
-    cols: cols,
-    rows: rows,
-    scrollback: rows,
+    cols: cols || 80,
+    rows: 24,
+    scrollback: 1000,
   });
 
   xterm.open(container);
-  fixXtermWidth(container);
+  fixWidth();
+
+  const outer = document.getElementById('terminal-container');
+  termResizeObs = new ResizeObserver(() => {
+    const h = outer.clientHeight;
+    if (h && xterm) {
+      const cellH = xterm._core._renderService.dimensions.css.cell.height;
+      if (cellH) {
+        const rows = Math.floor(h / cellH);
+        if (rows > 0 && rows !== xterm.rows) {
+          xterm.resize(xterm.cols, rows);
+          fixWidth();
+        }
+      }
+    }
+  }).observe(outer);
 }
 
-function fixXtermWidth(container) {
+function fixWidth() {
+  const container = document.getElementById('terminal-inner');
   requestAnimationFrame(() => {
     const canvas = container.querySelector('canvas');
-    if (canvas) {
-      container.style.width = canvas.style.width;
-    }
+    if (canvas) container.style.width = canvas.style.width;
   });
 }
 
 function disposeXterm() {
+  if (termWs) { termWs.close(); termWs = null; }
+  if (termResizeObs) { termResizeObs.disconnect(); termResizeObs = null; }
   if (xterm) { xterm.dispose(); xterm = null; }
 }
 
@@ -608,52 +623,55 @@ async function openTerminal(id) {
   activeTermNodeId = id;
 
   const pane = document.getElementById('terminal-pane');
-  const inp = document.getElementById('terminal-in');
   document.getElementById('terminal-title').textContent = 'Terminal \u00b7 node ' + id;
 
-  inp.value = '';
   document.getElementById('detail').style.display = 'none';
   pane.classList.add('show');
 
-  async function poll() {
-    if (activeTermNodeId !== id) return;
-    try {
-      const data = await api('/api/nodes/' + id + '/terminal');
-      if (xterm || data.cols) {
-        ensureXterm(data.cols, data.rows);
-      }
-      if (xterm) {
-        xterm.write('\x1b[H' + data.text);
-      }
-    } catch(e) {}
-    if (activeTermNodeId === id) termPollTimer = setTimeout(poll, 800);
+  xterm = null;
+  try {
+    const info = await api('/api/nodes/' + id + '/terminal');
+    ensureXterm(info.cols);
+  } catch(e) {
+    ensureXterm(80);
   }
-  poll();
 
-  inp.onkeydown = async e => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      const cmd = inp.value.trim();
-      inp.value = '';
-      if (cmd) {
-        try {
-          await api('/api/nodes/' + id + '/send', {
-            method: 'POST',
-            headers: {'Content-Type':'application/json'},
-            body: JSON.stringify({command: cmd})
-          });
-        } catch(e) {
-          toast('Send failed: ' + e.message, true);
+  xterm.writeln('connecting...');
+  xterm.focus();
+
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const wsUrl = proto + '//' + location.host + '/api/nodes/' + id + '/ws?token=' + AUTH_TOKEN;
+  termWs = new WebSocket(wsUrl);
+
+  termWs.onopen = () => {
+    if (xterm) { xterm.clear(); xterm.writeln('connected'); }
+  };
+
+  termWs.onmessage = e => {
+    if (xterm && activeTermNodeId === id) {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.cols && msg.cols !== xterm.cols) {
+          xterm.resize(msg.cols, xterm.rows);
+          fixWidth();
         }
-      }
+        xterm.write('\x1b[H\x1b[J' + msg.text);
+      } catch (_) {}
     }
   };
 
-  setTimeout(() => inp.focus(), 100);
+  termWs.onclose = () => {
+    termWs = null;
+  };
+
+  xterm.onData(data => {
+    if (termWs && termWs.readyState === WebSocket.OPEN) {
+      termWs.send(data);
+    }
+  });
 }
 
 function closeTerminal() {
-  if (termPollTimer) { clearTimeout(termPollTimer); termPollTimer = null; }
   activeTermNodeId = null;
   disposeXterm();
   document.getElementById('detail').style.display = '';
