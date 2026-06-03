@@ -219,14 +219,17 @@ a { color: #58a6ff; }
 .toggle-row input { margin: 0; }
 
 /* ── Hamburger ── */
-#menu-toggle { display: none; background: none; border: none; color: #8b949e; font-size: 20px; cursor: pointer; padding: 0 8px; line-height: 1; }
+#menu-toggle { background: none; border: none; color: #8b949e; font-size: 20px; cursor: pointer; padding: 0 8px; line-height: 1; }
 #menu-toggle:hover { color: #e1e4e8; }
 #sidebar-overlay { display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); z-index: 90; }
 
+/* Desktop: sidebar collapses in-place */
+#sidebar.collapsed { display: none; }
+
 @media (max-width: 768px) {
-  #menu-toggle { display: block; }
   #sidebar { position: fixed; top: 0; left: 0; bottom: 0; z-index: 100; transform: translateX(-100%); transition: transform 0.2s; }
-  #sidebar.open { transform: translateX(0); }
+  #sidebar.open { transform: translateX(0); display: flex; }
+  #sidebar.collapsed { display: flex; transform: translateX(-100%); }
   #sidebar-overlay.show { display: block; }
   #main { width: 100%; }
   #main-header { padding: 10px 12px; }
@@ -270,11 +273,14 @@ a { color: #58a6ff; }
   <div id="qr-section">
     <div class="section-header">
       <span class="section-title">Connect Phone</span>
-      <button class="section-add" id="qr-toggle" onclick="toggleQR()">Show</button>
+      <button class="section-add" id="qr-toggle" onclick="toggleQR()">Hide</button>
     </div>
-    <div id="qr-content" style="display:none;padding:8px;text-align:center">
+    <div id="qr-content" style="padding:8px;text-align:center">
+      <div style="margin-bottom:8px;font-size:11px;color:#8b949e;text-align:left">
+        <div id="qr-url-local" style="margin-bottom:4px;word-break:break-all"></div>
+        <div id="qr-url-lan" style="word-break:break-all"></div>
+      </div>
       <canvas id="qr-canvas"></canvas>
-      <div style="margin-top:6px;font-size:10px;color:#484f58;word-break:break-all" id="qr-url"></div>
     </div>
   </div>
 </div>
@@ -651,11 +657,13 @@ async function openTerminal(id) {
     if (xterm && activeTermNodeId === id) {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.cols && msg.cols !== xterm.cols) {
-          xterm.resize(msg.cols, xterm.rows);
+        const newCols = msg.cols || xterm.cols;
+        const newRows = msg.rows || xterm.rows;
+        if (newCols !== xterm.cols || newRows !== xterm.rows) {
+          xterm.resize(newCols, newRows);
           fixWidth();
         }
-        xterm.write('\x1b[H\x1b[J' + msg.text);
+        xterm.write('\x1b[H\x1b[2J' + msg.text);
       } catch (_) {}
     }
   };
@@ -912,32 +920,65 @@ async function refreshHooks() {
 }
 
 function toggleSidebar() {
-  document.getElementById('sidebar').classList.toggle('open');
-  document.getElementById('sidebar-overlay').classList.toggle('show');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (window.innerWidth <= 768) {
+    sidebar.classList.toggle('open');
+    overlay.classList.toggle('show');
+  } else {
+    sidebar.classList.toggle('collapsed');
+  }
 }
 function closeSidebar() {
-  document.getElementById('sidebar').classList.remove('open');
-  document.getElementById('sidebar-overlay').classList.remove('show');
+  const sidebar = document.getElementById('sidebar');
+  const overlay = document.getElementById('sidebar-overlay');
+  if (window.innerWidth <= 768) {
+    sidebar.classList.remove('open');
+    overlay.classList.add('show');
+    overlay.classList.remove('show');
+  } else {
+    sidebar.classList.add('collapsed');
+  }
 }
 
 function toggleQR() {
   const content = document.getElementById('qr-content');
   const btn = document.getElementById('qr-toggle');
-  const canvas = document.getElementById('qr-canvas');
   if (content.style.display === 'none') {
     content.style.display = 'block';
     btn.textContent = 'Hide';
-    const url = location.origin + location.pathname + '?token=' + AUTH_TOKEN;
-    document.getElementById('qr-url').textContent = url;
-    QRCode.toCanvas(canvas, url, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
   } else {
     content.style.display = 'none';
     btn.textContent = 'Show';
   }
 }
 
+function initQR() {
+  const canvas = document.getElementById('qr-canvas');
+  if (!canvas || typeof QRCode === 'undefined') return;
+
+  const localUrl = 'http://127.0.0.1:9100?token=' + AUTH_TOKEN;
+  document.getElementById('qr-url-local').innerHTML = '<a href="' + localUrl + '" style="color:#58a6ff;font-size:10px">Local: 127.0.0.1:9100</a>';
+
+  // Render QR immediately with local URL
+  QRCode.toCanvas(canvas, localUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
+
+  // Try to fetch LAN info and upgrade QR
+  fetch('/api/info', { headers: { 'Authorization': 'Bearer ' + AUTH_TOKEN } })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(info => {
+      const lanUrl = 'http://' + info.lan_ip + ':' + info.port + '?token=' + AUTH_TOKEN;
+      document.getElementById('qr-url-lan').innerHTML = '<a href="' + lanUrl + '" style="color:#58a6ff;font-size:10px">LAN: ' + info.lan_ip + ':' + info.port + '</a>';
+      QRCode.toCanvas(canvas, lanUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
+    })
+    .catch(() => {
+      document.getElementById('qr-url-lan').innerHTML = '<span style="font-size:10px;color:#484f58">Restart server for LAN address</span>';
+    });
+}
+
 /* ── Init ── */
 refreshAll();
+initQR();
 setInterval(refreshAll, POLL);
 
 document.querySelectorAll('.modal-overlay').forEach(overlay => {

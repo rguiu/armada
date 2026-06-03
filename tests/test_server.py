@@ -342,7 +342,7 @@ class TestRemainingEndpoints:
         assert data["rows"] == 24
 
     def test_terminal_view_carriage_return_stripped(self, temp_db, client, monkeypatch):
-        """Carriage returns are stripped from captured text."""
+        """Raw carriage returns are stripped; lines joined with CRLF."""
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("crnode", "#555")
@@ -362,9 +362,7 @@ class TestRemainingEndpoints:
         r = client.get(f"/api/nodes/{nid}/terminal")
         assert r.status_code == 200
         data = r.json()
-        assert "\r" not in data["text"]
-        assert "hello" in data["text"]
-        assert "world" in data["text"]
+        assert data["text"] == "hello\r\nworld"
 
     def test_terminal_view_ansi_stripped(self, temp_db, client, monkeypatch):
         """ANSI escape codes are stripped from captured text."""
@@ -392,7 +390,7 @@ class TestRemainingEndpoints:
         assert "text" in data["text"]
 
     def test_terminal_view_lines_padded(self, temp_db, client, monkeypatch):
-        """Lines are padded to match pane column width."""
+        """Lines are joined with CRLF; no space-padding applied."""
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("padnode", "#777")
@@ -414,9 +412,7 @@ class TestRemainingEndpoints:
         data = r.json()
         assert data["cols"] == 20
         assert data["rows"] == 2
-        # Two lines, each padded to 20 chars → 40 chars total, no newlines
-        assert len(data["text"]) == 40
-        assert "\n" not in data["text"]
+        assert data["text"] == "short\r\nvery long line here"
 
     def test_nodes_history(self, temp_db, client):
         """Killed nodes should appear in history."""

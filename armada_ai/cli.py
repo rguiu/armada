@@ -39,15 +39,21 @@ def main():
     elif args[0] == "token":
         _print_token(qr=qr, lan=lan)
 
+    elif args[0] == "doctor":
+        nuke = "--nuke" in args
+        _doctor(nuke=nuke)
+
     else:
-        print("Usage: armada [start|stop|attach|setup|token] [--lan] [--qr]")
+        print("Usage: armada [start|stop|attach|setup|token|doctor] [--lan] [--qr]")
         print("  start   Start the Armada server daemon + open dashboard")
         print("  stop    Stop the Armada server")
         print("  attach  Start server in foreground (for debugging)")
         print("  setup   Install Armada skills to user profile")
         print("  token   Print the auth token (--qr for scannable QR code)")
+        print("  doctor  Clean up orphaned tmux sessions and stale state")
         print("  --lan   Bind to / use LAN IP (for other devices on network)")
         print("  --qr    Show QR code (with token command)")
+        print("  --nuke  (with doctor) Kill ALL armada tmux sessions and reset DB")
         print()
         print("  The dashboard opens in your default browser automatically.")
         print("  URLs are printed as clickable hyperlinks (OSC 8).")
@@ -124,6 +130,149 @@ def _setup_skills():
     for p in paths:
         print(f"Installed: {p}")
     print(f"\nSkills installed to {len(paths)} location(s). Agents will now auto-load Armada skills.")
+
+
+def _doctor(nuke: bool = False):
+    import glob
+    from . import tmux as _tmux_mod
+
+    print("Armada Doctor")
+    print("=" * 40)
+
+    if nuke:
+        print("\n[NUKE] Killing ALL armada tmux sessions and resetting DB...")
+        # Kill all armada-related sessions
+        result = subprocess.run(
+            ["tmux", "list-sessions", "-F", "#{session_name}"],
+            capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            killed = 0
+            for session in result.stdout.strip().split("\n"):
+                if session.startswith("armada") or session.startswith("_view_"):
+                    subprocess.run(["tmux", "kill-session", "-t", session],
+                                   capture_output=True)
+                    killed += 1
+            print(f"  Killed {killed} tmux session(s)")
+
+        # Reset the DB (delete nodes and reports, keep project labels)
+        db_path = os.path.expanduser("~/.armada/armada.db")
+        if os.path.exists(db_path):
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            conn.execute("DELETE FROM status_reports")
+            conn.execute("DELETE FROM nodes")
+            conn.commit()
+            conn.close()
+            print("  Reset DB (cleared nodes and reports)")
+
+        # Clean temp files
+        temps = glob.glob("/tmp/_armada_*")
+        for f in temps:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        if temps:
+            print(f"  Removed {len(temps)} temp file(s)")
+
+        print("\nDone. Fresh start.")
+        return
+
+    # --- Normal doctor (non-destructive cleanup) ---
+
+    # 1. Kill orphaned _view_* sessions
+    print("\n[1] Orphaned _view_* sessions")
+    result = subprocess.run(
+        ["tmux", "list-sessions", "-F", "#{session_name}"],
+        capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        sessions = result.stdout.strip().split("\n")
+        view_sessions = [s for s in sessions if s.startswith("_view_")]
+        if view_sessions:
+            for session in view_sessions:
+                subprocess.run(["tmux", "kill-session", "-t", session],
+                               capture_output=True)
+            print(f"  Killed {len(view_sessions)} orphaned view session(s)")
+        else:
+            print("  None found")
+    else:
+        print("  tmux not running")
+
+    # 2. Kill duplicate armada-N grouped sessions (keep the original 'armada')
+    print("\n[2] Duplicate armada-N sessions")
+    if result.returncode == 0:
+        dupes = [s for s in sessions if s.startswith("armada-") and s[7:].isdigit()]
+        if dupes:
+            for session in dupes:
+                subprocess.run(["tmux", "kill-session", "-t", session],
+                               capture_output=True)
+            print(f"  Killed {len(dupes)} duplicate session(s)")
+        else:
+            print("  None found")
+
+    # 3. Sync DB — mark nodes dead if their tmux window is gone
+    print("\n[3] Stale DB nodes (tmux window gone)")
+    db_path = os.path.expanduser("~/.armada/armada.db")
+    if os.path.exists(db_path):
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        live_nodes = conn.execute(
+            "SELECT id, name FROM nodes WHERE killed_at IS NULL AND hidden_at IS NULL"
+        ).fetchall()
+
+        running = _tmux_mod.running_window_names()
+        stale = [(r["id"], r["name"]) for r in live_nodes if r["name"] not in running]
+
+        if stale:
+            for node_id, name in stale:
+                conn.execute(
+                    "UPDATE nodes SET killed_at = datetime('now'), status = 'dead' WHERE id = ?",
+                    (node_id,),
+                )
+            conn.commit()
+            print(f"  Marked {len(stale)} node(s) as dead: {', '.join(n for _, n in stale)}")
+        else:
+            print("  All DB nodes have live tmux windows")
+        conn.close()
+    else:
+        print("  No DB found (nothing to sync)")
+
+    # 4. Clean up /tmp/_armada_* temp files
+    print("\n[4] Temp files (/tmp/_armada_*)")
+    temps = glob.glob("/tmp/_armada_*")
+    if temps:
+        for f in temps:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        print(f"  Removed {len(temps)} file(s)")
+    else:
+        print("  None found")
+
+    # 5. Clean up stale hooks in ~/.armada/hooks/
+    print("\n[5] Stale hook files")
+    hooks_dir = os.path.expanduser("~/.armada/hooks")
+    if os.path.isdir(hooks_dir):
+        running = _tmux_mod.running_window_names()
+        removed = 0
+        for hook_file in os.listdir(hooks_dir):
+            if hook_file.endswith(".md"):
+                node_name = hook_file[:-3]
+                if node_name not in running:
+                    os.remove(os.path.join(hooks_dir, hook_file))
+                    removed += 1
+        if removed:
+            print(f"  Removed {removed} stale hook file(s)")
+        else:
+            print("  None found")
+    else:
+        print("  No hooks directory")
+
+    print("\nDone.")
 
 
 def _stop_server():
