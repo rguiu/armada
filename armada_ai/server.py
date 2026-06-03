@@ -18,7 +18,12 @@ from . import naming
 from . import tmux
 from . import health
 
-_ANSI_RE = re.compile(r'\x1b\[[0-9;]*[a-zA-Z]')
+_ANSI_RE = re.compile(
+    r'\x1b\[[0-9;]*[a-zA-Z]'        # CSI sequences (colors, cursor movement)
+    r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'  # OSC sequences (hyperlinks, titles)
+    r'|\x1b[()][0-9A-Z]'            # Character set selection
+    r'|\x1b[>=]'                     # Keypad mode
+)
 
 app = FastAPI(title="Armada")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
@@ -284,7 +289,7 @@ def terminal_view(node_id: int):
     text_lines = raw.split('\n')
     if text_lines and text_lines[-1] == '':
         text_lines.pop()
-    text = ''.join(line.ljust(cols) for line in text_lines)
+    text = '\r\n'.join(text_lines)
     return JSONResponse({"text": text, "cols": cols, "rows": rows})
 
 
@@ -316,18 +321,22 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
     async def poll_pane():
         nonlocal last_text
         pane_cols = 80
+        pane_rows = 24
         while True:
             await asyncio.sleep(poll_interval)
             try:
                 dims = await asyncio.to_thread(
                     lambda: subprocess.run(
                         ["tmux", "display-message", "-p", "-t", target,
-                         "#{pane_width}"],
+                         "#{pane_width} #{pane_height}"],
                         capture_output=True, timeout=2,
                     )
                 )
-                if dims.returncode == 0 and dims.stdout.decode().strip().isdigit():
-                    pane_cols = int(dims.stdout.decode().strip())
+                if dims.returncode == 0:
+                    parts = dims.stdout.decode().strip().split()
+                    if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                        pane_cols = int(parts[0])
+                        pane_rows = int(parts[1])
 
                 result = await asyncio.to_thread(
                     lambda: subprocess.run(
@@ -344,18 +353,13 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                     text_lines.pop()
                 if text_lines:
                     text_lines.pop()
-                padded = []
-                for line in text_lines:
-                    vlen = len(_ANSI_RE.sub('', line))
-                    if vlen < pane_cols:
-                        line = line + ' ' * (pane_cols - vlen)
-                    padded.append(line)
-                text = ''.join(padded)
+                text = '\r\n'.join(text_lines)
 
                 if text != last_text:
                     last_text = text
                     await websocket.send_text(json.dumps({
                         "cols": pane_cols,
+                        "rows": pane_rows,
                         "text": text,
                     }))
             except WebSocketDisconnect:
