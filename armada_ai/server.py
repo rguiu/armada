@@ -67,7 +67,7 @@ def _check_token(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = ("/api/report", "/api/auth/status", "/api/info", "/api/qr")
+    exempt = ("/api/report", "/api/auth/status")
     if path.startswith("/api/") and path not in exempt and not path.endswith("/ws"):
         if not _check_token(request):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)

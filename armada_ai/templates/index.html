@@ -957,17 +957,29 @@ function toggleQR() {
 function initQR() {
   const localUrl = 'http://127.0.0.1:9100?token=' + AUTH_TOKEN;
   document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff">127.0.0.1:9100</a>';
-  document.getElementById('qr-image').src = '/api/qr?url=' + encodeURIComponent(localUrl);
+  fetchQR(localUrl);
 
-  fetch('/api/info')
+  fetch('/api/info', { headers: authHeaders() })
     .then(r => r.ok ? r.json() : Promise.reject())
     .then(info => {
       const lanUrl = 'http://' + info.lan_ip + ':' + info.port + '?token=' + AUTH_TOKEN;
       document.getElementById('qr-url-lan').innerHTML = '&#128279; <a href="' + lanUrl + '" style="color:#58a6ff">' + info.lan_ip + ':' + info.port + '</a>';
-      document.getElementById('qr-image').src = '/api/qr?url=' + encodeURIComponent(lanUrl);
+      fetchQR(lanUrl);
     })
     .catch(() => {
       document.getElementById('qr-url-lan').innerHTML = '<span style="color:#8b949e">LAN info unavailable</span>';
+    });
+}
+
+function authHeaders() {
+  return AUTH_TOKEN ? { 'Authorization': 'Bearer ' + AUTH_TOKEN } : {};
+}
+
+function fetchQR(url) {
+  fetch('/api/qr?url=' + encodeURIComponent(url), { headers: authHeaders() })
+    .then(r => r.blob())
+    .then(blob => {
+      document.getElementById('qr-image').src = URL.createObjectURL(blob);
     });
 }
 

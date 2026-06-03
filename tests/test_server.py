@@ -701,27 +701,21 @@ class TestAuth:
         finally:
             ws.close(1000)
 
-
-    def test_info_exempt_from_auth(self, client, monkeypatch):
-        """Info endpoint is exempt from token requirement."""
+    def test_info_requires_auth(self, client, monkeypatch):
+        """Info endpoint requires auth (not exempt)."""
         import armada_ai.server as server_mod
-        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+        monkeypatch.setattr(server_mod, "TOKEN", "wrong-token")
 
         r = client.get("/api/info")
-        assert r.status_code == 200
-        data = r.json()
-        assert "lan_ip" in data
-        assert "port" in data
+        assert r.status_code == 401
 
-    def test_qr_exempt_from_auth(self, client, monkeypatch):
-        """QR endpoint is exempt from token requirement."""
+    def test_qr_requires_auth(self, client, monkeypatch):
+        """QR endpoint requires auth (not exempt)."""
         import armada_ai.server as server_mod
-        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+        monkeypatch.setattr(server_mod, "TOKEN", "wrong-token")
 
         r = client.get("/api/qr?url=http://example.com")
-        assert r.status_code == 200
-        assert r.headers["content-type"].startswith("image/svg+xml")
-        assert "<svg" in r.text
+        assert r.status_code == 401
 
     def test_info_returns_lan_and_port(self, client):
         """Info endpoint returns LAN IP and port."""
