@@ -953,19 +953,27 @@ function toggleQR() {
   }
 }
 
-async function initQR() {
+function initQR() {
   const canvas = document.getElementById('qr-canvas');
-  const localUrl = `http://127.0.0.1:9100?token=${AUTH_TOKEN}`;
-  document.getElementById('qr-url-local').innerHTML = `<a href="${localUrl}" style="color:#58a6ff;font-size:10px">Local: 127.0.0.1:9100</a>`;
+  if (!canvas || typeof QRCode === 'undefined') return;
 
-  try {
-    const info = await api('/api/info');
-    const lanUrl = `http://${info.lan_ip}:${info.port}?token=${AUTH_TOKEN}`;
-    document.getElementById('qr-url-lan').innerHTML = `<a href="${lanUrl}" style="color:#58a6ff;font-size:10px">LAN: ${info.lan_ip}:${info.port}</a>`;
-    QRCode.toCanvas(canvas, lanUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
-  } catch(e) {
-    QRCode.toCanvas(canvas, localUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
-  }
+  const localUrl = 'http://127.0.0.1:9100?token=' + AUTH_TOKEN;
+  document.getElementById('qr-url-local').innerHTML = '<a href="' + localUrl + '" style="color:#58a6ff;font-size:10px">Local: 127.0.0.1:9100</a>';
+
+  // Render QR immediately with local URL
+  QRCode.toCanvas(canvas, localUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
+
+  // Try to fetch LAN info and upgrade QR
+  fetch('/api/info', { headers: { 'Authorization': 'Bearer ' + AUTH_TOKEN } })
+    .then(r => r.ok ? r.json() : Promise.reject())
+    .then(info => {
+      const lanUrl = 'http://' + info.lan_ip + ':' + info.port + '?token=' + AUTH_TOKEN;
+      document.getElementById('qr-url-lan').innerHTML = '<a href="' + lanUrl + '" style="color:#58a6ff;font-size:10px">LAN: ' + info.lan_ip + ':' + info.port + '</a>';
+      QRCode.toCanvas(canvas, lanUrl, { width: 180, margin: 1, color: { dark: '#c9d1d9', light: '#0d1117' } });
+    })
+    .catch(() => {
+      document.getElementById('qr-url-lan').innerHTML = '<span style="font-size:10px;color:#484f58">Restart server for LAN address</span>';
+    });
 }
 
 /* ── Init ── */
