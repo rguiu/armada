@@ -702,6 +702,50 @@ class TestAuth:
             ws.close(1000)
 
 
+    def test_info_exempt_from_auth(self, client, monkeypatch):
+        """Info endpoint is exempt from token requirement."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/info")
+        assert r.status_code == 200
+        data = r.json()
+        assert "lan_ip" in data
+        assert "port" in data
+
+    def test_qr_exempt_from_auth(self, client, monkeypatch):
+        """QR endpoint is exempt from token requirement."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/qr?url=http://example.com")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("image/svg+xml")
+        assert "<svg" in r.text
+
+    def test_info_returns_lan_and_port(self, client):
+        """Info endpoint returns LAN IP and port."""
+        r = client.get("/api/info")
+        assert r.status_code == 200
+        data = r.json()
+        assert isinstance(data["lan_ip"], str)
+        assert isinstance(data["port"], int)
+
+    def test_qr_returns_svg(self, client):
+        """QR endpoint returns SVG for a given URL."""
+        r = client.get("/api/qr?url=https://example.com")
+        assert r.status_code == 200
+        assert "image/svg+xml" in r.headers["content-type"]
+        assert "<svg" in r.text
+        assert "<path" in r.text
+
+    def test_qr_missing_url(self, client):
+        """QR endpoint with empty URL still returns SVG (encodes empty)."""
+        r = client.get("/api/qr?url=")
+        assert r.status_code == 200
+        assert "image/svg+xml" in r.headers["content-type"]
+
+
 class TestDBRemaining:
     def test_get_root_nodes(self, temp_db):
         """get_root_nodes should return nodes with no parent."""
