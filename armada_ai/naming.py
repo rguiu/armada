@@ -73,3 +73,15 @@ def generate_name(existing: set[str] | None = None) -> str:
         if name not in existing:
             return name
         i += 1
+
+
+def generate_sequential_name(prefix: str, existing: set[str] | None = None) -> str:
+    """Generate '{prefix}-NNN' using the next unused sequential number (001-999).
+    Raises ValueError if all 999 slots are taken."""
+    if existing is None:
+        existing = set()
+    for i in range(1, 1000):
+        name = f"{prefix}-{i:03d}"
+        if name not in existing:
+            return name
+    raise ValueError(f"No available names for prefix '{prefix}' (001-999 full)")
