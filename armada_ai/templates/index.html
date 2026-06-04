@@ -60,6 +60,17 @@ a { color: #58a6ff; }
 #tree-search:focus { outline: none; background: #161b22; }
 #tree-search::placeholder { color: #484f58; }
 #tree .node-item.hidden { display: none; }
+#tree .node-item.proj-hidden { display: none; }
+#project-filters {
+  display: flex; gap: 4px; padding: 2px 8px; flex-shrink: 0; flex-wrap: wrap;
+  border-bottom: 1px solid #21262d;
+}
+#project-filters .proj-chip {
+  font-size: 10px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+  background: #21262d; color: #8b949e; border: 1px solid #30363d; user-select: none;
+}
+#project-filters .proj-chip:hover { color: #e1e4e8; }
+#project-filters .proj-chip.active { background: #1f6feb33; color: #58a6ff; border-color: #1f6feb66; }
 #tree { flex: 1; overflow-y: auto; padding: 8px; }
 #tree .node-item {
   padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;
@@ -219,6 +230,12 @@ a { color: #58a6ff; }
   background: #0d1117; color: #e1e4e8; font-size: 12px; font-family: inherit;
 }
 .cmd-bar input:focus { outline: none; border-color: #58a6ff; }
+.cmd-bar select {
+  padding: 5px 6px; border-radius: 6px; border: 1px solid #30363d;
+  background: #0d1117; color: #58a6ff; font-size: 11px; font-family: inherit;
+  cursor: pointer; max-width: 90px;
+}
+.cmd-bar select:focus { outline: none; }
 .cmd-bar .cmd-raw {
   font-size: 10px; color: #8b949e; display: flex; align-items: center; gap: 3px;
   cursor: pointer; user-select: none; white-space: nowrap;
@@ -294,11 +311,19 @@ a { color: #58a6ff; }
   #sidebar.collapsed { display: flex; transform: translateX(-100%); }
   #sidebar-overlay.show { display: block; }
   #main { width: 100%; }
-  #main-header { padding: 10px 12px; }
-  #main-header h1 { font-size: 14px; }
+  #main-header { padding: 8px 10px; }
+  #main-header h1 { font-size: 13px; gap: 4px; }
+  #main-header h1 .status-badge { font-size: 10px; padding: 2px 6px; }
+  #detail { padding: 12px; }
   .btn { padding: 5px 10px; font-size: 11px; }
   .modal { width: 95vw; }
   #toast { left: 12px; right: 12px; max-width: none; }
+  #terminal-container { overflow-x: auto; }
+  .node-meta { gap: 8px; flex-direction: column; }
+  .report-row { flex-wrap: wrap; gap: 6px; }
+  .report-time { min-width: auto; }
+  #stats-bar { flex-wrap: wrap; gap: 6px; font-size: 10px; }
+  .cmd-bar { flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -312,6 +337,7 @@ a { color: #58a6ff; }
       <h2>Fleet</h2>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
+      <button id="pause-btn" onclick="togglePause()" title="Pause updates" style="background:none;border:none;color:#8b949e;cursor:pointer;font-size:13px;padding:0 3px">&#9679;</button>
       <label id="hide-dead-label" style="font-size:10px;color:#8b949e;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px">
         <input type="checkbox" id="hide-dead" onchange="refreshTree()"> Hide ended
       </label>
@@ -324,6 +350,7 @@ a { color: #58a6ff; }
     <span class="stat" id="stat-cost">$0.00</span>
   </div>
   <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
+  <div id="project-filters"></div>
   <div id="tree"></div>
   <div id="batch-bar">
     <span class="count" id="batch-count">0 selected</span>
@@ -367,7 +394,7 @@ a { color: #58a6ff; }
     <div class="header-btns" id="header-actions"></div>
   </div>
   <div id="detail">
-    <div class="empty-detail">Select a node from the sidebar to view details</div>
+    <div class="empty-detail">Select a node from the sidebar to view details and activity</div>
   </div>
   <div id="terminal-pane">
     <div id="terminal-bar">
@@ -473,7 +500,14 @@ async function api(url, opts = {}) {
 /* ── Tree rendering ── */
 function renderTree(nodes, container, depth = 0, isChild = false) {
   if (!nodes.length) {
-    container.innerHTML = '<div class="no-nodes">No nodes. Click + to create one.</div>';
+    container.innerHTML = `<div class="no-nodes">
+      <div style="font-size:14px;margin-bottom:8px">No nodes yet</div>
+      <div style="font-size:12px;color:#484f58;line-height:1.6">
+        Click <b style="color:#8b949e">+ Node</b> to create your first agent.<br>
+        Each node is an AI agent running in tmux.<br>
+        Create child nodes for parallel work.
+      </div>
+    </div>`;
     return;
   }
   container.innerHTML = '';
@@ -575,6 +609,44 @@ function filterTree() {
   });
 }
 
+let activeProject = null;
+function updateProjectFilters() {
+  const container = document.getElementById('project-filters');
+  const projects = new Map();
+  function walk(nodes) {
+    for (const n of nodes) {
+      if (n.project_label_name) projects.set(n.project_label_id || n.project_label_name, n.project_label_name);
+      if (n.children) walk(n.children);
+    }
+  }
+  walk(treeData);
+  if (projects.size <= 1) { container.innerHTML = ''; return; }
+  let html = '<span class="proj-chip' + (!activeProject ? ' active' : '') + '" onclick="setProject(null)">All</span>';
+  for (const [id, name] of projects) {
+    html += '<span class="proj-chip' + (activeProject === id ? ' active' : '') + '" onclick="setProject(\'' + id + '\')">' + esc(name) + '</span>';
+  }
+  container.innerHTML = html;
+}
+
+function setProject(proj) {
+  activeProject = proj;
+  updateProjectFilters();
+  filterByProject();
+}
+
+function filterByProject() {
+  document.querySelectorAll('#tree .node-item').forEach(row => {
+    if (!activeProject) { row.classList.remove('proj-hidden'); return; }
+    const projNode = _findById(treeData, +row.dataset.nodeId);
+    const match = projNode && (projNode.project_label_id === activeProject || projNode.project_label_name === activeProject);
+    row.classList.toggle('proj-hidden', !match);
+  });
+  if (activeProject) {
+    document.querySelectorAll('#tree .children').forEach(c => c.style.display = 'block');
+    document.querySelectorAll('#tree .toggle-icon').forEach(t => t.dataset.expanded = '1');
+  }
+}
+
 function selectNode(n) {
   selectedNodeId = n.id;
   selectedSet.clear();
@@ -603,6 +675,11 @@ async function loadNodeDetail(nodeId) {
   if (n.project_label_name) metaHtml += `<span class="meta-item"><span>Project:</span> ${esc(n.project_label_name)}</span>`;
   if (n.parent_id) metaHtml += `<span class="meta-item"><span>Parent ID:</span> ${n.parent_id}</span>`;
   metaHtml += `<span class="meta-item"><span>Created:</span> ${esc(n.created_at)}</span>`;
+  if (n.status !== 'dead' && n.created_at) {
+    metaHtml += `<span class="meta-item"><span>Uptime:</span> ${uptime(n.created_at)}</span>`;
+  } else if (n.status === 'dead' && n.created_at && n.killed_at) {
+    metaHtml += `<span class="meta-item"><span>Ran for:</span> ${uptimeDiff(n.created_at, n.killed_at)}</span>`;
+  }
   if (n.killed_at) metaHtml += `<span class="meta-item"><span>Ended:</span> ${esc(n.killed_at)}</span>`;
 
   let actionHtml = '';
@@ -639,6 +716,15 @@ async function loadNodeDetail(nodeId) {
     </div>
     ${n.status !== 'dead' ? `
     <div class="cmd-bar">
+      <select onchange="document.getElementById('cmd-input').value=this.value;this.selectedIndex=0" style="max-width:80px">
+        <option value="">Presets</option>
+        <option value="/plan ">/plan</option>
+        <option value="exit">exit</option>
+        <option value="/clear">/clear</option>
+        <option value="ls -la">ls</option>
+        <option value="git diff">diff</option>
+        <option value="git status">status</option>
+      </select>
       <input type="text" id="cmd-input" placeholder="Type a command..."
         onkeydown="if(event.key==='Enter')sendCommand(${n.id})">
       <label class="cmd-raw"><input type="checkbox" id="cmd-raw"> raw</label>
@@ -959,10 +1045,38 @@ async function deleteLabel(id) {
 }
 
 /* ── Refresh ── */
+let expandedSet = new Set();
+
+function saveExpanded() {
+  expandedSet = new Set();
+  document.querySelectorAll('#tree .toggle-icon').forEach(t => {
+    if (t.dataset.expanded === '1') {
+      const row = t.closest('.node-item');
+      if (row?.dataset.nodeId) expandedSet.add(+row.dataset.nodeId);
+    }
+  });
+}
+
+function restoreExpanded() {
+  document.querySelectorAll('#tree .toggle-icon').forEach(t => {
+    const row = t.closest('.node-item');
+    if (row?.dataset.nodeId && expandedSet.has(+row.dataset.nodeId)) {
+      const container = row.nextSibling;
+      if (container?.classList.contains('children')) {
+        container.style.display = 'block';
+        t.dataset.expanded = '1';
+      }
+    }
+  });
+}
+
 async function refreshTree() {
   const hide = document.getElementById('hide-dead').checked;
+  saveExpanded();
   treeData = await api('/api/tree?hide_dead=' + hide);
   renderTree(treeData, document.getElementById('tree'));
+  restoreExpanded();
+  updateProjectFilters();
 }
 
 async function refreshLabels() {
@@ -1041,6 +1155,25 @@ function timeAgo(ts) {
   if (diff < 3600) return Math.floor(diff/60) + 'm ago';
   if (diff < 86400) return Math.floor(diff/3600) + 'h ago';
   return Math.floor(diff/86400) + 'd ago';
+}
+
+function _fmtDuration(sec) {
+  const h = Math.floor(sec / 3600);
+  const m = Math.floor((sec % 3600) / 60);
+  const s = sec % 60;
+  if (h > 0) return h + 'h ' + m + 'm';
+  if (m > 0) return m + 'm ' + s + 's';
+  return s + 's';
+}
+
+function uptime(created) {
+  const diff = Math.floor((Date.now() - new Date(created + 'Z').getTime()) / 1000);
+  return _fmtDuration(Math.max(0, diff));
+}
+
+function uptimeDiff(start, end) {
+  const diff = Math.floor((new Date(end + 'Z').getTime() - new Date(start + 'Z').getTime()) / 1000);
+  return _fmtDuration(Math.max(0, diff));
 }
 
 async function refreshHooks() {
@@ -1129,11 +1262,15 @@ function connectTreeWs() {
   const wsUrl = proto + '//' + location.host + '/api/ws?token=' + AUTH_TOKEN;
   treeWs = new WebSocket(wsUrl);
   treeWs.onmessage = (e) => {
+    if (paused) return;
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'tree' && msg.data) {
+        saveExpanded();
         treeData = msg.data;
         renderTree(treeData, document.getElementById('tree'));
+        restoreExpanded();
+        updateProjectFilters();
         updatePendingDot();
         if (selectedNodeId) {
           try { loadNodeDetail(selectedNodeId); } catch(_) {}
@@ -1153,9 +1290,35 @@ function connectTreeWs() {
 
 function updatePendingDot() {
   const dot = document.getElementById('pending-dot');
+  const wasPending = dot.classList.contains('show');
   const hasPending = treeData.some(n => _hasPending(n));
   dot.classList.toggle('show', hasPending);
   updateStats();
+  if (hasPending && !wasPending) {
+    notifyPending();
+  }
+}
+
+let _notifyGranted = false;
+function notifyPending() {
+  if (!('Notification' in window)) return;
+  if (Notification.permission === 'granted') _notifyGranted = true;
+  if (Notification.permission === 'default') {
+    Notification.requestPermission().then(p => { if (p === 'granted') _notifyGranted = true; });
+  }
+  if (_notifyGranted && document.hidden) {
+    new Notification('Armada — Permission needed', { body: 'A node is waiting for your input.' });
+  }
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sine'; osc.frequency.value = 880;
+    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(); osc.stop(ctx.currentTime + 0.15);
+  } catch(_) {}
 }
 
 function updateStats() {
@@ -1253,8 +1416,18 @@ function _findPending(nodes) {
   return null;
 }
 
+let paused = false;
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('pause-btn');
+  btn.style.color = paused ? '#fbbf24' : '#8b949e';
+  btn.title = paused ? 'Resume updates' : 'Pause updates';
+}
+
 connectTreeWs();
 setInterval(() => {
+  if (paused) return;
   if (!treeWs || treeWs.readyState !== WebSocket.OPEN) {
     refreshTree();
   }
