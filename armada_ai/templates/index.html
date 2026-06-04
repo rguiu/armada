@@ -76,7 +76,17 @@ a { color: #58a6ff; }
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
-#tree .children { padding-left: 12px; }
+#tree .children { padding-left: 12px; position: relative; }
+.tree-child { position: relative; }
+.tree-child::before {
+  content: ''; position: absolute; left: -6px; top: 0; bottom: 0;
+  border-left: 1px solid #21262d;
+}
+.tree-child.tree-last::before { bottom: auto; height: 50%; }
+.tree-child::after {
+  content: ''; position: absolute; left: -6px; top: 50%;
+  width: 10px; border-top: 1px solid #21262d;
+}
 .node-check {
   width: 14px; height: 14px; flex-shrink: 0; cursor: pointer;
   accent-color: #58a6ff; margin: 0;
@@ -467,16 +477,22 @@ async function api(url, opts = {}) {
 }
 
 /* ── Tree rendering ── */
-function renderTree(nodes, container, depth = 0) {
+function renderTree(nodes, container, depth = 0, isChild = false) {
   if (!nodes.length) {
     container.innerHTML = '<div class="no-nodes">No nodes. Click + to create one.</div>';
     return;
   }
   container.innerHTML = '';
-  nodes.forEach(n => {
+  nodes.forEach((n, i) => {
     const row = document.createElement('div');
     const isDead = n.status === 'dead';
-    row.className = 'node-item' + (n.id === selectedNodeId ? ' selected' : '') + (isDead ? ' dead' : '');
+    const isLast = i === nodes.length - 1;
+    let cls = 'node-item';
+    if (n.id === selectedNodeId) cls += ' selected';
+    if (isDead) cls += ' dead';
+    if (isChild) cls += ' tree-child';
+    if (isChild && isLast) cls += ' tree-last';
+    row.className = cls;
     row.style.paddingLeft = (8 + depth * 12) + 'px';
     row.dataset.nodeId = n.id;
 
@@ -542,7 +558,7 @@ function renderTree(nodes, container, depth = 0) {
       const childContainer = document.createElement('div');
       childContainer.className = 'children';
       container.appendChild(childContainer);
-      renderTree(n.children, childContainer, depth + 1);
+      renderTree(n.children, childContainer, depth + 1, true);
     }
   });
 }
