@@ -161,7 +161,8 @@ a { color: #58a6ff; }
   padding: 12px 20px; border-bottom: 1px solid #21262d;
   display: flex; justify-content: space-between; align-items: center;
 }
-#main-header h1 { font-size: 16px; color: #e1e4e8; }
+#main-header h1 { font-size: 16px; color: #e1e4e8; display: flex; align-items: center; gap: 8px; }
+#main-header h1 .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
 #main-header .header-btns { display: flex; gap: 8px; }
 .btn {
   padding: 6px 14px; border-radius: 6px; font-size: 12px; font-weight: 600;
@@ -184,11 +185,6 @@ a { color: #58a6ff; }
   display: flex; align-items: center; justify-content: center;
   height: 100%; color: #484f58; font-size: 14px;
 }
-.node-title {
-  display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
-}
-.node-title .dot { width: 12px; height: 12px; border-radius: 50%; }
-.node-title h2 { font-size: 20px; }
 .node-meta { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .meta-item { font-size: 13px; }
 .meta-item span { color: #484f58; }
@@ -594,12 +590,14 @@ async function loadNodeDetail(nodeId) {
   const data = await api('/api/nodes/' + nodeId);
   const n = data.node;
   const detail = document.getElementById('detail');
-  document.getElementById('main-title').textContent = n.name;
 
   const statusCls = n.status === 'active' ? 'status-active'
     : n.status === 'error' ? 'status-error'
     : n.status === 'pending' ? 'status-pending'
     : n.status === 'dead' ? 'status-dead' : 'status-idle';
+
+  document.getElementById('main-title').innerHTML =
+    `<span class="dot" style="background:${n.colour}"></span>${esc(n.name)} <span class="status-badge ${statusCls}">${n.status}</span>`;
 
   let metaHtml = `<span class="meta-item"><span>Agent:</span> ${esc(n.agent_type)}</span>`;
   if (n.project_label_name) metaHtml += `<span class="meta-item"><span>Project:</span> ${esc(n.project_label_name)}</span>`;
@@ -634,11 +632,6 @@ async function loadNodeDetail(nodeId) {
   }
 
   detail.innerHTML = `
-    <div class="node-title">
-      <span class="dot" style="background:${n.colour}"></span>
-      <h2>${esc(n.name)}</h2>
-      <span class="status-badge ${statusCls}">${n.status}</span>
-    </div>
     <div class="node-meta">${metaHtml}</div>
     <div id="reports">
       <h3>Activity Log</h3>
