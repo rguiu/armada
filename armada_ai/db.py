@@ -377,6 +377,17 @@ def hide_node(node_id: int) -> list[dict]:
     return hidden
 
 
+def reparent_node(node_id: int, parent_id: int | None):
+    """Move a node under a new parent (or make it a root node if None)."""
+    with _write_lock:
+        conn = _connect()
+        conn.execute(
+            "UPDATE nodes SET parent_id = ? WHERE id = ?",
+            (parent_id, node_id),
+        )
+        conn.commit()
+
+
 def existing_names():
     conn = _connect()
     rows = conn.execute("SELECT name FROM nodes WHERE killed_at IS NULL AND hidden_at IS NULL").fetchall()

@@ -33,7 +33,9 @@ try {
   evtLog = require("fs").appendFileSync.bind(null, "/tmp/armada-events.log");
 } catch (_) {}
 
-export const ArmadaPending = async () => ({
+export const ArmadaPending = async () => {
+  const seenCosts = new Set();
+  return {
   event: async ({ event }) => {
     if (evtLog) {
       try { evtLog(JSON.stringify(event) + "\n"); } catch (_) {}
@@ -46,9 +48,11 @@ export const ArmadaPending = async () => ({
       post("pending", event.properties.permission + " permission: " + (event.properties.patterns || []).join(", "));
     } else if (event.type === "message.part.updated") {
       const part = event.properties?.part;
-      if (part?.type === "step-finish") {
+      if (part?.type === "step-finish" && part.id && !seenCosts.has(part.id)) {
+        seenCosts.add(part.id);
         post("active", "step completed", { tokens: part.tokens, cost: part.cost });
       }
     }
   },
-});
+};
+};

@@ -25,6 +25,7 @@ try {
 } catch (_) {}
 
 export async function ArmadaPending() {
+  var seenCosts = {};
   return {
     event: async function (input) {
       var event = input && input.event;
@@ -45,7 +46,8 @@ export async function ArmadaPending() {
       } else if (event.type === "message.part.updated") {
         var props4 = event.properties || {};
         var part = props4.part;
-        if (part && part.type === "step-finish") {
+        if (part && part.type === "step-finish" && part.id && !seenCosts[part.id]) {
+          seenCosts[part.id] = true;
           post("active", "step completed", { tokens: part.tokens, cost: part.cost });
         }
       }

@@ -34,6 +34,34 @@ PORT = 9100
 
 TOKEN = ""
 
+_ws_clients: set[WebSocket] = set()
+
+
+async def _broadcast_tree(hide_dead: bool = False):
+    """Push the full tree to all connected WebSocket clients."""
+    if not _ws_clients:
+        return
+    tree = db.build_tree(include_dead=not hide_dead)
+    dead = [ws for ws in _ws_clients if ws.client_state.name == "DISCONNECTED"]
+    for ws in dead:
+        _ws_clients.discard(ws)
+    payload = json.dumps({"type": "tree", "data": tree})
+    for ws in _ws_clients:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            _ws_clients.discard(ws)
+
+
+def _schedule_broadcast():
+    """Schedule a tree broadcast from any thread."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.run_coroutine_threadsafe(_broadcast_tree(), loop)
+    except RuntimeError:
+        pass
+
 
 def _ensure_token():
     global TOKEN
@@ -99,6 +127,30 @@ def dashboard_page():
 @app.get("/api/tree")
 def get_tree(hide_dead: bool = False):
     return JSONResponse(db.build_tree(include_dead=not hide_dead))
+
+
+@app.websocket("/api/ws")
+async def tree_ws(websocket: WebSocket):
+    token = websocket.query_params.get("token")
+    if not token:
+        auth = websocket.headers.get("authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if token != TOKEN:
+        await websocket.close(code=4001)
+        return
+
+    await websocket.accept()
+    _ws_clients.add(websocket)
+    try:
+        tree = db.build_tree(include_dead=True)
+        await websocket.send_text(json.dumps({"type": "tree", "data": tree}))
+        while True:
+            await websocket.receive_text()
+    except Exception:
+        pass
+    finally:
+        _ws_clients.discard(websocket)
 
 
 @app.get("/api/nodes")
@@ -192,6 +244,7 @@ async def create_node(request: Request):
         tmux.send_initial_prompt(agent_name, initial_prompt, delay=delay)
 
     node = db.get_node(node_id)
+    await _broadcast_tree()
     return JSONResponse(node, status_code=201)
 
 
@@ -208,6 +261,7 @@ def delete_node(node_id: int):
         except Exception:
             pass
 
+    _schedule_broadcast()
     return JSONResponse({"ok": True, "killed": len(killed)})
 
 
@@ -245,7 +299,17 @@ async def patch_node(node_id: int, request: Request):
 
     if action == "hide":
         hidden = db.hide_node(node_id)
+        await _broadcast_tree()
         return JSONResponse({"ok": True, "hidden": len(hidden)})
+    if action == "reparent":
+        new_parent = body.get("parent_id") or None
+        if new_parent:
+            parent_node = db.get_node(new_parent)
+            if not parent_node:
+                raise HTTPException(status_code=400, detail="Parent node not found")
+        db.reparent_node(node_id, new_parent)
+        await _broadcast_tree()
+        return JSONResponse({"ok": True})
     raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
 
@@ -474,6 +538,7 @@ async def agent_report(request: Request):
             tokens_out=tokens.get("output", 0) if tokens else 0,
             cost=cost or 0.0,
         )
+    await _broadcast_tree()
     return JSONResponse({"ok": True})
 
 

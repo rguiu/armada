@@ -178,6 +178,26 @@ class TestAgentReport:
         })
         assert r.status_code == 400
 
+    def test_report_with_cost(self, temp_db, client):
+        nid = temp_db.create_node("costagent", "#999")
+        r = client.post("/api/report", json={
+            "name": "costagent", "status": "active", "message": "done",
+            "tokens": {"input": 500, "output": 200},
+            "cost": 0.015,
+        })
+        assert r.status_code == 200
+        node = temp_db.get_node(nid)
+        assert node["total_tokens_in"] == 500
+        assert node["total_tokens_out"] == 200
+        assert node["total_cost"] == pytest.approx(0.015, abs=0.0001)
+        assert node["status"] == "active"
+
+    def test_report_missing_name(self, client):
+        r = client.post("/api/report", json={
+            "status": "active",
+        })
+        assert r.status_code == 400
+
 
 class TestSendEndpoint:
     def test_send_to_bash_worker(self, temp_db, client):
@@ -511,12 +531,138 @@ class TestRemainingEndpoints:
         r = client.patch("/api/nodes/99999", json={"action": "hide"})
         assert r.status_code == 404
 
+    def test_patch_reparent(self, temp_db, client):
+        """Reparent a node under a new parent."""
+        _mkproj(temp_db, "reproj", "Reparent Project")
+        r1 = client.post("/api/nodes", json={
+            "name": "reparent_parent", "project_label_id": "reproj",
+            "agent_type": "bash",
+        })
+        r2 = client.post("/api/nodes", json={
+            "name": "reparent_child", "project_label_id": "reproj",
+            "agent_type": "bash",
+        })
+        parent_id = r1.json()["id"]
+        child_id = r2.json()["id"]
+        r = client.patch(f"/api/nodes/{child_id}", json={
+            "action": "reparent", "parent_id": parent_id,
+        })
+        assert r.status_code == 200
+        child = temp_db.get_node(child_id)
+        assert child["parent_id"] == parent_id
+
+    def test_patch_reparent_bad_parent(self, temp_db, client):
+        """Reparent to non-existent parent should return 400."""
+        _mkproj(temp_db, "brproj", "Bad Reparent")
+        r1 = client.post("/api/nodes", json={
+            "name": "orphan", "project_label_id": "brproj",
+            "agent_type": "bash",
+        })
+        child_id = r1.json()["id"]
+        r = client.patch(f"/api/nodes/{child_id}", json={
+            "action": "reparent", "parent_id": 99999,
+        })
+        assert r.status_code == 400
+
     def test_create_project_label_empty_path(self, client):
         """Creating a project label with no path should use cwd."""
         r = client.post("/api/project-labels", json={
             "id": "cwdtag", "name": "CWD Tag",
         })
         assert r.status_code == 201
+
+    def test_create_duplicate_project_label(self, client):
+        """Creating a project label with a duplicate path should fail."""
+        path = tempfile.mkdtemp(prefix="armada_test_dup_")
+        client.post("/api/project-labels", json={
+            "id": "first", "name": "First", "path": path,
+        })
+        r = client.post("/api/project-labels", json={
+            "id": "second", "name": "Second", "path": path,
+        })
+        assert r.status_code == 409
+
+    def test_send_keys_failure(self, temp_db, client, monkeypatch):
+        """Send should return 500 when tmux.send_keys fails."""
+        import armada_ai.tmux as tmux_mod
+        _mkproj(temp_db, "failproj", "Fail Project")
+        r = client.post("/api/nodes", json={
+            "name": "fail_send", "project_label_id": "failproj",
+            "agent_type": "bash",
+        })
+        nid = r.json()["id"]
+        tmux_mod.send_keys.return_value = False
+        try:
+            r = client.post(f"/api/nodes/{nid}/send", json={"command": "echo hi"})
+            assert r.status_code == 500
+        finally:
+            tmux_mod.send_keys.return_value = True
+
+    def test_kill_node_tmux_error(self, temp_db, client, monkeypatch):
+        """Kill should succeed even if tmux.kill_node_window raises."""
+        import armada_ai.tmux as tmux_mod
+        _mkproj(temp_db, "killproj", "Kill Project")
+        r = client.post("/api/nodes", json={
+            "name": "kill_tmux_err", "project_label_id": "killproj",
+            "agent_type": "bash",
+        })
+        nid = r.json()["id"]
+        tmux_mod.kill_node_window.side_effect = RuntimeError("tmux gone")
+        try:
+            r = client.delete(f"/api/nodes/{nid}")
+            assert r.status_code == 200
+        finally:
+            tmux_mod.kill_node_window.side_effect = None
+
+    def test_attach_window_gone(self, temp_db, client, monkeypatch):
+        """Attach to node with missing window returns 410."""
+        import armada_ai.tmux as tmux_mod
+        _mkproj(temp_db, "goneattach", "Gone Attach")
+        r = client.post("/api/nodes", json={
+            "name": "gone_window", "project_label_id": "goneattach",
+            "agent_type": "bash",
+        })
+        nid = r.json()["id"]
+        tmux_mod.window_exists.return_value = False
+        try:
+            r = client.post(f"/api/nodes/{nid}/attach")
+            assert r.status_code == 410
+        finally:
+            tmux_mod.window_exists.return_value = True
+
+    def test_attach_failure(self, temp_db, client, monkeypatch):
+        """Attach should return 500 when attach_node returns error."""
+        import armada_ai.tmux as tmux_mod
+        _mkproj(temp_db, "attfail", "Attach Fail")
+        r = client.post("/api/nodes", json={
+            "name": "attach_fail", "project_label_id": "attfail",
+            "agent_type": "bash",
+        })
+        nid = r.json()["id"]
+        tmux_mod.attach_node.return_value = "pane not found"
+        try:
+            r = client.post(f"/api/nodes/{nid}/attach")
+            assert r.status_code == 500
+        finally:
+            tmux_mod.attach_node.return_value = None
+
+    def test_refresh_hooks_skip_nonexistent_path(self, temp_db, client, monkeypatch):
+        """Refresh hooks should skip paths that no longer exist."""
+        import armada_ai.server as server_mod
+        import tempfile
+        d = tempfile.mkdtemp(prefix="armada_test_skip_")
+        client.post("/api/project-labels", json={
+            "id": "gonepath", "name": "Gone Path", "path": d,
+        })
+        import shutil
+        shutil.rmtree(d)
+        install_called = []
+        monkeypatch.setattr(server_mod.tmux, "install_skills",
+                           lambda p: install_called.append(p))
+        monkeypatch.setattr(server_mod.tmux, "_deploy_claude_hooks",
+                           lambda p: None)
+        r = client.post("/api/refresh-hooks")
+        assert r.status_code == 200
 
 
 class TestAuth:
@@ -567,6 +713,14 @@ class TestAuth:
 
         r = client.get("/api/auth/status?token=wrong")
         assert r.json()["valid"] is False
+
+    def test_auth_status_bearer_header(self, client, monkeypatch):
+        """Auth status via Authorization header."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/auth/status", headers={"Authorization": "Bearer secret123"})
+        assert r.json()["valid"] is True
 
     def test_report_exempt_from_auth(self, temp_db, client, monkeypatch):
         """Agent report endpoint is exempt from token requirement."""
