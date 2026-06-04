@@ -62,7 +62,10 @@ def init_db():
             agent_type TEXT DEFAULT 'auto',
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             killed_at TEXT,
-            hidden_at TEXT
+            hidden_at TEXT,
+            total_tokens_in INTEGER DEFAULT 0,
+            total_tokens_out INTEGER DEFAULT 0,
+            total_cost REAL DEFAULT 0.0
         );
 
         CREATE TABLE IF NOT EXISTS status_reports (
@@ -80,6 +83,7 @@ def init_db():
     _sync_projects_from_json()
     # Migrate: add hidden_at if schema predates it
     _migrate_add_hidden_at()
+    _migrate_add_cost_columns()
 
 
 def _migrate_add_hidden_at():
@@ -90,6 +94,19 @@ def _migrate_add_hidden_at():
             conn.commit()
         except sqlite3.OperationalError:
             pass
+
+
+def _migrate_add_cost_columns():
+    with _write_lock:
+        conn = _connect()
+        for col, col_type in [("total_tokens_in", "INTEGER DEFAULT 0"),
+                               ("total_tokens_out", "INTEGER DEFAULT 0"),
+                               ("total_cost", "REAL DEFAULT 0.0")]:
+            try:
+                conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {col_type}")
+                conn.commit()
+            except sqlite3.OperationalError:
+                pass
 
 
 # --- Project Labels ---
@@ -204,6 +221,19 @@ def add_status_report(node_id: int, status: str, message: str | None = None):
         conn.commit()
 
 
+def accumulate_cost(node_id: int, tokens_in: int = 0, tokens_out: int = 0, cost: float = 0.0):
+    with _write_lock:
+        conn = _connect()
+        conn.execute(
+            "UPDATE nodes SET total_tokens_in = total_tokens_in + ?, "
+            "total_tokens_out = total_tokens_out + ?, "
+            "total_cost = total_cost + ? "
+            "WHERE id = ?",
+            (tokens_in, tokens_out, cost, node_id),
+        )
+        conn.commit()
+
+
 def get_node(node_id: int):
     conn = _connect()
     row = conn.execute(
@@ -238,6 +268,7 @@ def get_all_nodes(include_dead: bool = True):
         rows = conn.execute("""
             SELECT n.id, n.name, n.parent_id, n.project_label_id, n.colour, n.status,
                    n.agent_type, n.created_at, n.killed_at,
+                   n.total_tokens_in, n.total_tokens_out, n.total_cost,
                    p.name as project_label_name,
                    (SELECT message FROM status_reports WHERE node_id = n.id
                     ORDER BY timestamp DESC LIMIT 1) as latest_message,
@@ -252,6 +283,7 @@ def get_all_nodes(include_dead: bool = True):
         rows = conn.execute("""
             SELECT n.id, n.name, n.parent_id, n.project_label_id, n.colour, n.status,
                    n.agent_type, n.created_at,
+                   n.total_tokens_in, n.total_tokens_out, n.total_cost,
                    p.name as project_label_name,
                    (SELECT message FROM status_reports WHERE node_id = n.id
                     ORDER BY timestamp DESC LIMIT 1) as latest_message,

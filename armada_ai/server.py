@@ -209,7 +209,13 @@ async def create_node(request: Request):
             raise HTTPException(status_code=400, detail="Parent node not found")
 
     colour = naming.next_colour(db.active_colours())
-    agent_name = name or naming.generate_name(existing_names)
+
+    if name:
+        agent_name = name
+    elif project_label_id:
+        agent_name = naming.generate_sequential_name(project_label_id, existing_names)
+    else:
+        agent_name = naming.generate_name(existing_names)
 
     pane_id = tmux.create_node_window(
         name=agent_name, colour=colour, working_dir=working_dir,
@@ -263,6 +269,7 @@ def delete_node(node_id: int):
 async def send_to_node(node_id: int, request: Request):
     body = await request.json()
     command = body.get("command", "").strip()
+    raw = body.get("raw", False)
     if not command:
         raise HTTPException(status_code=400, detail="command is required")
 
@@ -275,7 +282,7 @@ async def send_to_node(node_id: int, request: Request):
     if not tmux.window_exists(node["name"]):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    ok = tmux.send_keys(node["name"], command)
+    ok = tmux.send_raw_keys(node["name"], command) if raw else tmux.send_keys(node["name"], command)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to send command")
 
@@ -511,6 +518,8 @@ async def agent_report(request: Request):
     name = body.get("name")
     status = body.get("status", "idle")
     message = body.get("message")
+    tokens = body.get("tokens")
+    cost = body.get("cost")
 
     if not name:
         raise HTTPException(status_code=400, detail="name is required")
@@ -522,6 +531,13 @@ async def agent_report(request: Request):
         raise HTTPException(status_code=404, detail=f"Unknown node: {name}")
 
     db.add_status_report(node["id"], status, message)
+    if tokens or cost:
+        db.accumulate_cost(
+            node["id"],
+            tokens_in=tokens.get("input", 0) if tokens else 0,
+            tokens_out=tokens.get("output", 0) if tokens else 0,
+            cost=cost or 0.0,
+        )
     await _broadcast_tree()
     return JSONResponse({"ok": True})
 
