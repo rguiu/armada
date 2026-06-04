@@ -348,6 +348,22 @@ a { color: #58a6ff; }
   #stats-bar { flex-wrap: wrap; gap: 6px; font-size: 10px; }
   .cmd-bar { flex-wrap: wrap; }
 }
+
+.preset-chips {
+  display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 6px;
+}
+.preset-chip {
+  padding: 3px 10px; border-radius: 12px; border: 1px solid #30363d;
+  background: #161b22; color: #8b949e; font-size: 11px; font-family: inherit;
+  cursor: pointer; white-space: nowrap; transition: all 0.15s;
+}
+.preset-chip:hover { border-color: #58a6ff; color: #e1e4e8; background: #1c293d; }
+.preset-chip:active { background: #1f6feb33; border-color: #1f6feb66; color: #58a6ff; }
+
+@media (max-width: 768px) {
+  .preset-chips { gap: 3px; }
+  .preset-chip { padding: 2px 8px; font-size: 10px; }
+}
 </style>
 </head>
 <body>
@@ -809,20 +825,23 @@ async function loadNodeDetail(nodeId) {
       ${reportsHtml}
     </div>
     ${n.status !== 'dead' ? `
-    <div class="cmd-bar">
-      <select onchange="document.getElementById('cmd-input').value=this.value;this.selectedIndex=0" style="max-width:80px">
-        <option value="">Presets</option>
-        <option value="/plan ">/plan</option>
-        <option value="exit">exit</option>
-        <option value="/clear">/clear</option>
-        <option value="ls -la">ls</option>
-        <option value="git diff">diff</option>
-        <option value="git status">status</option>
-      </select>
-      <input type="text" id="cmd-input" placeholder="Type a command..."
-        onkeydown="if(event.key==='Enter')sendCommand(${n.id})">
-      <label class="cmd-raw"><input type="checkbox" id="cmd-raw"> raw</label>
-      <button class="btn btn-outline btn-sm" onclick="sendCommand(${n.id})">Send</button>
+    <div class="cmd-bar" style="flex-wrap:wrap">
+      <div class="preset-chips">
+        <button class="preset-chip" onclick="setCmd(${n.id},'/plan ')">/plan</button>
+        <button class="preset-chip" onclick="setCmd(${n.id},'/armada ')">/armada</button>
+        ${n.agent_type === 'opencode' ? `<button class="preset-chip" onclick="setCmd(${n.id},'/clear')">/clear</button>` : ''}
+        <button class="preset-chip" onclick="setCmd(${n.id},'ls -la')">ls</button>
+        <button class="preset-chip" onclick="setCmd(${n.id},'git diff')">diff</button>
+        <button class="preset-chip" onclick="setCmd(${n.id},'git status')">status</button>
+        <button class="preset-chip" onclick="setCmd(${n.id},'exit')">exit</button>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center;width:100%">
+        <input type="text" id="cmd-input-${n.id}" placeholder="Type a command..."
+          style="flex:1;padding:5px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e1e4e8;font-size:12px;font-family:inherit"
+          onkeydown="if(event.key==='Enter')sendCommand(${n.id})">
+        <label class="cmd-raw"><input type="checkbox" id="cmd-raw-${n.id}"> raw</label>
+        <button class="btn btn-outline btn-sm" onclick="sendCommand(${n.id})">Send</button>
+      </div>
     </div>` : ''}
   `;
 }
@@ -980,12 +999,17 @@ function closeTerminal() {
   document.getElementById('main').appendChild(pane);
 }
 
+function setCmd(nodeId, value) {
+  const input = document.getElementById('cmd-input-' + nodeId);
+  if (input) { input.value = value; input.focus(); }
+}
+
 async function sendCommand(id) {
-  const input = document.getElementById('cmd-input');
+  const input = document.getElementById('cmd-input-' + id);
   if (!input) return;
   const command = input.value.trim();
   if (!command) return;
-  const raw = document.getElementById('cmd-raw')?.checked || false;
+  const raw = document.getElementById('cmd-raw-' + id)?.checked || false;
   try {
     await api('/api/nodes/' + id + '/send', {
       method: 'POST',

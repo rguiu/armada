@@ -88,6 +88,68 @@ class TestStatusReports:
         assert temp_db.get_node(nid)["status"] == "pending"
 
 
+class TestNodeOperations:
+    def test_reparent_node(self, temp_db):
+        pid = temp_db.create_node("parent", "#111")
+        cid = temp_db.create_node("child", "#222")
+        temp_db.reparent_node(cid, pid)
+        node = temp_db.get_node(cid)
+        assert node["parent_id"] == pid
+
+    def test_reparent_to_root(self, temp_db):
+        pid = temp_db.create_node("parent", "#111")
+        cid = temp_db.create_node("child", "#222", parent_id=pid)
+        temp_db.reparent_node(cid, None)
+        node = temp_db.get_node(cid)
+        assert node["parent_id"] is None
+
+    def test_update_node_status(self, temp_db):
+        nid = temp_db.create_node("status_test", "#333")
+        temp_db.update_node_status(nid, "active", "%1")
+        node = temp_db.get_node(nid)
+        assert node["status"] == "active"
+        assert node["tmux_pane_id"] == "%1"
+
+    def test_accumulate_cost(self, temp_db):
+        nid = temp_db.create_node("cost_test", "#444")
+        temp_db.accumulate_cost(nid, tokens_in=100, tokens_out=50, cost=0.05)
+        temp_db.accumulate_cost(nid, tokens_in=50, tokens_out=25, cost=0.03)
+        node = temp_db.get_node(nid)
+        assert node["total_tokens_in"] == 150
+        assert node["total_tokens_out"] == 75
+        assert node["total_cost"] == pytest.approx(0.08, abs=0.001)
+
+
+class TestSyncProjects:
+    def test_sync_projects_from_json(self, temp_db, monkeypatch, tmp_path):
+        import json
+        projects_file = tmp_path / "projects.json"
+        projects_data = [{"id": "jsonproj", "name": "JSON Project", "path": str(tmp_path)}]
+        projects_file.write_text(json.dumps(projects_data))
+        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        temp_db._sync_projects_from_json()
+        labels = temp_db.list_project_labels()
+        assert any(l["id"] == "jsonproj" for l in labels)
+
+    def test_sync_projects_creates_file(self, temp_db, monkeypatch, tmp_path):
+        projects_file = tmp_path / "nonexistent.json"
+        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        temp_db.add_project_label("dblabel", "DB Label", str(tmp_path))
+        temp_db._sync_projects_from_json()
+        import json
+        data = json.loads(projects_file.read_text())
+        assert any(p["id"] == "dblabel" for p in data)
+
+    def test_sync_projects_json_corrupt(self, temp_db, monkeypatch, tmp_path):
+        projects_file = tmp_path / "corrupt.json"
+        projects_file.write_text("{invalid json")
+        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        temp_db.add_project_label("goodlabel", "Good", str(tmp_path))
+        temp_db._sync_projects_from_json()
+        labels = temp_db.list_project_labels()
+        assert any(l["id"] == "goodlabel" for l in labels)
+
+
 class TestNodeByName:
     def test_find(self, temp_db):
         temp_db.create_node("gandalf", "#FFF")
