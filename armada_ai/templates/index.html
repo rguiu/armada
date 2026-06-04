@@ -216,6 +216,20 @@ a { color: #58a6ff; }
   cursor: pointer; user-select: none; white-space: nowrap;
 }
 
+/* ── Context menu ── */
+#ctx-menu {
+  display: none; position: fixed; z-index: 300; min-width: 160px;
+  background: #161b22; border: 1px solid #30363d; border-radius: 6px;
+  padding: 4px 0; box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+}
+#ctx-menu .ctx-item {
+  padding: 6px 12px; font-size: 12px; color: #c9d1d9; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+}
+#ctx-menu .ctx-item:hover { background: #1f6feb33; color: #58a6ff; }
+#ctx-menu .ctx-item.ctx-danger:hover { background: #da363333; color: #f85149; }
+#ctx-menu .ctx-kbd { font-size: 10px; color: #484f58; margin-left: auto; }
+
 /* ── Modals ── */
 .modal-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -464,6 +478,7 @@ function renderTree(nodes, container, depth = 0) {
     const isDead = n.status === 'dead';
     row.className = 'node-item' + (n.id === selectedNodeId ? ' selected' : '') + (isDead ? ' dead' : '');
     row.style.paddingLeft = (8 + depth * 12) + 'px';
+    row.dataset.nodeId = n.id;
 
     const hasChildren = n.children && n.children.length > 0;
     const toggle = document.createElement('span');
@@ -508,6 +523,12 @@ function renderTree(nodes, container, depth = 0) {
         return;
       }
       selectNode(n);
+    };
+
+    row.oncontextmenu = (e) => {
+      e.preventDefault();
+      selectNode(n);
+      showContextMenu(e.clientX, e.clientY);
     };
 
     toggle.onclick = (e) => {
@@ -1170,6 +1191,62 @@ function selectPendingNode() {
   if (node) selectNode(node);
 }
 
+let ctxNodeId = null;
+function showContextMenu(x, y) {
+  const menu = document.getElementById('ctx-menu');
+  ctxNodeId = selectedNodeId;
+  menu.style.display = 'block';
+  menu.style.left = x + 'px';
+  menu.style.top = y + 'px';
+  // Keep menu within viewport
+  const r = menu.getBoundingClientRect();
+  if (r.right > window.innerWidth) menu.style.left = (x - r.width) + 'px';
+  if (r.bottom > window.innerHeight) menu.style.top = (y - r.height) + 'px';
+}
+function hideContextMenu() {
+  document.getElementById('ctx-menu').style.display = 'none';
+}
+function ctxAction(action) {
+  hideContextMenu();
+  if (!ctxNodeId) return;
+  if (action === 'attach') attachNode(ctxNodeId);
+  else if (action === 'terminal') openTerminal(ctxNodeId);
+  else if (action === 'kill') killNode(ctxNodeId);
+}
+
+document.addEventListener('click', hideContextMenu);
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if (e.key === 'Escape') { selectedNodeId = null; selectedSet.clear(); refreshTree(); }
+  else if (e.key === 'j' || e.key === 'ArrowDown') selectNextNode(1);
+  else if (e.key === 'k' || e.key === 'ArrowUp') selectNextNode(-1);
+  else if (e.key === 't' && selectedNodeId) openTerminal(selectedNodeId);
+  else if (e.key === 'a' && selectedNodeId) attachNode(selectedNodeId);
+  else if (e.key === 'x' && selectedNodeId) killNode(selectedNodeId);
+  else if (e.key === 'Enter' && selectedNodeId) loadNodeDetail(selectedNodeId);
+});
+
+function selectNextNode(dir) {
+  const rows = [...document.querySelectorAll('#tree .node-item')];
+  if (!rows.length) return;
+  let idx = selectedNodeId ? rows.findIndex(r => +r.dataset.nodeId === selectedNodeId) : -1;
+  idx = (idx + dir + rows.length) % rows.length;
+  const nodeId = +rows[idx].dataset.nodeId;
+  const node = _findById(treeData, nodeId);
+  if (node) selectNode(node);
+}
+
+function _findById(nodes, id) {
+  for (const n of nodes) {
+    if (n.id === id) return n;
+    if (n.children) {
+      const found = _findById(n.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
 function _findPending(nodes) {
   for (const n of nodes) {
     if (n.status === 'pending') return n;
@@ -1206,5 +1283,11 @@ function toast(msg, isError = false) {
 </script>
 
 <div id="toast"></div>
+
+<div id="ctx-menu">
+  <div class="ctx-item" onclick="ctxAction('attach')">Attach <span class="ctx-kbd">a</span></div>
+  <div class="ctx-item" onclick="ctxAction('terminal')">Terminal <span class="ctx-kbd">t</span></div>
+  <div class="ctx-item ctx-danger" onclick="ctxAction('kill')">Kill <span class="ctx-kbd">x</span></div>
+</div>
 </body>
 </html>
