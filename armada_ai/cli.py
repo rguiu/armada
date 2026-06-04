@@ -181,6 +181,56 @@ def _doctor(nuke: bool = False):
 
     # --- Normal doctor (non-destructive cleanup) ---
 
+    # 0. Kill stale armada server processes (DB lock fix)
+    print("\n[0] Stale server processes")
+    current_server_pid = None
+    pid_file = os.path.expanduser("~/.armada/server.pid")
+    if os.path.exists(pid_file):
+        try:
+            current_server_pid = int(open(pid_file).read().strip())
+        except (ValueError, IOError):
+            pass
+
+    stale_killed = 0
+    try:
+        fuser = subprocess.run(
+            ["fuser", os.path.expanduser("~/.armada/armada.db")],
+            capture_output=True, text=True,
+        )
+        if fuser.returncode == 0:
+            pids = [int(p) for p in fuser.stdout.split() if p.strip().isdigit()]
+            for pid in pids:
+                if pid == current_server_pid or pid == os.getpid():
+                    continue
+                try:
+                    cmdline = subprocess.run(
+                        ["ps", "-p", str(pid), "-o", "command="],
+                        capture_output=True, text=True,
+                    ).stdout.strip()
+                    if "armada" in cmdline and "python" in cmdline.lower():
+                        os.kill(pid, signal.SIGTERM)
+                        stale_killed += 1
+                except (ProcessLookupError, PermissionError):
+                    pass
+    except Exception:
+        pass
+
+    if stale_killed:
+        print(f"  Killed {stale_killed} stale server process(es)")
+    else:
+        print("  None found")
+
+    # Checkpoint WAL to release any lock residue
+    db_path = os.path.expanduser("~/.armada/armada.db")
+    if os.path.exists(db_path):
+        try:
+            import sqlite3
+            conn = sqlite3.connect(db_path, timeout=5)
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.close()
+        except Exception:
+            pass
+
     # 1. Kill orphaned _view_* sessions
     print("\n[1] Orphaned _view_* sessions")
     result = subprocess.run(
