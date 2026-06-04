@@ -52,6 +52,14 @@ a { color: #58a6ff; }
 #stats-bar .stat-dot.pending { background: #fbbf24; }
 #stats-bar .stat.pending { cursor: pointer; }
 #stats-bar .stat.pending:hover { color: #fbbf24; }
+#tree-search {
+  display: block; width: 100%; padding: 5px 10px; border: none;
+  border-bottom: 1px solid #21262d; background: #0d1117;
+  color: #e1e4e8; font-size: 12px; font-family: inherit; flex-shrink: 0;
+}
+#tree-search:focus { outline: none; background: #161b22; }
+#tree-search::placeholder { color: #484f58; }
+#tree .node-item.hidden { display: none; }
 #tree { flex: 1; overflow-y: auto; padding: 8px; }
 #tree .node-item {
   padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;
@@ -327,6 +335,7 @@ a { color: #58a6ff; }
     <span class="stat pending" id="stat-pending" onclick="selectPendingNode()"><span class="stat-dot pending"></span> -</span>
     <span class="stat" id="stat-cost">$0.00</span>
   </div>
+  <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
   <div id="tree"></div>
   <div id="batch-bar">
     <span class="count" id="batch-count">0 selected</span>
@@ -567,8 +576,18 @@ function toggleChildren(toggle, container) {
   if (!container) return;
   const expanded = toggle.dataset.expanded === '1';
   container.style.display = expanded ? 'none' : 'block';
-  toggle.textContent = expanded ? '▶' : '▼';
   toggle.dataset.expanded = expanded ? '0' : '1';
+}
+
+function filterTree() {
+  const q = document.getElementById('tree-search').value.toLowerCase();
+  const rows = document.querySelectorAll('#tree .node-item');
+  rows.forEach(row => {
+    const name = row.querySelector('.name')?.textContent?.toLowerCase() || '';
+    const badge = row.querySelector('.badge')?.textContent?.toLowerCase() || '';
+    const matches = !q || name.includes(q) || badge.includes(q);
+    row.classList.toggle('hidden', !matches);
+  });
 }
 
 function selectNode(n) {
