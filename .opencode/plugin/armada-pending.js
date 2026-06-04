@@ -1,9 +1,13 @@
 var NODE = process.env ? process.env.ARMADA_NODE_NAME : undefined;
 
-function post(status, message) {
+function post(status, message, extra) {
   if (!NODE) return;
+  extra = extra || {};
   var http = require("http");
-  var body = JSON.stringify({ name: NODE, status: status, message: message });
+  var payload = { name: NODE, status: status, message: message };
+  if (extra.tokens) payload.tokens = extra.tokens;
+  if (extra.cost !== undefined) payload.cost = extra.cost;
+  var body = JSON.stringify(payload);
   var url = new (require("url").URL)("http://127.0.0.1:9100/api/report");
   var req = http.request({
     hostname: url.hostname, port: url.port, path: url.pathname,
@@ -21,6 +25,7 @@ try {
 } catch (_) {}
 
 export async function ArmadaPending() {
+  var seenCosts = {};
   return {
     event: async function (input) {
       var event = input && input.event;
@@ -38,6 +43,13 @@ export async function ArmadaPending() {
         var props3 = event.properties || {};
         var patterns = props3.patterns || [];
         post("pending", (props3.permission || "?") + " permission: " + patterns.join(", "));
+      } else if (event.type === "message.part.updated") {
+        var props4 = event.properties || {};
+        var part = props4.part;
+        if (part && part.type === "step-finish" && part.id && !seenCosts[part.id]) {
+          seenCosts[part.id] = true;
+          post("active", "step completed", { tokens: part.tokens, cost: part.cost });
+        }
       }
     },
   };
