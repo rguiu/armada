@@ -201,6 +201,21 @@ a { color: #58a6ff; }
 .report-time { color: #484f58; font-size: 12px; min-width: 100px; }
 .report-msg { color: #c9d1d9; flex: 1; }
 
+/* ── Command bar ── */
+.cmd-bar {
+  display: flex; gap: 6px; padding: 8px 0; border-top: 1px solid #21262d;
+  align-items: center; margin-top: 12px;
+}
+.cmd-bar input {
+  flex: 1; padding: 5px 10px; border-radius: 6px; border: 1px solid #30363d;
+  background: #0d1117; color: #e1e4e8; font-size: 12px; font-family: inherit;
+}
+.cmd-bar input:focus { outline: none; border-color: #58a6ff; }
+.cmd-bar .cmd-raw {
+  font-size: 10px; color: #8b949e; display: flex; align-items: center; gap: 3px;
+  cursor: pointer; user-select: none; white-space: nowrap;
+}
+
 /* ── Modals ── */
 .modal-overlay {
   display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
@@ -584,6 +599,13 @@ async function loadNodeDetail(nodeId) {
       <h3>Activity Log</h3>
       ${reportsHtml}
     </div>
+    ${n.status !== 'dead' ? `
+    <div class="cmd-bar">
+      <input type="text" id="cmd-input" placeholder="Type a command..."
+        onkeydown="if(event.key==='Enter')sendCommand(${n.id})">
+      <label class="cmd-raw"><input type="checkbox" id="cmd-raw"> raw</label>
+      <button class="btn btn-outline btn-sm" onclick="sendCommand(${n.id})">Send</button>
+    </div>` : ''}
   `;
 }
 
@@ -761,6 +783,25 @@ function initSplitDivider() {
 }
 
 initSplitDivider();
+
+async function sendCommand(id) {
+  const input = document.getElementById('cmd-input');
+  if (!input) return;
+  const command = input.value.trim();
+  if (!command) return;
+  const raw = document.getElementById('cmd-raw')?.checked || false;
+  try {
+    await api('/api/nodes/' + id + '/send', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({command, raw})
+    });
+    input.value = '';
+    input.focus();
+  } catch(e) {
+    toast('Send failed: ' + e.message, true);
+  }
+}
 
 async function killNode(id) {
   if (!confirm('Kill this node and all its children?')) return;
