@@ -35,6 +35,13 @@ a { color: #58a6ff; }
 }
 #sidebar-header h2 { font-size: 14px; color: #58a6ff; font-weight: 600; }
 #sidebar-header { display: flex; justify-content: space-between; align-items: center; }
+#pending-dot {
+  display: none; width: 10px; height: 10px; border-radius: 50%;
+  background: #fbbf24; flex-shrink: 0; cursor: pointer;
+  animation: pulse-pending 1.5s ease-in-out infinite;
+  margin-right: 4px;
+}
+#pending-dot.show { display: block; }
 #tree { flex: 1; overflow-y: auto; padding: 8px; }
 #tree .node-item {
   padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;
@@ -244,7 +251,10 @@ a { color: #58a6ff; }
 <!-- ── Sidebar ── -->
 <div id="sidebar">
   <div id="sidebar-header">
-    <h2>Fleet</h2>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span id="pending-dot" title="Pending permission" onclick="selectPendingNode()"></span>
+      <h2>Fleet</h2>
+    </div>
     <div style="display:flex;align-items:center;gap:8px">
       <label id="hide-dead-label" style="font-size:10px;color:#8b949e;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px">
         <input type="checkbox" id="hide-dead" onchange="refreshTree()"> Hide ended
@@ -985,7 +995,72 @@ function fetchQR(url) {
 
 /* ── Init ── */
 refreshAll();
-setInterval(refreshAll, POLL);
+
+let treeWs = null;
+let treeReconnectTimer = null;
+
+function connectTreeWs() {
+  if (treeWs && treeWs.readyState === WebSocket.OPEN) return;
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  const wsUrl = proto + '//' + location.host + '/api/ws?token=' + AUTH_TOKEN;
+  treeWs = new WebSocket(wsUrl);
+  treeWs.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'tree' && msg.data) {
+        treeData = msg.data;
+        renderTree(treeData, document.getElementById('tree'));
+        updatePendingDot();
+        if (selectedNodeId) {
+          try { loadNodeDetail(selectedNodeId); } catch(_) {}
+        }
+      }
+    } catch(_) {}
+  };
+  treeWs.onclose = () => {
+    treeWs = null;
+    treeReconnectTimer = setTimeout(connectTreeWs, 3000);
+  };
+  treeWs.onerror = () => {
+    treeWs = null;
+    treeReconnectTimer = setTimeout(connectTreeWs, 3000);
+  };
+}
+
+function updatePendingDot() {
+  const dot = document.getElementById('pending-dot');
+  const hasPending = treeData.some(n => _hasPending(n));
+  dot.classList.toggle('show', hasPending);
+}
+
+function _hasPending(node) {
+  if (node.status === 'pending') return true;
+  if (node.children) return node.children.some(c => _hasPending(c));
+  return false;
+}
+
+function selectPendingNode() {
+  const node = _findPending(treeData);
+  if (node) selectNode(node);
+}
+
+function _findPending(nodes) {
+  for (const n of nodes) {
+    if (n.status === 'pending') return n;
+    if (n.children) {
+      const found = _findPending(n.children);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+connectTreeWs();
+setInterval(() => {
+  if (!treeWs || treeWs.readyState !== WebSocket.OPEN) {
+    refreshTree();
+  }
+}, POLL);
 
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', (e) => {
