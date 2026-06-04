@@ -3,9 +3,9 @@
 const API = "http://127.0.0.1:9100";
 const NODE = process.env.ARMADA_NODE_NAME;
 
-function post(status, message) {
+function post(status, message, extra = {}) {
   if (!NODE) return;
-  const body = JSON.stringify({ name: NODE, status, message });
+  const body = JSON.stringify({ name: NODE, status, message, ...extra });
   try {
     fetch(`${API}/api/report`, {
       method: "POST",
@@ -33,7 +33,9 @@ try {
   evtLog = require("fs").appendFileSync.bind(null, "/tmp/armada-events.log");
 } catch (_) {}
 
-export const ArmadaPending = async () => ({
+export const ArmadaPending = async () => {
+  const seenCosts = new Set();
+  return {
   event: async ({ event }) => {
     if (evtLog) {
       try { evtLog(JSON.stringify(event) + "\n"); } catch (_) {}
@@ -44,6 +46,13 @@ export const ArmadaPending = async () => ({
       post("idle", event.properties.tool + " completed");
     } else if (event.type === "permission.asked") {
       post("pending", event.properties.permission + " permission: " + (event.properties.patterns || []).join(", "));
+    } else if (event.type === "message.part.updated") {
+      const part = event.properties?.part;
+      if (part?.type === "step-finish" && part.id && !seenCosts.has(part.id)) {
+        seenCosts.add(part.id);
+        post("active", "step completed", { tokens: part.tokens, cost: part.cost });
+      }
     }
   },
-});
+};
+};
