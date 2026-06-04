@@ -3,9 +3,9 @@
 const API = "http://127.0.0.1:9100";
 const NODE = process.env.ARMADA_NODE_NAME;
 
-function post(status, message) {
+function post(status, message, extra = {}) {
   if (!NODE) return;
-  const body = JSON.stringify({ name: NODE, status, message });
+  const body = JSON.stringify({ name: NODE, status, message, ...extra });
   try {
     fetch(`${API}/api/report`, {
       method: "POST",
@@ -44,6 +44,11 @@ export const ArmadaPending = async () => ({
       post("idle", event.properties.tool + " completed");
     } else if (event.type === "permission.asked") {
       post("pending", event.properties.permission + " permission: " + (event.properties.patterns || []).join(", "));
+    } else if (event.type === "message.part.updated") {
+      const part = event.properties?.part;
+      if (part?.type === "step-finish") {
+        post("active", "step completed", { tokens: part.tokens, cost: part.cost });
+      }
     }
   },
 });
