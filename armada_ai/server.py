@@ -294,6 +294,15 @@ async def patch_node(node_id: int, request: Request):
         hidden = db.hide_node(node_id)
         await _broadcast_tree()
         return JSONResponse({"ok": True, "hidden": len(hidden)})
+    if action == "reparent":
+        new_parent = body.get("parent_id") or None
+        if new_parent:
+            parent_node = db.get_node(new_parent)
+            if not parent_node:
+                raise HTTPException(status_code=400, detail="Parent node not found")
+        db.reparent_node(node_id, new_parent)
+        await _broadcast_tree()
+        return JSONResponse({"ok": True})
     raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
 

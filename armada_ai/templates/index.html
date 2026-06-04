@@ -120,6 +120,13 @@ a { color: #58a6ff; }
   width: 14px; font-size: 10px; color: #484f58; flex-shrink: 0; text-align: center;
   cursor: pointer; user-select: none;
 }
+.drag-handle {
+  cursor: grab; color: #484f58; font-size: 13px; flex-shrink: 0;
+  user-select: none; visibility: hidden; padding: 0 2px;
+}
+.node-item:hover .drag-handle { visibility: visible; }
+.node-item.drag-over { background: #1f6feb22; outline: 1px dashed #58a6ff; }
+.node-item.dragging { opacity: 0.4; }
 #tree .no-nodes { padding: 24px 12px; color: #484f58; font-size: 13px; text-align: center; }
 
 /* ── Labels section ── */
@@ -523,6 +530,11 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
     row.className = cls;
     row.style.paddingLeft = (8 + depth * 12) + 'px';
     row.dataset.nodeId = n.id;
+    row.draggable = true;
+
+    const dragHandle = document.createElement('span');
+    dragHandle.className = 'drag-handle';
+    dragHandle.textContent = '⠿';
 
     const hasChildren = n.children && n.children.length > 0;
     const toggle = document.createElement('span');
@@ -555,11 +567,40 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
     badge.className = 'badge ' + badgeStatus;
     badge.textContent = n.status;
 
+    row.appendChild(dragHandle);
     row.appendChild(check);
     row.appendChild(toggle);
     row.appendChild(dot);
     row.appendChild(name);
     row.appendChild(badge);
+
+    row.addEventListener('dragstart', (e) => {
+      e.dataTransfer.setData('text/plain', n.id);
+      e.dataTransfer.effectAllowed = 'move';
+      row.classList.add('dragging');
+    });
+    row.addEventListener('dragend', () => row.classList.remove('dragging'));
+    row.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      row.classList.add('drag-over');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+    row.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      row.classList.remove('drag-over');
+      const srcId = +e.dataTransfer.getData('text/plain');
+      if (srcId === n.id) return;
+      try {
+        await api('/api/nodes/' + srcId, {
+          method: 'PATCH',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({action:'reparent', parent_id: n.id})
+        });
+      } catch(err) {
+        toast('Move failed: ' + err.message, true);
+      }
+    });
 
     row.onclick = (e) => {
       if (e.target === toggle) {
