@@ -952,3 +952,66 @@ class TestCLI:
         with pytest.raises(SystemExit) as exc:
             cli_mod._print_token()
         assert exc.value.code == 1
+
+
+class TestNewEndpoints:
+    """Tests for endpoints added in the improvements branch."""
+
+    def test_manifest_json(self, client):
+        r = client.get("/manifest.json")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["name"] == "Armada Fleet Dashboard"
+        assert data["display"] == "standalone"
+
+    def test_sw_js(self, client):
+        r = client.get("/sw.js")
+        assert r.status_code == 200
+        assert "service-worker" in r.text or "addEventListener" in r.text
+
+    def test_rename_node(self, temp_db, client):
+        _mkproj(temp_db, "rnproj", "RN")
+        r = client.post("/api/nodes", json={
+            "name": "old-name", "project_label_id": "rnproj", "agent_type": "bash",
+        })
+        assert r.status_code == 201
+        nid = r.json()["id"]
+
+        r = client.patch(f"/api/nodes/{nid}", json={"action": "rename", "name": "new-name"})
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+        r = client.get(f"/api/nodes/{nid}")
+        assert r.json()["node"]["name"] == "new-name"
+
+    def test_rename_duplicate_name(self, temp_db, client):
+        _mkproj(temp_db, "dup", "DUP")
+        client.post("/api/nodes", json={"name": "a", "project_label_id": "dup", "agent_type": "bash"})
+        r = client.post("/api/nodes", json={"name": "b", "project_label_id": "dup", "agent_type": "bash"})
+        nid = r.json()["id"]
+        r = client.patch(f"/api/nodes/{nid}", json={"action": "rename", "name": "a"})
+        assert r.status_code == 409
+
+    def test_rename_missing_name(self, temp_db, client):
+        _mkproj(temp_db, "rnn", "RNN")
+        r = client.post("/api/nodes", json={"name": "z", "project_label_id": "rnn", "agent_type": "bash"})
+        nid = r.json()["id"]
+        r = client.patch(f"/api/nodes/{nid}", json={"action": "rename", "name": ""})
+        assert r.status_code == 400
+
+    def test_create_node_requires_project(self, client):
+        r = client.post("/api/nodes", json={"agent_type": "bash"})
+        assert r.status_code == 400
+        assert "project" in r.json()["detail"].lower()
+
+    def test_info_has_uptime(self, client):
+        r = client.get("/api/info")
+        assert r.status_code == 200
+        data = r.json()
+        assert "uptime" in data
+        assert "version" in data
+        assert data["version"] == "0.2.0"
+
+    def test_patch_rename_bad_node(self, client):
+        r = client.patch("/api/nodes/9999", json={"action": "rename", "name": "x"})
+        assert r.status_code == 404
