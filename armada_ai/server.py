@@ -7,6 +7,7 @@ import json
 import secrets
 import socket
 import asyncio
+import time as _time
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
@@ -17,12 +18,13 @@ from . import db
 from . import naming
 from . import tmux
 from . import health
+from . import logs
 
 _ANSI_RE = re.compile(
-    r'\x1b\[[0-9;]*[a-zA-Z]'        # CSI sequences (colors, cursor movement)
-    r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'  # OSC sequences (hyperlinks, titles)
-    r'|\x1b[()][0-9A-Z]'            # Character set selection
-    r'|\x1b[>=]'                     # Keypad mode
+    r'\x1b\[[0-9;]*[a-zA-Z]'
+    r'|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'
+    r'|\x1b[()][0-9A-Z]'
+    r'|\x1b[>=]'
 )
 
 app = FastAPI(title="Armada")
@@ -33,12 +35,12 @@ HOST = "127.0.0.1"
 PORT = 9100
 
 TOKEN = ""
+SERVER_START_TS = 0.0
 
 _ws_clients: set[WebSocket] = set()
 
 
 async def _broadcast_tree(hide_dead: bool = False):
-    """Push the full tree to all connected WebSocket clients."""
     if not _ws_clients:
         return
     tree = db.build_tree(include_dead=not hide_dead)
@@ -54,7 +56,6 @@ async def _broadcast_tree(hide_dead: bool = False):
 
 
 def _schedule_broadcast():
-    """Schedule a tree broadcast from any thread."""
     try:
         loop = asyncio.get_event_loop()
         if loop.is_running():
@@ -63,9 +64,13 @@ def _schedule_broadcast():
         pass
 
 
-def _ensure_token():
+def _ensure_token(keep: bool = True):
     global TOKEN
     if not TOKEN:
+        if keep and os.path.exists(TOKEN_FILE):
+            TOKEN = Path(TOKEN_FILE).read_text().strip()
+            if TOKEN:
+                return TOKEN
         TOKEN = secrets.token_hex(16)
         os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
         Path(TOKEN_FILE).write_text(TOKEN)
@@ -95,7 +100,11 @@ def _check_token(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = ("/api/report", "/api/auth/status")
+    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json")
+    if path.startswith("/api/logs") or path.startswith("/static/"):
+        if not _check_token(request) and path not in exempt:
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+        return await call_next(request)
     if path.startswith("/api/") and path not in exempt and not path.endswith("/ws"):
         if not _check_token(request):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -104,12 +113,58 @@ async def auth_middleware(request: Request, call_next):
 
 @app.on_event("startup")
 def startup():
+    global SERVER_START_TS
+    SERVER_START_TS = _time.time()
     db.init_db()
     try:
         tmux.ensure_armada_session()
     except RuntimeError:
         pass
+    logs.log_server_start()
+    recovered = health.recover_on_startup()
+    if recovered:
+        names = [n["name"] for n in recovered]
+        logs.log_event("_server", "recovery", {"recovered_nodes": names})
     health.start_health_loop()
+    logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
+
+
+# --- Static files ---
+
+@app.get("/manifest.json")
+def manifest():
+    return JSONResponse({
+        "name": "Armada Fleet Dashboard",
+        "short_name": "Armada",
+        "description": "Command your fleet of AI agents",
+        "start_url": "/",
+        "display": "standalone",
+        "orientation": "any",
+        "background_color": "#0f1117",
+        "theme_color": "#0f1117",
+        "icons": []
+    })
+
+
+@app.get("/sw.js")
+def service_worker():
+    sw = """\
+const CACHE = 'armada-v1';
+self.addEventListener('install', e => {
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/'])));
+});
+self.addEventListener('fetch', e => {
+  e.respondWith(
+    caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
+      if (resp.ok && e.request.method === 'GET') {
+        const clone = resp.clone();
+        caches.open(CACHE).then(c => c.put(e.request, clone));
+      }
+      return resp;
+    }))
+  );
+});"""
+    return Response(content=sw, media_type="application/javascript")
 
 
 # --- Dashboard ---
@@ -187,21 +242,21 @@ async def create_node(request: Request):
     agent_type = body.get("agent_type", "auto")
     initial_prompt = (body.get("initial_prompt") or "").strip()
 
+    if not project_label_id:
+        raise HTTPException(status_code=400, detail="A project must be selected")
+
     existing_names = db.existing_names()
 
     if name and name in existing_names:
         raise HTTPException(status_code=409, detail=f"Node '{name}' already exists")
 
-    if project_label_id:
-        path = db.get_project_label_path(project_label_id)
-        if not path:
-            raise HTTPException(status_code=400, detail="Project label not found")
-        if not os.path.isdir(path):
-            raise HTTPException(status_code=400,
-                detail=f"Project path does not exist: {path}")
-        working_dir = path
-    else:
-        working_dir = os.path.expanduser("~")
+    path = db.get_project_label_path(project_label_id)
+    if not path:
+        raise HTTPException(status_code=400, detail="Project label not found")
+    if not os.path.isdir(path):
+        raise HTTPException(status_code=400,
+            detail=f"Project path does not exist: {path}")
+    working_dir = path
 
     if parent_id:
         parent = db.get_node(parent_id)
@@ -212,10 +267,8 @@ async def create_node(request: Request):
 
     if name:
         agent_name = name
-    elif project_label_id:
-        agent_name = naming.generate_sequential_name(project_label_id, existing_names)
     else:
-        agent_name = naming.generate_name(existing_names)
+        agent_name = naming.generate_sequential_name(project_label_id, existing_names)
 
     pane_id = tmux.create_node_window(
         name=agent_name, colour=colour, working_dir=working_dir,
@@ -237,6 +290,7 @@ async def create_node(request: Request):
 
     db.add_status_report(node_id, "idle",
         f"node created (agent={agent_type}, project={project_label_id or 'cwd'})")
+    logs.log_create(agent_name, agent_type, project_label_id)
     tmux.save_agent_hook(agent_name)
 
     if initial_prompt:
@@ -260,6 +314,7 @@ def delete_node(node_id: int):
             tmux.kill_node_window(entry["name"])
         except Exception:
             pass
+        logs.log_kill(entry["name"])
 
     _schedule_broadcast()
     return JSONResponse({"ok": True, "killed": len(killed)})
@@ -286,6 +341,7 @@ async def send_to_node(node_id: int, request: Request):
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to send command")
 
+    logs.log_send(node["name"], command)
     return JSONResponse({"ok": True})
 
 
@@ -310,6 +366,16 @@ async def patch_node(node_id: int, request: Request):
         db.reparent_node(node_id, new_parent)
         await _broadcast_tree()
         return JSONResponse({"ok": True})
+    if action == "rename":
+        new_name = body.get("name", "").strip()
+        if not new_name:
+            raise HTTPException(status_code=400, detail="name is required")
+        existing = db.existing_names()
+        if new_name in existing:
+            raise HTTPException(status_code=409, detail=f"Node '{new_name}' already exists")
+        db.rename_node(node_id, new_name)
+        await _broadcast_tree()
+        return JSONResponse({"ok": True})
     raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
 
@@ -325,6 +391,7 @@ def attach(node_id: int):
     if error:
         raise HTTPException(status_code=500, detail=error)
 
+    logs.log_attach(node["name"])
     return JSONResponse({"ok": True})
 
 
@@ -494,7 +561,6 @@ def delete_project_label(label_id: str):
 
 @app.post("/api/refresh-hooks")
 def refresh_hooks():
-    """Re-deploy skills and hooks to all project label paths."""
     labels = db.list_project_labels()
     updated = []
     for label in labels:
@@ -531,6 +597,7 @@ async def agent_report(request: Request):
         raise HTTPException(status_code=404, detail=f"Unknown node: {name}")
 
     db.add_status_report(node["id"], status, message)
+    logs.log_report(name, status, message)
     if tokens or cost:
         db.accumulate_cost(
             node["id"],
@@ -542,13 +609,35 @@ async def agent_report(request: Request):
     return JSONResponse({"ok": True})
 
 
+# --- Logs ---
+
+@app.get("/api/logs/{node_name}")
+def get_node_logs(node_name: str, limit: int = 50, before: float | None = None):
+    if not db.get_node_by_name(node_name) and node_name not in db.existing_names():
+        pass
+    entries = logs.get_node_logs(node_name, limit=limit, before_ts=before)
+    return JSONResponse({"node": node_name, "count": len(entries), "entries": entries})
+
+
+@app.get("/api/logs")
+def search_all_logs(q: str = "", limit: int = 50, node: str | None = None):
+    if not q:
+        return JSONResponse({"query": q, "count": 0, "entries": []})
+    entries = logs.search_logs(q, limit=limit, node_name=node)
+    return JSONResponse({"query": q, "count": len(entries), "entries": entries})
+
+
 # --- Auth & Info ---
 
 @app.get("/api/info")
 def server_info():
+    uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
     return JSONResponse({
         "lan_ip": _lan_ip(),
         "port": PORT,
+        "uptime": round(uptime_seconds, 1),
+        "version": "0.2.0",
+        "started_at": SERVER_START_TS,
     })
 
 
@@ -573,7 +662,12 @@ def auth_status(request: Request):
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
-    return JSONResponse({"valid": token == TOKEN, "has_token": bool(TOKEN)})
+    return JSONResponse({
+        "valid": token == TOKEN,
+        "has_token": bool(TOKEN),
+        "server_alive": True,
+        "uptime": round(_time.time() - SERVER_START_TS, 1) if SERVER_START_TS else 0,
+    })
 
 
 # --- Daemon ---
@@ -607,12 +701,14 @@ def _daemonize():
     _write_pid()
 
 
-def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = False):
+def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = False, keep_token: bool = True):
     host = "0.0.0.0" if lan else HOST
-    token = _ensure_token()
+    token = _ensure_token(keep=keep_token)
 
     if daemon:
         _daemonize()
+    else:
+        _write_pid()
 
     if open_browser and not lan:
         import webbrowser
@@ -621,4 +717,5 @@ def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = Fal
     try:
         uvicorn.run(app, host=host, port=PORT, log_level="warning")
     finally:
+        logs.log_server_stop()
         _remove_pid()

@@ -50,8 +50,11 @@ a { color: #58a6ff; }
 #stats-bar .stat-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
 #stats-bar .stat-dot.active { background: #22c55e; }
 #stats-bar .stat-dot.pending { background: #fbbf24; }
+#stats-bar .stat-dot.idle-dot { background: #8b949e; }
 #stats-bar .stat.pending { cursor: pointer; }
 #stats-bar .stat.pending:hover { color: #fbbf24; }
+#stats-bar .stat.filtered { color: #58a6ff; }
+#stats-bar .stat.filtered .stat-dot { outline: 1px solid #58a6ff; outline-offset: 1px; }
 #tree-search {
   display: block; width: 100%; padding: 5px 10px; border: none;
   border-bottom: 1px solid #21262d; background: #0d1117;
@@ -61,6 +64,7 @@ a { color: #58a6ff; }
 #tree-search::placeholder { color: #484f58; }
 #tree .node-item.hidden { display: none; }
 #tree .node-item.proj-hidden { display: none; }
+#tree .node-item.status-hidden { display: none; }
 #project-filters {
   display: flex; gap: 4px; padding: 2px 8px; flex-shrink: 0; flex-wrap: wrap;
   border-bottom: 1px solid #21262d;
@@ -102,12 +106,14 @@ a { color: #58a6ff; }
   50% { opacity: 0.5; }
 }
 #tree .children { padding-left: 12px; position: relative; }
+#tree .children.collapsed { display: none; }
 .tree-child { position: relative; }
 .tree-child::before {
   content: ''; position: absolute; left: -6px; top: 0; bottom: 0;
   border-left: 1px solid #21262d;
 }
 .tree-child.tree-last::before { bottom: auto; height: 50%; }
+.project-group.collapsed { display: none; }
 .tree-child::after {
   content: ''; position: absolute; left: -6px; top: 50%;
   width: 10px; border-top: 1px solid #21262d;
@@ -384,12 +390,12 @@ a { color: #58a6ff; }
     </div>
   </div>
   <div id="stats-bar">
-    <span class="stat" id="stat-active"><span class="stat-dot active"></span> -</span>
-    <span class="stat pending" id="stat-pending" onclick="selectPendingNode()"><span class="stat-dot pending"></span> -</span>
+    <span class="stat" id="stat-active" onclick="toggleStatusFilter('active')" title="Active"><span class="stat-dot active"></span> -</span>
+    <span class="stat" id="stat-idle" onclick="toggleStatusFilter('idle')" title="Idle"><span class="stat-dot idle-dot"></span> -</span>
+    <span class="stat pending" id="stat-pending" onclick="toggleStatusFilter('pending')" title="Pending"><span class="stat-dot pending"></span> -</span>
     <span class="stat" id="stat-cost">$0.00</span>
   </div>
   <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
-  <div id="project-filters"></div>
   <div id="tree"></div>
   <div id="batch-bar">
     <span class="count" id="batch-count">0 selected</span>
@@ -453,7 +459,7 @@ a { color: #58a6ff; }
     <label>Parent (optional)</label>
     <select id="node-parent"><option value="">None (root node)</option></select>
     <label>Project Label</label>
-    <select id="node-label"><option value="">Current directory</option></select>
+    <select id="node-label"><option value="">Select a project...</option></select>
     <label>Agent</label>
     <select id="node-agent">
       <option value="opencode">Open Code</option>
@@ -550,10 +556,39 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
     return;
   }
   container.innerHTML = '';
-  nodes.forEach((n, i) => {
+  if (depth === 0) {
+    const groups = new Map();
+    for (const n of nodes) {
+      const key = n.project_label_name || 'No project';
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(n);
+    }
+    for (const [proj, groupNodes] of groups) {
+      const header = document.createElement('div');
+      header.style.cssText = 'padding:6px 8px 2px;font-size:10px;color:#58a6ff;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px';
+      const toggleIcon = document.createElement('span');
+      toggleIcon.textContent = '\u25BC';
+      toggleIcon.style.cssText = 'font-size:8px;width:10px;flex-shrink:0';
+      header.appendChild(toggleIcon);
+      header.appendChild(document.createTextNode('\u{1F4C1} ' + esc(proj)));
+      const groupContainer = document.createElement('div');
+      groupContainer.className = 'project-group';
+      groupNodes.forEach((n, i) => renderNode(n, groupContainer, depth, false, i === groupNodes.length - 1));
+      header.onclick = () => {
+        const collapsed = groupContainer.classList.toggle('collapsed');
+        toggleIcon.textContent = collapsed ? '\u25B6' : '\u25BC';
+      };
+      container.appendChild(header);
+      container.appendChild(groupContainer);
+    }
+  } else {
+    nodes.forEach((n, i) => renderNode(n, container, depth, true, i === nodes.length - 1));
+  }
+}
+
+function renderNode(n, container, depth, isChild, isLast) {
     const row = document.createElement('div');
     const isDead = n.status === 'dead';
-    const isLast = i === nodes.length - 1;
     let cls = 'node-item';
     if (n.id === selectedNodeId) cls += ' selected';
     if (isDead) cls += ' dead';
@@ -583,7 +618,6 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
       if (check.checked) selectedSet.add(n.id);
       else selectedSet.delete(n.id);
       refreshBatchBar();
-      refreshTree();
     };
 
     const dot = document.createElement('span');
@@ -679,14 +713,14 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
       container.appendChild(childContainer);
       renderTree(n.children, childContainer, depth + 1, true);
     }
-  });
 }
 
 function toggleChildren(toggle, container) {
   if (!container) return;
   const expanded = toggle.dataset.expanded === '1';
-  container.style.display = expanded ? 'none' : 'block';
+  container.classList.toggle('collapsed', expanded);
   toggle.dataset.expanded = expanded ? '0' : '1';
+  toggle.textContent = expanded ? '\u25B6' : '\u25BC';
 }
 
 function filterTree() {
@@ -700,49 +734,13 @@ function filterTree() {
   });
 }
 
-let activeProject = null;
-function updateProjectFilters() {
-  const container = document.getElementById('project-filters');
-  const projects = new Map();
-  function walk(nodes) {
-    for (const n of nodes) {
-      if (n.project_label_name) projects.set(n.project_label_id || n.project_label_name, n.project_label_name);
-      if (n.children) walk(n.children);
-    }
-  }
-  walk(treeData);
-  if (projects.size <= 1) { container.innerHTML = ''; return; }
-  let html = '<span class="proj-chip' + (!activeProject ? ' active' : '') + '" onclick="setProject(null)">All</span>';
-  for (const [id, name] of projects) {
-    html += '<span class="proj-chip' + (activeProject === id ? ' active' : '') + '" onclick="setProject(\'' + id + '\')">' + esc(name) + '</span>';
-  }
-  container.innerHTML = html;
-}
-
-function setProject(proj) {
-  activeProject = proj;
-  updateProjectFilters();
-  filterByProject();
-}
-
-function filterByProject() {
-  document.querySelectorAll('#tree .node-item').forEach(row => {
-    if (!activeProject) { row.classList.remove('proj-hidden'); return; }
-    const projNode = _findById(treeData, +row.dataset.nodeId);
-    const match = projNode && (projNode.project_label_id === activeProject || projNode.project_label_name === activeProject);
-    row.classList.toggle('proj-hidden', !match);
-  });
-  if (activeProject) {
-    document.querySelectorAll('#tree .children').forEach(c => c.style.display = 'block');
-    document.querySelectorAll('#tree .toggle-icon').forEach(t => t.dataset.expanded = '1');
-  }
-}
-
 function selectNode(n) {
+  document.querySelectorAll('#tree .node-item.selected').forEach(r => r.classList.remove('selected'));
+  const row = document.querySelector('#tree .node-item[data-node-id="' + n.id + '"]');
+  if (row) row.classList.add('selected');
   selectedNodeId = n.id;
   selectedSet.clear();
   refreshBatchBar();
-  refreshTree();
   loadNodeDetail(n.id);
   if (window.innerWidth <= 768) closeSidebar();
   if (activeTermNodeId && activeTermNodeId !== n.id) closeTerminal();
@@ -1175,26 +1173,47 @@ async function deleteLabel(id) {
 }
 
 /* ── Refresh ── */
-let expandedSet = new Set();
+let collapsedSet = new Set();
+let collapsedProjects = new Set();
 
-function saveExpanded() {
-  expandedSet = new Set();
+function saveCollapsed() {
+  collapsedSet = new Set();
+  collapsedProjects = new Set();
   document.querySelectorAll('#tree .toggle-icon').forEach(t => {
-    if (t.dataset.expanded === '1') {
+    if (t.dataset.expanded === '0') {
       const row = t.closest('.node-item');
-      if (row?.dataset.nodeId) expandedSet.add(+row.dataset.nodeId);
+      if (row?.dataset.nodeId) collapsedSet.add(+row.dataset.nodeId);
+    }
+  });
+  document.querySelectorAll('.project-group.collapsed').forEach(g => {
+    const header = g.previousElementSibling;
+    if (header) {
+      const text = header.textContent.replace(/^[\u25B6\u25BC]\s*/, '');
+      collapsedProjects.add(text);
     }
   });
 }
 
-function restoreExpanded() {
+function restoreCollapsed() {
   document.querySelectorAll('#tree .toggle-icon').forEach(t => {
     const row = t.closest('.node-item');
-    if (row?.dataset.nodeId && expandedSet.has(+row.dataset.nodeId)) {
+    if (row?.dataset.nodeId && collapsedSet.has(+row.dataset.nodeId)) {
       const container = row.nextSibling;
       if (container?.classList.contains('children')) {
-        container.style.display = 'block';
-        t.dataset.expanded = '1';
+        container.classList.add('collapsed');
+        t.dataset.expanded = '0';
+        t.textContent = '\u25B6';
+      }
+    }
+  });
+  document.querySelectorAll('.project-group').forEach(g => {
+    const header = g.previousElementSibling;
+    if (header) {
+      const text = header.textContent.replace(/^[\u25B6\u25BC]\s*/, '');
+      if (collapsedProjects.has(text)) {
+        g.classList.add('collapsed');
+        const icon = header.querySelector('span');
+        if (icon) icon.textContent = '\u25B6';
       }
     }
   });
@@ -1202,11 +1221,12 @@ function restoreExpanded() {
 
 async function refreshTree() {
   const hide = document.getElementById('hide-dead').checked;
-  saveExpanded();
+  saveCollapsed();
   treeData = await api('/api/tree?hide_dead=' + hide);
   renderTree(treeData, document.getElementById('tree'));
-  restoreExpanded();
-  updateProjectFilters();
+  restoreCollapsed();
+  applyStatusFilter();
+  updatePendingDot();
 }
 
 async function refreshLabels() {
@@ -1244,7 +1264,6 @@ async function refreshNodeModalDropdowns() {
 
   parentEl.innerHTML = '<option value="">None (root node)</option>' + addNodes(tree);
   labelEl.innerHTML =
-    '<option value="">Current directory</option>' +
     labels.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
 
   if (savedParent) parentEl.value = savedParent;
@@ -1396,11 +1415,10 @@ function connectTreeWs() {
     try {
       const msg = JSON.parse(e.data);
       if (msg.type === 'tree' && msg.data) {
-        saveExpanded();
+        saveCollapsed();
         treeData = msg.data;
         renderTree(treeData, document.getElementById('tree'));
-        restoreExpanded();
-        updateProjectFilters();
+        restoreCollapsed();
         updatePendingDot();
         if (selectedNodeId) {
           try { loadNodeDetail(selectedNodeId); } catch(_) {}
@@ -1451,19 +1469,51 @@ function notifyPending() {
   } catch(_) {}
 }
 
+let statusFilter = null;
+
+function toggleStatusFilter(status) {
+  statusFilter = statusFilter === status ? null : status;
+  document.querySelectorAll('#stats-bar .stat').forEach(s => s.classList.remove('filtered'));
+  if (statusFilter) document.getElementById('stat-' + statusFilter).classList.add('filtered');
+  applyStatusFilter();
+  updateStats();
+}
+
+function applyStatusFilter() {
+  if (!statusFilter) {
+    document.querySelectorAll('#tree .node-item.status-hidden').forEach(r => r.classList.remove('status-hidden'));
+    return;
+  }
+  const map = {};
+  function walk(nodes) {
+    for (const n of nodes) {
+      map[n.id] = n.status;
+      if (n.children) walk(n.children);
+    }
+  }
+  walk(treeData);
+  document.querySelectorAll('#tree .node-item').forEach(row => {
+    const status = map[+row.dataset.nodeId];
+    row.classList.toggle('status-hidden', status && status !== statusFilter);
+  });
+}
+
 function updateStats() {
-  const counts = { active: 0, pending: 0 };
+  const counts = { active: 0, idle: 0, pending: 0 };
   let totalCost = 0;
   function walk(nodes) {
     for (const n of nodes) {
+      if (n.status === 'dead') continue;
       if (n.status === 'active') counts.active++;
       else if (n.status === 'pending') counts.pending++;
+      else if (n.status === 'idle') counts.idle++;
       totalCost += n.total_cost || 0;
       if (n.children) walk(n.children);
     }
   }
   walk(treeData);
   document.getElementById('stat-active').innerHTML = '<span class="stat-dot active"></span> ' + counts.active;
+  document.getElementById('stat-idle').innerHTML = '<span class="stat-dot idle-dot"></span> ' + counts.idle;
   document.getElementById('stat-pending').innerHTML = '<span class="stat-dot pending"></span> ' + counts.pending;
   document.getElementById('stat-cost').textContent = '$' + totalCost.toFixed(2);
 }
