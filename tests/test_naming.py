@@ -4,29 +4,24 @@ from armada_ai import naming
 
 
 class TestGenerateName:
-    def test_generates_non_empty(self):
+    def test_generates_sequential(self):
         name = naming.generate_name(set())
-        assert name
-        assert isinstance(name, str)
-        # Can be adjective-noun (has hyphen) or LOTR character (no hyphen)
-        assert len(name) > 0
+        assert name == "node-0001"
 
     def test_avoids_existing(self):
-        name = naming.generate_name({"misty-shield", "silent-thunder"})
-        assert name not in {"misty-shield", "silent-thunder"}
+        name = naming.generate_name({"node-0001", "node-0002"})
+        assert name == "node-0003"
 
-    def test_unique_when_pool_exhausted(self):
-        """Should still return something even if most names exist."""
-        with_none = naming.generate_name(None)
-        assert with_none
-        assert isinstance(with_none, str)
+    def test_increments_past_gaps(self):
+        existing = {f"node-{i:04d}" for i in range(1, 50)}
+        name = naming.generate_name(existing)
+        assert name == "node-0050"
 
-    def test_falls_back_to_lotr(self):
-        """If adjective-noun pool exhausted, use LOTR names."""
-        # Generate many names and verify some are LOTR-style (no hyphen)
-        names = {naming.generate_name(set()) for _ in range(20)}
-        lotr_names = {n for n in names if "-" not in n}
-        assert len(lotr_names) > 0
+    def test_raises_when_full(self):
+        existing = {f"node-{i:04d}" for i in range(1, 10000)}
+        import pytest
+        with pytest.raises(ValueError, match="No available node names"):
+            naming.generate_name(existing)
 
 
 class TestGenerateSequentialName:

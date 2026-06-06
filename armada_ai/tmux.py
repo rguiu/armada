@@ -5,6 +5,7 @@ import json
 import time
 import tempfile
 import threading
+import platform
 from pathlib import Path
 
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
@@ -350,17 +351,18 @@ def attach_node(name: str, colour: str = "#8b949e") -> str | None:
         subprocess.run(["tmux", "switch-client", "-t", f"{ARMADA_SESSION}:{name}"])
         return None
 
-    # Try AppleScript to open iTerm (works regardless of TERM_PROGRAM on macOS)
-    result = _try_iterm_attach(name, colour)
-    if result is None:
-        return None
+    system = platform.system()
 
-    # Try Terminal.app
-    result2 = _try_terminal_attach(name)
-    if result2 is None:
-        return None
-
-    return result or "Cannot auto-open terminal. Run: tmux attach -t armada"
+    if system == "Darwin":
+        result = _try_iterm_attach(name, colour)
+        if result is None:
+            return None
+        result2 = _try_terminal_attach(name)
+        if result2 is None:
+            return None
+        return result or "Cannot auto-open terminal. Run: tmux attach -t armada"
+    else:
+        return _try_linux_attach(name, colour)
 
 
 def _try_iterm_attach(name: str, colour: str) -> str | None:
@@ -432,6 +434,46 @@ def _try_terminal_attach(name: str) -> str | None:
         return None
     except Exception as e:
         return f"Terminal error: {e}"
+
+
+def _try_linux_attach(name: str, colour: str = "#8b949e") -> str | None:
+    """Try opening a terminal on Linux to attach to the node."""
+    tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
+    attach_file = f"/tmp/_armada_attach_{os.getpid()}.sh"
+    r, g, b = _hex_to_rgb(colour)
+    with open(attach_file, "w") as f:
+        f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
+        f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
+        f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
+        f.write(f"exec {tmux_cmd}\n")
+    os.chmod(attach_file, 0o755)
+
+    terminals = []
+    for term_cmd in ["gnome-terminal", "konsole", "xfce4-terminal", "xterm", "alacritty", "kitty", "terminator"]:
+        if shutil.which(term_cmd):
+            terminals.append(term_cmd)
+
+    for term in terminals:
+        try:
+            if term == "gnome-terminal":
+                subprocess.run(["gnome-terminal", "--", "bash", attach_file], timeout=3)
+            elif term == "konsole":
+                subprocess.run(["konsole", "-e", f"bash {attach_file}"], timeout=3)
+            elif term == "xfce4-terminal":
+                subprocess.run(["xfce4-terminal", "-e", f"bash {attach_file}"], timeout=3)
+            elif term == "kitty":
+                subprocess.run(["kitty", "bash", attach_file], timeout=3)
+            elif term == "alacritty":
+                subprocess.run(["alacritty", "-e", "bash", attach_file], timeout=3)
+            elif term == "terminator":
+                subprocess.run(["terminator", "-e", f"bash {attach_file}"], timeout=3)
+            else:
+                subprocess.run([term, "-e", f"bash {attach_file}"], timeout=3)
+            return None
+        except Exception:
+            continue
+
+    return "No terminal found. Install gnome-terminal, konsole, or xterm.\nRun: tmux attach -t armada"
 
 
 def send_keys(name: str, command: str):

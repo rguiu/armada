@@ -1,13 +1,11 @@
-import threading
 import time
 
 from . import db
 from . import tmux
+from . import logs
 
 
 def start_health_loop(interval: int = 15):
-    """Start a background thread that checks node health periodically."""
-
     def check():
         while True:
             time.sleep(interval)
@@ -16,8 +14,28 @@ def start_health_loop(interval: int = 15):
             except Exception:
                 pass
 
+    import threading
     thread = threading.Thread(target=check, daemon=True)
     thread.start()
+
+
+def recover_on_startup():
+    running = tmux.running_window_names()
+    if not running:
+        return []
+
+    live = db.recover_live_nodes(running)
+    recovered = []
+    for node in live:
+        name = node["name"]
+        if name not in running:
+            continue
+        logs.log_recover(name)
+        db.add_status_report(node["id"], "idle", "server restarted — reconnected to tmux window")
+        recovered.append(node)
+
+    db.recover_nodes(running)
+    return recovered
 
 
 def _run_health_check():
@@ -27,6 +45,7 @@ def _run_health_check():
     for node in nodes:
         name = node["name"]
         if name not in running_windows:
+            logs.log_health(name, dead=True)
             _mark_node_dead(node["id"])
 
 

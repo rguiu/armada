@@ -3,33 +3,81 @@ import sys
 import signal
 import socket
 import subprocess
+import platform
 
 
 def _hyperlink(url: str, text: str | None = None) -> str:
-    """Wrap a URL in OSC 8 escape sequence so modern terminals render it clickable."""
     if text is None:
         text = url
     return f"\033]8;;{url}\007{text}\033]8;;\007"
+
+
+def _get_pid_from_port(port: int = 9100) -> int | None:
+    system = platform.system()
+    try:
+        if system == "Darwin":
+            result = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip().split("\n")[0])
+        elif system == "Linux":
+            result = subprocess.run(["ss", "-tlnp"], capture_output=True, text=True)
+            for line in result.stdout.split("\n"):
+                if f":{port}" in line:
+                    pid_str = line.split("pid=")[-1].split(",")[0].strip()
+                    if pid_str.isdigit():
+                        return int(pid_str)
+            result = subprocess.run(["fuser", f"{port}/tcp"], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout.strip():
+                return int(result.stdout.strip().split()[-1])
+    except Exception:
+        pass
+    return None
+
+
+def _get_db_lock_pids(db_path: str, current_pid: int | None = None) -> list[int]:
+    system = platform.system()
+    pids = []
+    try:
+        if system == "Darwin":
+            result = subprocess.run(["fuser", db_path], capture_output=True, text=True)
+            if result.returncode == 0:
+                for p in result.stdout.split():
+                    if p.strip().isdigit():
+                        pid = int(p)
+                        if pid != current_pid and pid != os.getpid():
+                            pids.append(pid)
+        elif system == "Linux":
+            result = subprocess.run(["fuser", db_path], capture_output=True, text=True)
+            if result.returncode == 0:
+                for p in result.stdout.split():
+                    if p.strip().isdigit():
+                        pid = int(p)
+                        if pid != current_pid and pid != os.getpid():
+                            pids.append(pid)
+    except Exception:
+        pass
+    return pids
 
 
 def main():
     args = sys.argv[1:]
     lan = "--lan" in args
     qr = "--qr" in args
-    args = [a for a in args if a not in ("--lan", "--qr")]
+    keep_token = "--keep-token" in args or "--no-token-rotate" in args
+    args = [a for a in args if a not in ("--lan", "--qr", "--keep-token", "--no-token-rotate")]
 
     if not args or args[0] in ("start", "serve"):
         from .server import start_server, _ensure_token
-        _ensure_token()
+        _ensure_token(keep=True)
         _print_startup_info(lan=lan, qr=qr)
-        start_server(daemon=True, open_browser=True, lan=lan)
+        start_server(daemon=True, open_browser=True, lan=lan, keep_token=keep_token)
 
     elif args[0] == "stop":
         _stop_server()
 
     elif args[0] == "attach":
         from .server import start_server, _ensure_token
-        _ensure_token()
+        _ensure_token(keep=True)
         _print_startup_info(lan=lan, qr=qr)
         start_server(daemon=False, open_browser=False, lan=lan)
 
@@ -47,17 +95,18 @@ def main():
         _status()
 
     else:
-        print("Usage: armada [start|stop|attach|setup|token|doctor|status] [--lan] [--qr]")
-        print("  start   Start the Armada server daemon + open dashboard")
-        print("  stop    Stop the Armada server")
-        print("  attach  Start server in foreground (for debugging)")
-        print("  setup   Install Armada skills to user profile")
-        print("  token   Print the auth token (--qr for scannable QR code)")
-        print("  doctor  Clean up orphaned tmux sessions and stale state")
-        print("  status  Show server and node status")
-        print("  --lan   Bind to / use LAN IP (for other devices on network)")
-        print("  --qr    Show QR code (with token command)")
-        print("  --nuke  (with doctor) Kill ALL armada tmux sessions and reset DB")
+        print("Usage: armada [start|stop|attach|setup|token|doctor|status] [--lan] [--qr] [--keep-token]")
+        print("  start        Start the Armada server daemon + open dashboard")
+        print("  stop         Stop the Armada server")
+        print("  attach       Start server in foreground (for debugging)")
+        print("  setup        Install Armada skills to user profile")
+        print("  token        Print the auth token (--qr for scannable QR code)")
+        print("  doctor       Clean up orphaned tmux sessions and stale state")
+        print("  status       Show server and node status")
+        print("  --lan        Bind to / use LAN IP (for other devices on network)")
+        print("  --qr         Show QR code (with token command)")
+        print("  --keep-token Reuse existing token (don't regenerate on restart)")
+        print("  --nuke       (with doctor) Kill ALL armada tmux sessions and reset DB")
         print()
         print("  The dashboard opens in your default browser automatically.")
         print("  URLs are printed as clickable hyperlinks (OSC 8).")
@@ -77,7 +126,10 @@ def _lan_ip():
 
 def _print_startup_info(lan: bool = False, qr: bool = False):
     token_file = os.path.expanduser("~/.armada/token")
-    token = open(token_file).read().strip()
+    try:
+        token = open(token_file).read().strip()
+    except FileNotFoundError:
+        return
 
     if not token:
         return
@@ -140,7 +192,6 @@ def _status():
     import sqlite3
     from . import tmux as _tmux_mod
 
-    # Check server
     pid_file = os.path.expanduser("~/.armada/server.pid")
     server_running = False
     server_pid = None
@@ -153,20 +204,16 @@ def _status():
             pass
 
     if not server_running:
-        try:
-            result = subprocess.run(["lsof", "-ti", ":9100"], capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout.strip():
-                server_pid = int(result.stdout.strip().split("\n")[0])
-                server_running = True
-        except Exception:
-            pass
+        found_pid = _get_pid_from_port(9100)
+        if found_pid:
+            server_pid = found_pid
+            server_running = True
 
     if server_running:
         print(f"Server: running (PID {server_pid})")
     else:
         print("Server: stopped")
 
-    # Check tmux session
     if _tmux_mod._has_tmux():
         windows = _tmux_mod.running_window_names()
         print(f"Tmux:   armada session with {len(windows)} window(s)")
@@ -174,7 +221,6 @@ def _status():
         print("Tmux:   not installed")
         return
 
-    # Check nodes from DB
     db_path = os.path.expanduser("~/.armada/armada.db")
     if not os.path.exists(db_path):
         print("DB:     not found")
@@ -213,7 +259,6 @@ def _doctor(nuke: bool = False):
 
     if nuke:
         print("\n[NUKE] Killing ALL armada tmux sessions and resetting DB...")
-        # Kill all armada-related sessions
         result = subprocess.run(
             ["tmux", "list-sessions", "-F", "#{session_name}"],
             capture_output=True, text=True,
@@ -227,7 +272,6 @@ def _doctor(nuke: bool = False):
                     killed += 1
             print(f"  Killed {killed} tmux session(s)")
 
-        # Reset the DB (delete nodes and reports, keep project labels)
         db_path = os.path.expanduser("~/.armada/armada.db")
         if os.path.exists(db_path):
             import sqlite3
@@ -238,7 +282,6 @@ def _doctor(nuke: bool = False):
             conn.close()
             print("  Reset DB (cleared nodes and reports)")
 
-        # Clean temp files
         temps = glob.glob("/tmp/_armada_*")
         for f in temps:
             try:
@@ -251,9 +294,7 @@ def _doctor(nuke: bool = False):
         print("\nDone. Fresh start.")
         return
 
-    # --- Normal doctor (non-destructive cleanup) ---
-
-    # 0. Kill stale armada server processes (DB lock fix)
+    # 0. Kill stale armada server processes
     print("\n[0] Stale server processes")
     current_server_pid = None
     pid_file = os.path.expanduser("~/.armada/server.pid")
@@ -264,36 +305,26 @@ def _doctor(nuke: bool = False):
             pass
 
     stale_killed = 0
-    try:
-        fuser = subprocess.run(
-            ["fuser", os.path.expanduser("~/.armada/armada.db")],
-            capture_output=True, text=True,
-        )
-        if fuser.returncode == 0:
-            pids = [int(p) for p in fuser.stdout.split() if p.strip().isdigit()]
-            for pid in pids:
-                if pid == current_server_pid or pid == os.getpid():
-                    continue
-                try:
-                    cmdline = subprocess.run(
-                        ["ps", "-p", str(pid), "-o", "command="],
-                        capture_output=True, text=True,
-                    ).stdout.strip()
-                    if "armada" in cmdline and "python" in cmdline.lower():
-                        os.kill(pid, signal.SIGTERM)
-                        stale_killed += 1
-                except (ProcessLookupError, PermissionError):
-                    pass
-    except Exception:
-        pass
+    db_path = os.path.expanduser("~/.armada/armada.db")
+    if os.path.exists(db_path):
+        pids = _get_db_lock_pids(db_path, current_server_pid)
+        for pid in pids:
+            try:
+                cmdline = subprocess.run(
+                    ["ps", "-p", str(pid), "-o", "command="],
+                    capture_output=True, text=True,
+                ).stdout.strip()
+                if "armada" in cmdline and "python" in cmdline.lower():
+                    os.kill(pid, signal.SIGTERM)
+                    stale_killed += 1
+            except (ProcessLookupError, PermissionError):
+                pass
 
     if stale_killed:
         print(f"  Killed {stale_killed} stale server process(es)")
     else:
         print("  None found")
 
-    # Checkpoint WAL to release any lock residue
-    db_path = os.path.expanduser("~/.armada/armada.db")
     if os.path.exists(db_path):
         try:
             import sqlite3
@@ -322,7 +353,7 @@ def _doctor(nuke: bool = False):
     else:
         print("  tmux not running")
 
-    # 2. Kill duplicate armada-N grouped sessions (keep the original 'armada')
+    # 2. Kill duplicate armada-N grouped sessions
     print("\n[2] Duplicate armada-N sessions")
     if result.returncode == 0:
         dupes = [s for s in sessions if s.startswith("armada-") and s[7:].isdigit()]
@@ -336,7 +367,6 @@ def _doctor(nuke: bool = False):
 
     # 3. Sync DB — mark nodes dead if their tmux window is gone
     print("\n[3] Stale DB nodes (tmux window gone)")
-    db_path = os.path.expanduser("~/.armada/armada.db")
     if os.path.exists(db_path):
         import sqlite3
         conn = sqlite3.connect(db_path)
@@ -375,7 +405,7 @@ def _doctor(nuke: bool = False):
     else:
         print("  None found")
 
-    # 5. Clean up stale hooks in ~/.armada/hooks/
+    # 5. Clean up stale hooks
     print("\n[5] Stale hook files")
     hooks_dir = os.path.expanduser("~/.armada/hooks")
     if os.path.isdir(hooks_dir):
@@ -413,15 +443,13 @@ def _stop_server():
         except OSError:
             pass
 
-    # No PID file — try to kill by port
-    try:
-        result = subprocess.run(["lsof", "-ti", ":9100"], capture_output=True, text=True)
-        if result.returncode == 0 and result.stdout.strip():
-            pid = int(result.stdout.strip().split("\n")[0])
-            os.kill(pid, signal.SIGTERM)
-            print(f"Stopped Armada server (PID {pid}, found via port).")
+    found_pid = _get_pid_from_port(9100)
+    if found_pid:
+        try:
+            os.kill(found_pid, signal.SIGTERM)
+            print(f"Stopped Armada server (PID {found_pid}, found via port).")
             return
-    except Exception:
-        pass
+        except Exception:
+            pass
 
     print("Armada server is not running (no PID file and no process on port 9100).")
