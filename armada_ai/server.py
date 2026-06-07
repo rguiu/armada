@@ -113,10 +113,12 @@ async def auth_middleware(request: Request, call_next):
     exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json")
     if path.startswith("/api/logs") or path.startswith("/static/"):
         if not _check_token(request) and path not in exempt:
+            logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         return await call_next(request)
     if path.startswith("/api/") and path not in exempt and not path.endswith("/ws"):
         if not _check_token(request):
+            logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     return await call_next(request)
 
@@ -138,6 +140,18 @@ async def startup():
     health.start_health_loop()
     asyncio.create_task(_ws_cleanup_loop())
     logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    logs.log_http_error(request.method, request.url.path, exc.status_code, exc.detail)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logs.log_http_error(request.method, request.url.path, 500, str(exc))
+    return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
 
 # --- Static files ---
@@ -197,26 +211,32 @@ def get_tree(hide_dead: bool = False):
 
 @app.websocket("/api/ws")
 async def tree_ws(websocket: WebSocket):
+    client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
     token = websocket.query_params.get("token")
     if not token:
         auth = websocket.headers.get("authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
     if token != TOKEN:
+        logs.log_ws_disconnect(client, "/api/ws", "bad_token")
         await websocket.close(code=4001)
         return
 
     await websocket.accept()
     _ws_clients.add(websocket)
+    logs.log_ws_connect(client, "/api/ws")
     try:
         tree = db.build_tree(include_dead=True)
         await websocket.send_text(json.dumps({"type": "tree", "data": tree}))
         while True:
             await websocket.receive_text()
+    except WebSocketDisconnect:
+        pass
     except Exception:
         pass
     finally:
         _ws_clients.discard(websocket)
+        logs.log_ws_disconnect(client, "/api/ws")
 
 
 @app.get("/api/nodes")
@@ -444,25 +464,30 @@ def terminal_view(node_id: int):
 
 @app.websocket("/api/nodes/{node_id}/ws")
 async def terminal_ws(websocket: WebSocket, node_id: int):
+    client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
     token = websocket.query_params.get("token")
     if not token:
         auth = websocket.headers.get("authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
     if token != TOKEN:
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "bad_token")
         await websocket.close(code=4001)
         return
 
     node = db.get_node(node_id)
     if not node:
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "node_not_found")
         await websocket.close(code=4004)
         return
     if not tmux.window_exists(node["name"]):
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "window_gone")
         await websocket.close(code=4004)
         return
 
     target = f"armada:{node['name']}"
     await websocket.accept()
+    logs.log_ws_connect(client, f"/api/nodes/{node_id}/ws")
 
     poll_interval = 0.8
     last_text = ""
@@ -533,6 +558,10 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
         await asyncio.gather(poll_pane(), recv_keys())
     except WebSocketDisconnect:
         pass
+    except Exception:
+        pass
+    finally:
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws")
 
 
 # --- Project Labels ---
@@ -649,6 +678,12 @@ def search_all_logs(q: str = "", limit: int = 50, node: str | None = None):
         return JSONResponse({"query": q, "count": 0, "entries": []})
     entries = logs.search_logs(q, limit=limit, node_name=node)
     return JSONResponse({"query": q, "count": len(entries), "entries": entries})
+
+
+@app.get("/api/server-log")
+def get_server_log(limit: int = 100):
+    entries = logs.get_node_logs("_server", limit=limit)
+    return JSONResponse({"count": len(entries), "entries": entries, "path": os.path.expanduser("~/.armada/logs/_server.jsonl")})
 
 
 # --- Auth & Info ---

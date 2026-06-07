@@ -134,6 +134,18 @@ def log_recover(node_name: str):
     log_event(node_name, "recover", {})
 
 
+def log_ws_connect(client_id: str, path: str):
+    log_event("_server", "ws_connect", {"client": client_id, "path": path})
+
+
+def log_ws_disconnect(client_id: str, path: str, reason: str = ""):
+    log_event("_server", "ws_disconnect", {"client": client_id, "path": path, "reason": reason})
+
+
+def log_http_error(method: str, path: str, status: int, detail: str = ""):
+    log_event("_server", "http_error", {"method": method, "path": path, "status": status, "detail": detail[:200]})
+
+
 def log_server_start():
     _ensure_dir()
     log_path = os.path.join(LOGS_DIR, "_server.jsonl")
