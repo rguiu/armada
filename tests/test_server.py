@@ -256,6 +256,50 @@ class TestProjectLabels:
         r = client.post("/api/project-labels", json={"id": "", "name": ""})
         assert r.status_code == 400
 
+    def test_overview_returns_all_sections(self, temp_db, client):
+        """Project overview returns label, skills, nodes, plugins, hooks, configs, git."""
+        import armada_ai.tmux as tmux_mod
+        proj_path = tempfile.mkdtemp(prefix="armada_test_ov_")
+        temp_db.add_project_label("ov", "Overview Test", proj_path)
+        tmux_mod.list_project_skills.return_value = {"skills": []}
+        tmux_mod.list_project_plugins.return_value = {"plugins": []}
+        tmux_mod.list_project_hooks.return_value = {"hooks": []}
+        tmux_mod.get_project_config.return_value = {"configs": {}}
+        tmux_mod.get_project_git_info.return_value = {"git": {}}
+
+        r = client.get("/api/project-labels/ov/overview")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["label"]["id"] == "ov"
+        assert "skills" in data
+        assert "nodes" in data
+        assert "plugins" in data
+        assert "hooks" in data
+        assert "configs" in data
+        assert "git" in data
+
+    def test_overview_not_found(self, client):
+        """Project overview returns 404 for unknown label."""
+        r = client.get("/api/project-labels/nonexistent/overview")
+        assert r.status_code == 404
+
+    def test_overview_missing_path(self, temp_db, client):
+        """Project overview for label whose path does not exist still works."""
+        import armada_ai.tmux as tmux_mod
+        temp_db.add_project_label("nopath", "No Path", "/nonexistent/path")
+        tmux_mod.list_project_skills.return_value = {"skills": []}
+        tmux_mod.list_project_plugins.return_value = {"plugins": []}
+        tmux_mod.list_project_hooks.return_value = {"hooks": []}
+        tmux_mod.get_project_config.return_value = {"configs": {}}
+        tmux_mod.get_project_git_info.return_value = {"git": {}}
+
+        r = client.get("/api/project-labels/nopath/overview")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["skills"] == []
+        assert data["plugins"] == []
+        assert data["configs"] == {}
+
 
 class TestRemainingEndpoints:
     def test_patch_unknown_action(self, temp_db, client):
@@ -663,6 +707,50 @@ class TestRemainingEndpoints:
                            lambda p: None)
         r = client.post("/api/refresh-hooks")
         assert r.status_code == 200
+
+    def test_global_skills(self, client):
+        """GET /api/skills returns global skills."""
+        import armada_ai.tmux as tmux_mod
+        tmux_mod.list_project_skills.return_value = {"skills": []}
+        r = client.get("/api/skills")
+        assert r.status_code == 200
+        assert "skills" in r.json()
+
+    def test_logs_empty_query(self, client):
+        """GET /api/logs with empty q returns empty results."""
+        r = client.get("/api/logs?q=")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["count"] == 0
+
+    def test_logs_search_with_query(self, client):
+        """GET /api/logs with a query string."""
+        r = client.get("/api/logs?q=test")
+        assert r.status_code == 200
+        data = r.json()
+        assert data["query"] == "test"
+
+    def test_get_node_logs_invalid_name(self, client):
+        """GET /api/logs/{name} with invalid name returns 400."""
+        r = client.get("/api/logs/invalid!name")
+        assert r.status_code == 400
+
+    def test_get_node_logs_nonexistent(self, client):
+        """GET /api/logs/{name} with nonexistent node returns 404."""
+        r = client.get("/api/logs/nonexistent_node")
+        assert r.status_code == 404
+
+    def test_server_log(self, client):
+        """GET /api/server-log returns server log entries."""
+        r = client.get("/api/server-log")
+        assert r.status_code == 200
+        data = r.json()
+        assert "entries" in data
+
+    def test_send_missing_command(self, client):
+        """POST /api/nodes/{id}/send without command returns 400."""
+        r = client.post("/api/nodes/1/send", json={})
+        assert r.status_code == 400
 
 
 class TestAuth:
