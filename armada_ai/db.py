@@ -249,6 +249,53 @@ def add_status_report(node_id: int, status: str, message: str | None = None):
         conn.execute("UPDATE nodes SET status = ? WHERE id = ?", (status, node_id))
         conn.commit()
     _execute(_do)
+    _prune_reports_if_needed(node_id)
+
+
+_PRUNE_THRESHOLD = 50
+_MAX_REPORTS_PER_NODE = 200
+_last_prune: dict[int, int] = {}
+
+
+def _prune_reports_if_needed(node_id: int):
+    count = _last_prune.get(node_id, 0) + 1
+    _last_prune[node_id] = count
+    if count >= _PRUNE_THRESHOLD:
+        _last_prune[node_id] = 0
+        _prune_old_reports(node_id, keep=_MAX_REPORTS_PER_NODE)
+
+
+def _prune_old_reports(node_id: int, keep: int = 200):
+    def _do():
+        conn = _get_conn()
+        conn.execute("""
+            DELETE FROM status_reports WHERE id IN (
+                SELECT id FROM status_reports WHERE node_id = ?
+                ORDER BY timestamp DESC LIMIT -1 OFFSET ?
+            )
+        """, (node_id, keep))
+        conn.commit()
+    _execute(_do)
+
+
+def prune_all_old_reports(keep: int = 200):
+    def _do():
+        conn = _get_conn()
+        conn.execute("""
+            DELETE FROM status_reports WHERE id IN (
+                SELECT id FROM status_reports
+                ORDER BY timestamp DESC LIMIT -1 OFFSET ?
+            )
+        """, (keep,))
+        conn.commit()
+    _execute(_do)
+
+
+def vacuum_db():
+    def _do():
+        conn = _get_conn()
+        conn.execute("PRAGMA optimize")
+    _execute(_do)
 
 
 def accumulate_cost(node_id: int, tokens_in: int = 0, tokens_out: int = 0, cost: float = 0.0):
