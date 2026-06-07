@@ -337,11 +337,37 @@ def has_attached_clients() -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def _cleanup_stale_view_sessions():
+    """Kill orphaned _view_* tmux sessions that have no attached clients,
+    and remove stale /tmp/_armada_* attach scripts."""
+    result = _tmux("list-sessions", "-F", "#{session_name}")
+    if result.returncode != 0:
+        return
+    for session in result.stdout.strip().split("\n"):
+        if not session.startswith("_view_"):
+            continue
+        clients = _tmux("list-clients", "-t", session)
+        if clients.returncode != 0 or not clients.stdout.strip():
+            _tmux("kill-session", "-t", session)
+
+    tmp = tempfile.gettempdir()
+    now = time.time()
+    for pattern in ("_armada_attach_", "_armada_term_attach_"):
+        for f in Path(tmp).glob(f"{pattern}*"):
+            try:
+                if now - f.stat().st_mtime > 60:
+                    f.unlink()
+            except OSError:
+                pass
+
+
 def attach_node(name: str, colour: str = "#8b949e") -> str | None:
     """Open a terminal attached to the named tmux window.
     Returns None on success, or an error message string."""
     if not _has_tmux():
         return "tmux is not installed"
+
+    _cleanup_stale_view_sessions()
 
     _tmux("set-option", "-t", ARMADA_SESSION, "set-titles", "on")
     _tmux("set-option", "-t", ARMADA_SESSION, "set-titles-string", "#{window_name}")
@@ -369,7 +395,7 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
     """Try opening a new iTerm tab attached to the node, with tab colour."""
     # Write colour escape sequences to a temp file (avoids AppleScript escaping hell)
     r, g, b = _hex_to_rgb(colour)
-    attach_file = f"/tmp/_armada_attach_{os.getpid()}.sh"
+    attach_file = os.path.join(tempfile.gettempdir(), f"_armada_attach_{os.getpid()}.sh")
     with open(attach_file, "w") as f:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
@@ -400,10 +426,22 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
         result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return None
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"iTerm: {result.stderr.strip()}"
     except FileNotFoundError:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return "osascript not available"
     except Exception as e:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"iTerm error: {e}"
 
 
@@ -417,7 +455,7 @@ def _try_terminal_attach(name: str) -> str | None:
     """Try opening a Terminal.app window attached to the node."""
     try:
         tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
-        attach_file = f"/tmp/_armada_term_attach_{os.getpid()}.sh"
+        attach_file = os.path.join(tempfile.gettempdir(), f"_armada_term_attach_{os.getpid()}.sh")
         with open(attach_file, "w") as f:
             f.write(f"exec {tmux_cmd}\n")
         applescript = (
@@ -429,24 +467,47 @@ def _try_terminal_attach(name: str) -> str | None:
         result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return None
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"Terminal: {result.stderr.strip()}"
     except FileNotFoundError:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return None
     except Exception as e:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"Terminal error: {e}"
 
 
 def _try_linux_attach(name: str, colour: str = "#8b949e") -> str | None:
     """Try opening a terminal on Linux to attach to the node."""
     tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
-    attach_file = f"/tmp/_armada_attach_{os.getpid()}.sh"
+    tmpdir = tempfile.gettempdir()
+    attach_file = os.path.join(tmpdir, f"_armada_attach_{os.getpid()}.sh")
     r, g, b = _hex_to_rgb(colour)
     with open(attach_file, "w") as f:
+        f.write("#!/bin/bash\n")
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
         f.write(f"exec {tmux_cmd}\n")
     os.chmod(attach_file, 0o755)
+
+    # Schedule cleanup of the temp script after a delay
+    def _cleanup_attach_file():
+        time.sleep(10)
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
+    threading.Thread(target=_cleanup_attach_file, daemon=True).start()
 
     terminals = []
     for term_cmd in ["gnome-terminal", "konsole", "xfce4-terminal", "xterm", "alacritty", "kitty", "terminator"]:
