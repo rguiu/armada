@@ -11,6 +11,7 @@ from pathlib import Path
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
 _attach_counter = 0
+_zdotdirs: dict[str, str] = {}
 
 
 def _next_attach_id():
@@ -277,6 +278,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
         # bash or auto: inject armada tools via ZDOTDIR (chains user configs)
         tools_dir = Path(__file__).parent / "bin"
         zdotdir = tempfile.mkdtemp(prefix="_armada_zsh_")
+        _zdotdirs[name] = zdotdir
         _write_zsh_startup(zdotdir, tools_dir)
         shell_cmd = (
             f"cd '{safe_dir}' && "
@@ -313,6 +315,10 @@ def create_node_window(name: str, colour: str, working_dir: str,
               "automatic-rename", "off")
         _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
               "allow-rename", "off")
+    else:
+        # Window created but pane_id unreachable — kill it so it doesn't orphan
+        _tmux("kill-window", "-t", f"{ARMADA_SESSION}:{name}")
+        _zdotdirs.pop(name, None)
 
     return pane_id
 
@@ -321,6 +327,12 @@ def kill_node_window(name: str):
     if not _has_tmux():
         return
     _tmux("kill-window", "-t", f"{ARMADA_SESSION}:{name}")
+    zdotdir = _zdotdirs.pop(name, None)
+    if zdotdir:
+        try:
+            shutil.rmtree(zdotdir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def window_exists(name: str) -> bool:
@@ -350,13 +362,28 @@ def _cleanup_stale_view_sessions():
         if clients.returncode != 0 or not clients.stdout.strip():
             _tmux("kill-session", "-t", session)
 
+    # Clean zdotdirs for nodes whose tmux windows no longer exist
+    if _has_tmux():
+        running = running_window_names()
+        stale = [name for name in list(_zdotdirs) if name not in running]
+        for name in stale:
+            zdotdir = _zdotdirs.pop(name, None)
+            if zdotdir:
+                try:
+                    shutil.rmtree(zdotdir, ignore_errors=True)
+                except Exception:
+                    pass
+
     tmp = tempfile.gettempdir()
     now = time.time()
-    for pattern in ("_armada_attach_", "_armada_term_attach_"):
+    for pattern in ("_armada_attach_", "_armada_term_attach_", "_armada_zsh_"):
         for f in Path(tmp).glob(f"{pattern}*"):
             try:
                 if now - f.stat().st_mtime > 60:
-                    f.unlink()
+                    if f.is_dir():
+                        shutil.rmtree(f, ignore_errors=True)
+                    else:
+                        f.unlink()
             except OSError:
                 pass
 
