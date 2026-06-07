@@ -584,7 +584,12 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
     """Send an initial prompt to a node once the agent is ready.
     Waits for the agent process to start, then for its input prompt."""
 
+    sentinel = threading.Semaphore(3)
+
     def _send():
+        if not sentinel.acquire(blocking=False):
+            send_keys(name, prompt)
+            return
         try:
             target = f"{ARMADA_SESSION}:{name}"
             for _ in range(60):
@@ -615,6 +620,8 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
                 send_keys(name, prompt)
             except Exception:
                 pass
+        finally:
+            sentinel.release()
 
     thread = threading.Thread(target=_send, daemon=True)
     thread.start()
