@@ -40,13 +40,23 @@ SERVER_START_TS = 0.0
 _ws_clients: set[WebSocket] = set()
 
 
-async def _broadcast_tree(hide_dead: bool = False):
-    if not _ws_clients:
-        return
-    tree = db.build_tree(include_dead=not hide_dead)
+async def _cleanup_ws_clients():
     dead = [ws for ws in _ws_clients if ws.client_state.name == "DISCONNECTED"]
     for ws in dead:
         _ws_clients.discard(ws)
+
+
+async def _ws_cleanup_loop():
+    while True:
+        await asyncio.sleep(30)
+        await _cleanup_ws_clients()
+
+
+async def _broadcast_tree(hide_dead: bool = False):
+    if not _ws_clients:
+        return
+    await _cleanup_ws_clients()
+    tree = db.build_tree(include_dead=not hide_dead)
     payload = json.dumps({"type": "tree", "data": tree})
     for ws in _ws_clients:
         try:
@@ -112,7 +122,7 @@ async def auth_middleware(request: Request, call_next):
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     global SERVER_START_TS
     SERVER_START_TS = _time.time()
     db.init_db()
@@ -126,6 +136,7 @@ def startup():
         names = [n["name"] for n in recovered]
         logs.log_event("_server", "recovery", {"recovered_nodes": names})
     health.start_health_loop()
+    asyncio.create_task(_ws_cleanup_loop())
     logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
 
 
