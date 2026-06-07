@@ -65,6 +65,9 @@ def search_logs(query: str, limit: int = 50, node_name: str | None = None) -> li
 def get_node_logs(node_name: str, limit: int = 50, before_ts: float | None = None) -> list[dict]:
     _ensure_dir()
     log_path = os.path.join(LOGS_DIR, f"{node_name}.jsonl")
+    log_real = os.path.realpath(log_path)
+    if not log_real.startswith(os.path.realpath(LOGS_DIR) + os.sep):
+        return []
     if not os.path.exists(log_path):
         return []
 

@@ -664,10 +664,15 @@ async def agent_report(request: Request):
 
 # --- Logs ---
 
+_SAFE_LOG_NAME = re.compile(r'^[a-zA-Z0-9_][-a-zA-Z0-9_]*$')
+
+
 @app.get("/api/logs/{node_name}")
 def get_node_logs(node_name: str, limit: int = 50, before: float | None = None):
-    if not db.get_node_by_name(node_name) and node_name not in db.existing_names():
-        pass
+    if not _SAFE_LOG_NAME.match(node_name):
+        raise HTTPException(status_code=400, detail="Invalid node name")
+    if not db.get_node_by_name(node_name) and node_name not in db.existing_names() and node_name != "_server":
+        raise HTTPException(status_code=404, detail="Node not found")
     entries = logs.get_node_logs(node_name, limit=limit, before_ts=before)
     return JSONResponse({"node": node_name, "count": len(entries), "entries": entries})
 
