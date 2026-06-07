@@ -276,6 +276,9 @@ async def create_node(request: Request):
     if not project_label_id:
         raise HTTPException(status_code=400, detail="A project must be selected")
 
+    if name and len(name) > 100:
+        raise HTTPException(status_code=400, detail="Node name must be 100 characters or fewer")
+
     existing_names = db.existing_names()
 
     if name and name in existing_names:

@@ -535,11 +535,11 @@ let AUTH_TOKEN = '';
   const params = new URLSearchParams(location.search);
   const urlToken = params.get('token');
   if (urlToken) {
-    localStorage.setItem('armada_token', urlToken);
+    sessionStorage.setItem('armada_token', urlToken);
     history.replaceState({}, '', location.pathname);
     AUTH_TOKEN = urlToken;
   } else {
-    AUTH_TOKEN = localStorage.getItem('armada_token') || '';
+    AUTH_TOKEN = sessionStorage.getItem('armada_token') || '';
   }
 })();
 
@@ -551,7 +551,7 @@ async function api(url, opts = {}) {
   const res = await fetch(url, opts);
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem('armada_token');
+      sessionStorage.removeItem('armada_token');
       AUTH_TOKEN = '';
     }
     const err = await res.json().catch(() => ({detail: res.statusText}));
