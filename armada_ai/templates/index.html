@@ -554,6 +554,7 @@ async function api(url, opts = {}) {
       AUTH_TOKEN = '';
     }
     const err = await res.json().catch(() => ({detail: res.statusText}));
+    clientLog('warn', 'API ' + (opts.method || 'GET') + ' ' + url + ' -> ' + res.status + ': ' + (err.detail || ''));
     throw new Error(err.detail || 'Request failed');
   }
   return res.json();
@@ -832,6 +833,15 @@ async function loadNodeDetail(nodeId) {
       </div>`;
   }
 
+  // Save terminal pane before innerHTML destroys it (WS updates trigger
+  // loadNodeDetail while a terminal may be open inside #detail)
+  const pane = document.getElementById('terminal-pane');
+  const hadTerminal = activeTermNodeId && pane && detail.contains(pane);
+  if (hadTerminal) {
+    detail.classList.remove('has-terminal');
+    document.getElementById('main').appendChild(pane);
+  }
+
   detail.innerHTML = `
     <div class="node-meta">${metaHtml}</div>
     ${permHtml}
@@ -860,6 +870,20 @@ async function loadNodeDetail(nodeId) {
       </div>
     </div>` : ''}
   `;
+
+  if (hadTerminal) {
+    detail.classList.add('has-terminal');
+    const reports = document.getElementById('reports');
+    if (reports) {
+      const host = document.createElement('div');
+      host.className = 'term-host';
+      host.appendChild(pane);
+      reports.parentNode.insertBefore(host, reports.nextSibling);
+    } else {
+      detail.appendChild(pane);
+    }
+    pane.classList.add('show');
+  }
   if (n.project_label_id) {
     api('/api/project-labels/' + encodeURIComponent(n.project_label_id) + '/skills').then(data => {
       renderSkills(data);
@@ -899,8 +923,10 @@ async function attachNode(id) {
   try {
     await api('/api/nodes/' + id + '/attach', {method:'POST'});
     toast('Terminal opened — check your iTerm tabs.');
+    clientLog('info', 'Attached node ' + id + ' via native terminal');
   } catch(e) {
     toast('Attach failed: ' + e.message + ' — opening in browser instead.', true);
+    clientLog('warn', 'Native attach failed for node ' + id + ': ' + e.message);
     openTerminal(id);
   }
 }
@@ -1002,6 +1028,7 @@ async function openTerminal(id) {
 
   termWs.onopen = () => {
     if (xterm) { xterm.clear(); xterm.writeln('connected'); }
+    clientLog('info', 'Terminal WS connected for node ' + id);
   };
 
   termWs.onmessage = e => {
@@ -1021,6 +1048,11 @@ async function openTerminal(id) {
 
   termWs.onclose = () => {
     termWs = null;
+    clientLog('info', 'Terminal WS closed for node ' + id);
+  };
+
+  termWs.onerror = () => {
+    clientLog('error', 'Terminal WS error for node ' + id);
   };
 
   xterm.onData(data => {
@@ -1031,6 +1063,7 @@ async function openTerminal(id) {
 }
 
 function closeTerminal() {
+  clientLog('info', 'Closing terminal for node ' + activeTermNodeId);
   activeTermNodeId = null;
   disposeXterm();
   const detail = document.getElementById('detail');
@@ -1481,12 +1514,14 @@ function connectTreeWs() {
   treeWs.onclose = () => {
     if (_wsClosing) return;
     treeWs = null;
+    clientLog('warn', 'Tree WS closed, reconnecting in 5s');
     if (!treeReconnectTimer) {
       treeReconnectTimer = setTimeout(connectTreeWs, 5000);
     }
   };
   treeWs.onerror = () => {
     treeWs = null;
+    clientLog('error', 'Tree WS error');
   };
 }
 
@@ -1683,6 +1718,25 @@ function toast(msg, isError = false) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
 }
+
+/* ── Client-side logging to server ── */
+function clientLog(level, msg) {
+  try {
+    fetch('/api/client-log', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + AUTH_TOKEN},
+      body: JSON.stringify({level: level, message: msg}),
+    }).catch(() => {});
+  } catch(_) {}
+}
+
+window.addEventListener('error', (e) => {
+  clientLog('error', e.message + ' @ ' + e.filename + ':' + e.lineno);
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  clientLog('error', 'Unhandled rejection: ' + (e.reason?.message || e.reason));
+});
 </script>
 
 <div id="toast"></div>

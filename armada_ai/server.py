@@ -686,6 +686,15 @@ def get_server_log(limit: int = 100):
     return JSONResponse({"count": len(entries), "entries": entries, "path": os.path.expanduser("~/.armada/logs/_server.jsonl")})
 
 
+@app.post("/api/client-log")
+async def client_log(request: Request):
+    body = await request.json()
+    level = body.get("level", "info")
+    message = body.get("message", "")[:500]
+    logs.log_event("_client", level, {"message": message})
+    return JSONResponse({"ok": True})
+
+
 # --- Auth & Info ---
 
 @app.get("/api/info")
