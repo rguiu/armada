@@ -267,6 +267,26 @@ a { color: #58a6ff; }
 .skill-chip.global .chip-dot { background: #8b949e; }
 .skill-chip:hover { filter: brightness(1.3); }
 
+/* ── Project overview ── */
+#detail.proj-view { overflow-y: auto; }
+#detail.proj-view #reports { display: none; }
+.proj-overview h2 { font-size: 16px; color: #e1e4e8; margin-bottom: 4px; }
+.proj-overview .proj-path { font-size: 11px; color: #484f58; margin-bottom: 20px; word-break: break-all; }
+.proj-overview .proj-section { margin-bottom: 20px; }
+.proj-overview .proj-section h3 { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+.proj-node-list { display: flex; flex-direction: column; gap: 2px; }
+.proj-node-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-radius: 4px; cursor: pointer; font-size: 13px;
+  border: 1px solid transparent;
+}
+.proj-node-item:hover { background: #1c2128; border-color: #21262d; }
+.proj-node-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.proj-node-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-node-item .msg { color: #484f58; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-node-item .cost { font-size: 10px; color: #58a6ff; white-space: nowrap; }
+.proj-empty { color: #484f58; font-size: 13px; padding: 8px 0; }
+
 /* ── Command bar ── */
 .cmd-bar {
   display: flex; gap: 6px; padding: 8px 0; border-top: 1px solid #21262d;
@@ -583,8 +603,10 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
       groups.get(key).push(n);
     }
     for (const [proj, groupNodes] of groups) {
+      const labelId = groupNodes[0].project_label_id || '';
       const header = document.createElement('div');
       header.style.cssText = 'padding:6px 8px 2px;font-size:10px;color:#58a6ff;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px';
+      header.title = 'Click to view project overview';
       const toggleIcon = document.createElement('span');
       toggleIcon.textContent = '\u25BC';
       toggleIcon.style.cssText = 'font-size:8px;width:10px;flex-shrink:0';
@@ -593,7 +615,16 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
       const groupContainer = document.createElement('div');
       groupContainer.className = 'project-group';
       groupNodes.forEach((n, i) => renderNode(n, groupContainer, depth, false, i === groupNodes.length - 1));
-      header.onclick = () => {
+      header.onclick = (e) => {
+        if (e.target === toggleIcon || toggleIcon.contains(e.target)) {
+          const collapsed = groupContainer.classList.toggle('collapsed');
+          toggleIcon.textContent = collapsed ? '\u25B6' : '\u25BC';
+          return;
+        }
+        if (labelId) showProjectOverview(labelId);
+      };
+      toggleIcon.onclick = (e) => {
+        e.stopPropagation();
         const collapsed = groupContainer.classList.toggle('collapsed');
         toggleIcon.textContent = collapsed ? '\u25B6' : '\u25BC';
       };
@@ -754,6 +785,7 @@ function filterTree() {
 }
 
 function selectNode(n) {
+  document.getElementById('detail').classList.remove('proj-view');
   document.querySelectorAll('#tree .node-item.selected').forEach(r => r.classList.remove('selected'));
   const row = document.querySelector('#tree .node-item[data-node-id="' + n.id + '"]');
   if (row) row.classList.add('selected');
@@ -766,11 +798,84 @@ function selectNode(n) {
   if (activeTermNodeId && activeTermNodeId !== n.id) closeTerminal();
 }
 
+/* ── Project Overview ── */
+async function showProjectOverview(labelId) {
+  closeTerminal();
+  selectedNodeId = null;
+  _selectedFingerprint = '';
+  document.querySelectorAll('#tree .node-item.selected').forEach(r => r.classList.remove('selected'));
+
+  document.getElementById('main-title').textContent = 'Project';
+  document.getElementById('header-actions').innerHTML = '';
+
+  const detail = document.getElementById('detail');
+  detail.classList.add('proj-view');
+  detail.innerHTML = '<div style="color:#8b949e;padding:12px">Loading...</div>';
+
+  try {
+    const data = await api('/api/project-labels/' + encodeURIComponent(labelId) + '/overview');
+    const l = data.label;
+    const skills = data.skills || [];
+    const nodes = data.nodes || [];
+
+    const counts = { armada: 0, project: 0, global: 0 };
+    let skillsHtml = '';
+    for (const s of skills) {
+      counts[s.source || 'global']++;
+      skillsHtml += `<span class="skill-chip ${s.source}" title="${esc(s.description || '')}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
+    }
+    if (!skillsHtml) skillsHtml = '<span class="proj-empty">No skills found in this project</span>';
+
+    let nodesHtml = '';
+    if (nodes.length) {
+      nodesHtml = nodes.map(n => `
+        <div class="proj-node-item" onclick="selectNodeById(${n.id})">
+          <span class="dot" style="background:${n.colour || '#8b949e'}"></span>
+          <span class="name">${esc(n.name)}</span>
+          <span class="badge ${n.status === 'active' ? 'active' : n.status === 'pending' ? 'pending' : n.status === 'error' ? 'error' : ''}">${n.status}</span>
+          <span class="msg">${esc(n.latest_message || '')}</span>
+          ${n.total_cost > 0 ? `<span class="cost">$${n.total_cost.toFixed(4)}</span>` : ''}
+          <span style="font-size:10px;color:#484f58">${esc(n.agent_type)}</span>
+        </div>
+      `).join('');
+    } else {
+      nodesHtml = '<div class="proj-empty">No active nodes in this project</div>';
+    }
+
+    detail.innerHTML = `
+      <div class="proj-overview">
+        <h2>${esc(l.name)}</h2>
+        <div class="proj-path">${esc(l.path)}</div>
+        <div class="proj-section">
+          <h3>Skills (${skills.length})</h3>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">${skillsHtml}</div>
+        </div>
+        <div class="proj-section">
+          <h3>Nodes (${nodes.length})</h3>
+          <div class="proj-node-list">${nodesHtml}</div>
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    detail.innerHTML = '<div style="color:#ef4444;padding:12px">Failed to load project: ' + esc(e.message) + '</div>';
+  }
+}
+
+function selectNodeById(id) {
+  const node = _findById(treeData, id);
+  if (node) {
+    const detail = document.getElementById('detail');
+    detail.classList.remove('proj-view');
+    selectNode(node);
+  }
+}
+
 /* ── Detail Panel ── */
 async function loadNodeDetail(nodeId) {
   const data = await api('/api/nodes/' + nodeId);
   const n = data.node;
   const detail = document.getElementById('detail');
+  detail.classList.remove('proj-view');
 
   const statusCls = n.status === 'active' ? 'status-active'
     : n.status === 'error' ? 'status-error'
@@ -851,7 +956,6 @@ async function loadNodeDetail(nodeId) {
       <h3>Activity Log</h3>
       ${reportsHtml}
     </div>
-    <div id="skills-section"></div>
     ${n.status !== 'dead' ? `
     <div class="cmd-bar" style="flex-wrap:wrap">
       <div class="preset-chips">
@@ -886,35 +990,6 @@ async function loadNodeDetail(nodeId) {
     }
     pane.classList.add('show');
   }
-  if (n.project_label_id) {
-    api('/api/project-labels/' + encodeURIComponent(n.project_label_id) + '/skills').then(data => {
-      renderSkills(data);
-    }).catch(() => {
-      const el = document.getElementById('skills-section');
-      if (el) el.innerHTML = '';
-    });
-  } else {
-    api('/api/skills').then(data => renderSkills(data)).catch(() => {});
-  }
-}
-
-function renderSkills(data) {
-  const el = document.getElementById('skills-section');
-  if (!el) return;
-  const skills = data.skills || [];
-  if (!skills.length) { el.innerHTML = ''; return; }
-  const counts = { armada: 0, project: 0, global: 0 };
-  let chips = '';
-  for (const s of skills) {
-    counts[s.source || 'global']++;
-    const desc = s.description ? esc(s.description) : '';
-    chips += `<span class="skill-chip ${s.source}" title="${desc}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
-  }
-  const parts = [];
-  if (counts.armada) parts.push(counts.armada + ' armada');
-  if (counts.project) parts.push(counts.project + ' project');
-  if (counts.global) parts.push(counts.global + ' global');
-  el.innerHTML = `<h3 onclick="var chips=document.getElementById('skills-chips');var arrow=this.querySelector('.toggle-arrow');chips.classList.toggle('show');arrow.classList.toggle('open')"><span class="toggle-arrow">&#9654;</span>Skills <span class="summary">${parts.join(', ')}</span></h3><div id="skills-chips">${chips}</div>`;
 }
 
 async function attachNode(id) {
@@ -1319,9 +1394,9 @@ async function refreshLabels() {
     return;
   }
   el.innerHTML = data.map(l => `
-    <div class="label-item">
+    <div class="label-item" onclick="showProjectOverview('${esc(l.id)}')" title="View project overview">
       <div><span>${esc(l.name)}</span> <span class="label-path">${esc(l.path)}</span></div>
-      <span class="label-del" onclick="deleteLabel('${esc(l.id)}')">x</span>
+      <span class="label-del" onclick="event.stopPropagation();deleteLabel('${esc(l.id)}')">x</span>
     </div>
   `).join('');
 }

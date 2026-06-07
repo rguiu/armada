@@ -414,6 +414,21 @@ def get_root_nodes():
     return [dict(r) for r in rows]
 
 
+def get_nodes_by_project_label_id(label_id: str):
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT n.id, n.name, n.colour, n.status, n.agent_type, n.created_at, "
+        "n.total_tokens_in, n.total_tokens_out, n.total_cost, "
+        "(SELECT message FROM status_reports WHERE node_id = n.id "
+        " ORDER BY timestamp DESC LIMIT 1) as latest_message "
+        "FROM nodes n "
+        "WHERE n.project_label_id = ? AND n.killed_at IS NULL AND n.hidden_at IS NULL "
+        "ORDER BY n.created_at DESC",
+        (label_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def build_tree(include_dead: bool = True):
     all_nodes = get_all_nodes(include_dead=include_dead)
     node_map = {}
