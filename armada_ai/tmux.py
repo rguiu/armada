@@ -380,13 +380,16 @@ def attach_node(name: str, colour: str = "#8b949e") -> str | None:
     system = platform.system()
 
     if system == "Darwin":
-        result = _try_iterm_attach(name, colour)
-        if result is None:
-            return None
+        has_iterm = os.path.exists("/Applications/iTerm.app") or os.path.exists(
+            os.path.expanduser("~/Applications/iTerm.app"))
+        if has_iterm:
+            result = _try_iterm_attach(name, colour)
+            if result is None:
+                return None
         result2 = _try_terminal_attach(name)
         if result2 is None:
             return None
-        return result or "Cannot auto-open terminal. Run: tmux attach -t armada"
+        return "Cannot auto-open terminal. Run: tmux attach -t armada"
     else:
         return _try_linux_attach(name, colour)
 
