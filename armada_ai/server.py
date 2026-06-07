@@ -58,7 +58,7 @@ async def _broadcast_tree(hide_dead: bool = False):
     await _cleanup_ws_clients()
     tree = db.build_tree(include_dead=not hide_dead)
     payload = json.dumps({"type": "tree", "data": tree})
-    for ws in _ws_clients:
+    for ws in list(_ws_clients):
         try:
             await ws.send_text(payload)
         except Exception:
@@ -232,8 +232,8 @@ async def tree_ws(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        logs.log_event("_server", "ws_error", {"client": client, "path": "/api/ws", "error": str(e)})
     finally:
         _ws_clients.discard(websocket)
         logs.log_ws_disconnect(client, "/api/ws")
@@ -538,8 +538,8 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                     }))
             except WebSocketDisconnect:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logs.log_event("_server", "ws_poll_error", {"client": client, "node_id": node_id, "error": str(e)})
 
     async def recv_keys():
         while True:
@@ -551,15 +551,15 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                     )
             except WebSocketDisconnect:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logs.log_event("_server", "ws_recv_error", {"client": client, "node_id": node_id, "error": str(e)})
 
     try:
         await asyncio.gather(poll_pane(), recv_keys())
     except WebSocketDisconnect:
         pass
-    except Exception:
-        pass
+    except Exception as e:
+        logs.log_event("_server", "ws_term_error", {"client": client, "node_id": node_id, "error": str(e)})
     finally:
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws")
 

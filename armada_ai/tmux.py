@@ -8,6 +8,8 @@ import threading
 import platform
 from pathlib import Path
 
+from . import logs
+
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
 _attach_counter = 0
@@ -240,22 +242,22 @@ def create_node_window(name: str, colour: str, working_dir: str,
     # Install armada skills into the project so the agent loads them
     try:
         install_skills(cwd)
-    except Exception:
-        pass
+    except Exception as e:
+        logs.log_event("_server", "deploy_error", {"step": "install_skills", "cwd": cwd, "error": str(e)})
 
     # For opencode nodes, copy the pending plugin and register it
     if agent_type == "opencode":
         try:
             _deploy_pending_plugin(cwd)
-        except Exception:
-            pass
+        except Exception as e:
+            logs.log_event("_server", "deploy_error", {"step": "pending_plugin", "cwd": cwd, "error": str(e)})
 
     # For claude nodes, install hooks for pending status detection
     if agent_type == "claude":
         try:
             _deploy_claude_hooks(cwd)
-        except Exception:
-            pass
+        except Exception as e:
+            logs.log_event("_server", "deploy_error", {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
 
     # Determine what to run in the tmux window
     if agent_type in ("opencode", "claude"):
@@ -641,12 +643,12 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
                         return
                 time.sleep(1)
             send_keys(name, prompt)
-        except Exception:
-            # Don't silently lose the prompt on any error
+        except Exception as e:
+            logs.log_event("_server", "prompt_error", {"node": name, "error": str(e)})
             try:
                 send_keys(name, prompt)
-            except Exception:
-                pass
+            except Exception as e2:
+                logs.log_event("_server", "prompt_fallback_error", {"node": name, "error": str(e2)})
         finally:
             sentinel.release()
 
