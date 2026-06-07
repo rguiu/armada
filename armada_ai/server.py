@@ -557,6 +557,19 @@ def delete_project_label(label_id: str):
     return JSONResponse({"ok": True})
 
 
+@app.get("/api/project-labels/{label_id}/skills")
+def project_skills(label_id: str):
+    path = db.get_project_label_path(label_id)
+    if not path or not os.path.isdir(path):
+        raise HTTPException(status_code=404, detail="Project not found")
+    return JSONResponse(tmux.list_project_skills(path))
+
+
+@app.get("/api/skills")
+def global_skills():
+    return JSONResponse(tmux.list_project_skills(os.path.expanduser("~")))
+
+
 # --- Maintenance ---
 
 @app.post("/api/refresh-hooks")

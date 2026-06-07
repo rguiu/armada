@@ -249,6 +249,24 @@ a { color: #58a6ff; }
 .report-time { color: #484f58; font-size: 12px; min-width: 100px; }
 .report-msg { color: #c9d1d9; flex: 1; }
 
+/* ── Skills chips ── */
+#skills-section { margin-top: 16px; }
+#skills-section h3 { font-size: 13px; color: #8b949e; margin-bottom: 6px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+#skills-section h3 .toggle-arrow { font-size: 10px; color: #484f58; transition: transform 0.15s; }
+#skills-section h3 .toggle-arrow.open { transform: rotate(90deg); }
+#skills-section h3 .summary { font-size: 11px; color: #484f58; font-weight: 400; }
+#skills-chips { display: none; flex-wrap: wrap; gap: 4px; }
+#skills-chips.show { display: flex; }
+.skill-chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: default; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+.skill-chip .chip-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.skill-chip.armada { background: rgba(88,166,255,0.1); color: #58a6ff; }
+.skill-chip.armada .chip-dot { background: #58a6ff; }
+.skill-chip.project { background: rgba(34,197,94,0.1); color: #22c55e; }
+.skill-chip.project .chip-dot { background: #22c55e; }
+.skill-chip.global { background: rgba(139,148,158,0.1); color: #8b949e; }
+.skill-chip.global .chip-dot { background: #8b949e; }
+.skill-chip:hover { filter: brightness(1.3); }
+
 /* ── Command bar ── */
 .cmd-bar {
   display: flex; gap: 6px; padding: 8px 0; border-top: 1px solid #21262d;
@@ -822,6 +840,7 @@ async function loadNodeDetail(nodeId) {
       <h3>Activity Log</h3>
       ${reportsHtml}
     </div>
+    <div id="skills-section"></div>
     ${n.status !== 'dead' ? `
     <div class="cmd-bar" style="flex-wrap:wrap">
       <div class="preset-chips">
@@ -842,6 +861,35 @@ async function loadNodeDetail(nodeId) {
       </div>
     </div>` : ''}
   `;
+  if (n.project_label_id) {
+    api('/api/project-labels/' + encodeURIComponent(n.project_label_id) + '/skills').then(data => {
+      renderSkills(data);
+    }).catch(() => {
+      const el = document.getElementById('skills-section');
+      if (el) el.innerHTML = '';
+    });
+  } else {
+    api('/api/skills').then(data => renderSkills(data)).catch(() => {});
+  }
+}
+
+function renderSkills(data) {
+  const el = document.getElementById('skills-section');
+  if (!el) return;
+  const skills = data.skills || [];
+  if (!skills.length) { el.innerHTML = ''; return; }
+  const counts = { armada: 0, project: 0, global: 0 };
+  let chips = '';
+  for (const s of skills) {
+    counts[s.source || 'global']++;
+    const desc = s.description ? esc(s.description) : '';
+    chips += `<span class="skill-chip ${s.source}" title="${desc}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
+  }
+  const parts = [];
+  if (counts.armada) parts.push(counts.armada + ' armada');
+  if (counts.project) parts.push(counts.project + ' project');
+  if (counts.global) parts.push(counts.global + ' global');
+  el.innerHTML = `<h3 onclick="var chips=document.getElementById('skills-chips');var arrow=this.querySelector('.toggle-arrow');chips.classList.toggle('show');arrow.classList.toggle('open')"><span class="toggle-arrow">&#9654;</span>Skills <span class="summary">${parts.join(', ')}</span></h3><div id="skills-chips">${chips}</div>`;
 }
 
 async function attachNode(id) {

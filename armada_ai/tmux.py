@@ -587,3 +587,76 @@ def save_agent_hook(agent_name: str):
     with open(path, "w") as f:
         f.write(agent_hook_instructions(agent_name))
     return path
+
+
+def _skill_description(skill_md: Path) -> str:
+    """Extract a short description from a SKILL.md file."""
+    try:
+        for line in skill_md.read_text().split("\n"):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and len(stripped) > 5:
+                return stripped[:120]
+    except Exception:
+        pass
+    return ""
+
+
+def _scan_skills_dir(skills_dir: Path, project_path: str, bundles_dir: str) -> list[dict]:
+    """Scan a skills directory and return skill entries."""
+    skills = []
+    if not skills_dir.is_dir():
+        return skills
+    for entry in sorted(skills_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        skill_md = entry / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        if entry.is_symlink():
+            try:
+                target = str(entry.resolve())
+            except Exception:
+                target = ""
+            source = "armada" if bundles_dir in target else "project"
+        else:
+            source = "project"
+        skills.append({
+            "name": entry.name,
+            "source": source,
+            "path": str(skill_md.relative_to(project_path)) if project_path else str(skill_md),
+            "description": _skill_description(skill_md),
+        })
+    return skills
+
+
+def list_project_skills(project_path: str) -> dict:
+    """Scan a project for skills, merging global skills as fallback.
+    Returns { 'skills': [...] } deduplicated across agents, each with description."""
+    bundles_dir = os.path.expanduser("~/.armada/bundles")
+    home = Path.home()
+    global_dirs = {
+        "opencode": home / ".config" / "opencode" / "skills",
+        "claude": home / ".claude" / "skills",
+    }
+
+    by_name = {}
+    project_path_str = project_path
+
+    for agent in ("opencode", "claude"):
+        project_skills_dir = Path(project_path) / f".{agent}" / "skills"
+        global_skills_dir = global_dirs[agent]
+
+        for skill in _scan_skills_dir(project_skills_dir, project_path_str, bundles_dir):
+            name = skill["name"]
+            if name not in by_name:
+                by_name[name] = skill
+
+        for skill in _scan_skills_dir(global_skills_dir, str(home), bundles_dir):
+            name = skill["name"]
+            if name not in by_name:
+                skill = dict(skill)
+                skill["source"] = "global"
+                by_name[name] = skill
+
+    skills = sorted(by_name.values(), key=lambda s: ({"armada": 0, "project": 1, "global": 2}[s["source"]], s["name"]))
+    return {"skills": skills}
