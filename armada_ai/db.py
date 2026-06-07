@@ -85,6 +85,15 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_reports_node
                 ON status_reports(node_id, timestamp DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_nodes_parent
+                ON nodes(parent_id);
+            CREATE INDEX IF NOT EXISTS idx_nodes_killed
+                ON nodes(killed_at);
+            CREATE INDEX IF NOT EXISTS idx_nodes_hidden
+                ON nodes(hidden_at);
+            CREATE INDEX IF NOT EXISTS idx_nodes_project
+                ON nodes(project_label_id);
         """)
         conn.commit()
     _sync_projects_from_json()
@@ -294,6 +303,7 @@ def prune_all_old_reports(keep: int = 200):
 def vacuum_db():
     def _do():
         conn = _get_conn()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.execute("PRAGMA optimize")
     _execute(_do)
 
