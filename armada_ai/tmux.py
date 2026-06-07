@@ -1,6 +1,7 @@
 import subprocess
 import shutil
 import os
+import re
 import json
 import time
 import tempfile
@@ -760,3 +761,140 @@ def list_project_skills(project_path: str) -> dict:
 
     skills = sorted(by_name.values(), key=lambda s: ({"armada": 0, "project": 1, "global": 2}[s["source"]], s["name"]))
     return {"skills": skills}
+
+
+def list_project_plugins(project_path: str) -> dict:
+    """Scan project for plugin files from both OpenCode and Claude."""
+    plugins = []
+    project = Path(project_path)
+
+    agent_dirs = [
+        ("opencode", project / ".opencode" / "plugin"),
+        ("opencode", project / ".opencode" / "plugins"),
+        ("claude", project / ".claude" / "plugins"),
+    ]
+
+    seen = set()
+    for agent, d in agent_dirs:
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.is_file() and f.name not in seen:
+                    seen.add(f.name)
+                    plugins.append({"name": f.name, "agent": agent})
+
+    return {"plugins": plugins}
+
+
+def list_project_hooks(project_path: str) -> dict:
+    """Scan project for hook scripts (Claude/OpenCode)."""
+    hooks = []
+    project = Path(project_path)
+
+    agent_dirs = [
+        ("claude", project / ".claude" / "hooks"),
+        ("opencode", project / ".opencode" / "hooks"),
+    ]
+
+    for agent, d in agent_dirs:
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.is_file():
+                    hooks.append({"name": f.name, "agent": agent})
+
+    return {"hooks": hooks}
+
+
+_SENSITIVE_KEY_RE = re.compile(r"(token|key|secret|auth|password)", re.IGNORECASE)
+
+
+def _redact_config(obj):
+    """Recursively redact sensitive values in config dicts."""
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            if _SENSITIVE_KEY_RE.search(k) and isinstance(v, str) and len(v) > 4:
+                result[k] = v[:4] + "***"
+            else:
+                result[k] = _redact_config(v)
+        return result
+    if isinstance(obj, list):
+        return [_redact_config(item) for item in obj]
+    return obj
+
+
+def get_project_config(project_path: str) -> dict:
+    """Read and summarize project configuration for both OpenCode and Claude."""
+    project = Path(project_path)
+    home = Path.home()
+    configs = {}
+
+    for candidate in [
+        project / "opencode.json",
+        project / "opencode.jsonc",
+        project / ".opencode" / "opencode.json",
+        project / ".opencode" / "opencode.jsonc",
+    ]:
+        if candidate.is_file():
+            try:
+                raw = candidate.read_text()
+                cleaned = re.sub(r"//.*?\n|/\*.*?\*/", "", raw, flags=re.DOTALL)
+                configs["opencode"] = _redact_config(json.loads(cleaned))
+            except Exception:
+                configs["opencode"] = {"_error": f"Could not parse {candidate.name}"}
+            break
+
+    if "opencode" not in configs:
+        global_oc = home / ".config" / "opencode" / "opencode.jsonc"
+        if global_oc.is_file():
+            try:
+                raw = global_oc.read_text()
+                cleaned = re.sub(r"//.*?\n|/\*.*?\*/", "", raw, flags=re.DOTALL)
+                configs["opencode"] = _redact_config(json.loads(cleaned))
+            except Exception:
+                pass
+
+    for candidate in [
+        project / ".claude" / "settings.json",
+        home / ".claude" / "settings.json",
+    ]:
+        if candidate.is_file():
+            try:
+                configs["claude"] = _redact_config(json.loads(candidate.read_text()))
+            except Exception:
+                configs["claude"] = {"_error": "Could not parse settings.json"}
+            break
+
+    return {"configs": configs}
+
+
+def get_project_git_info(project_path: str) -> dict:
+    """Get basic git info for a project."""
+    info = {}
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, cwd=project_path, timeout=5,
+        )
+        info["branch"] = r.stdout.strip()
+    except Exception:
+        info["branch"] = ""
+
+    try:
+        r = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, cwd=project_path, timeout=5,
+        )
+        info["remote"] = r.stdout.strip()
+    except Exception:
+        info["remote"] = ""
+
+    try:
+        r = subprocess.run(
+            ["git", "log", "-1", "--format=%h %s", "--abbrev=8"],
+            capture_output=True, text=True, cwd=project_path, timeout=5,
+        )
+        info["last_commit"] = r.stdout.strip()
+    except Exception:
+        info["last_commit"] = ""
+
+    return {"git": info}

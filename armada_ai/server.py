@@ -603,18 +603,27 @@ def delete_project_label(label_id: str):
 @app.get("/api/project-labels/{label_id}/overview")
 def project_overview(label_id: str):
     labels = db.list_project_labels()
-    label = next((l for l in labels if l["id"] == label_id), None)
+    label = next((lb for lb in labels if lb["id"] == label_id), None)
     if not label:
         raise HTTPException(status_code=404, detail="Project not found")
 
     path = label["path"]
-    skills = tmux.list_project_skills(path)["skills"] if os.path.isdir(path) else []
+    is_dir = os.path.isdir(path)
+    skills = tmux.list_project_skills(path)["skills"] if is_dir else []
     nodes = db.get_nodes_by_project_label_id(label_id)
+    plugins = tmux.list_project_plugins(path)["plugins"] if is_dir else []
+    hooks = tmux.list_project_hooks(path)["hooks"] if is_dir else []
+    configs = tmux.get_project_config(path)["configs"] if is_dir else {}
+    git = tmux.get_project_git_info(path)["git"] if is_dir else {}
 
     return JSONResponse({
         "label": label,
         "skills": skills,
         "nodes": nodes,
+        "plugins": plugins,
+        "hooks": hooks,
+        "configs": configs,
+        "git": git,
     })
 
 

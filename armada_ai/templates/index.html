@@ -286,6 +286,15 @@ a { color: #58a6ff; }
 .proj-node-item .msg { color: #484f58; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .proj-node-item .cost { font-size: 10px; color: #58a6ff; white-space: nowrap; }
 .proj-empty { color: #484f58; font-size: 13px; padding: 8px 0; }
+.proj-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.proj-agent-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; }
+.proj-agent-badge.opencode { background: rgba(88,166,255,0.12); color: #58a6ff; }
+.proj-agent-badge.claude { background: rgba(255,165,0,0.12); color: #ffa500; }
+.proj-config-block { margin: 0; padding: 8px 12px; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; overflow-x: auto; }
+.proj-config-block pre { margin: 0; font-size: 11px; color: #8b949e; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, monospace; }
+.proj-git-line { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; color: #8b949e; }
+.proj-git-line .label { color: #484f58; min-width: 70px; }
+.proj-git-line code { font-size: 11px; color: #e1e4e8; background: #0d1117; padding: 1px 5px; border-radius: 3px; }
 
 /* ── Command bar ── */
 .cmd-bar {
@@ -817,6 +826,10 @@ async function showProjectOverview(labelId) {
     const l = data.label;
     const skills = data.skills || [];
     const nodes = data.nodes || [];
+    const plugins = data.plugins || [];
+    const hooks = data.hooks || [];
+    const configs = data.configs || {};
+    const git = data.git || {};
 
     const counts = { armada: 0, project: 0, global: 0 };
     let skillsHtml = '';
@@ -825,6 +838,31 @@ async function showProjectOverview(labelId) {
       skillsHtml += `<span class="skill-chip ${s.source}" title="${esc(s.description || '')}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
     }
     if (!skillsHtml) skillsHtml = '<span class="proj-empty">No skills found in this project</span>';
+
+    let pluginsHtml = '';
+    for (const p of plugins) {
+      pluginsHtml += `<div class="proj-item"><span class="proj-agent-badge ${p.agent}">${p.agent}</span> ${esc(p.name)}</div>`;
+    }
+    if (!pluginsHtml) pluginsHtml = '<span class="proj-empty">No plugins configured</span>';
+
+    let hooksHtml = '';
+    for (const h of hooks) {
+      hooksHtml += `<div class="proj-item"><span class="proj-agent-badge ${h.agent}">${h.agent}</span> ${esc(h.name)}</div>`;
+    }
+    if (!hooksHtml) hooksHtml = '<span class="proj-empty">No hooks configured</span>';
+
+    let configHtml = '';
+    for (const [agent, cfg] of Object.entries(configs)) {
+      configHtml += `<div style="margin-bottom:8px"><span class="proj-agent-badge ${agent}">${agent}</span></div>`;
+      configHtml += `<div class="proj-config-block"><pre>${esc(JSON.stringify(cfg, null, 2))}</pre></div>`;
+    }
+    if (!configHtml) configHtml = '<span class="proj-empty">No configuration found</span>';
+
+    let gitHtml = '';
+    if (git.branch) gitHtml += `<div class="proj-git-line"><span class="label">Branch</span><code>${esc(git.branch)}</code></div>`;
+    if (git.remote) gitHtml += `<div class="proj-git-line"><span class="label">Remote</span><code>${esc(git.remote)}</code></div>`;
+    if (git.last_commit) gitHtml += `<div class="proj-git-line"><span class="label">Last commit</span><code>${esc(git.last_commit)}</code></div>`;
+    if (!gitHtml) gitHtml = '<span class="proj-empty">No git repository</span>';
 
     let nodesHtml = '';
     if (nodes.length) {
@@ -849,6 +887,22 @@ async function showProjectOverview(labelId) {
         <div class="proj-section">
           <h3>Skills (${skills.length})</h3>
           <div style="display:flex;flex-wrap:wrap;gap:4px">${skillsHtml}</div>
+        </div>
+        <div class="proj-section">
+          <h3>Plugins (${plugins.length})</h3>
+          ${pluginsHtml}
+        </div>
+        <div class="proj-section">
+          <h3>Hooks (${hooks.length})</h3>
+          ${hooksHtml}
+        </div>
+        <div class="proj-section">
+          <h3>Configuration</h3>
+          ${configHtml}
+        </div>
+        <div class="proj-section">
+          <h3>Git</h3>
+          ${gitHtml}
         </div>
         <div class="proj-section">
           <h3>Nodes (${nodes.length})</h3>
