@@ -239,6 +239,20 @@ a { color: #58a6ff; }
 .perm-btns { display: flex; gap: 6px; flex-shrink: 0; }
 .btn-sm { padding: 4px 10px; font-size: 11px; }
 
+/* ── Pending bar (top of page) ── */
+#pending-bar {
+  margin: 0; padding: 10px 16px;
+  background: rgba(251,191,36,0.08); border-bottom: 1px solid rgba(251,191,36,0.25);
+  display: flex; align-items: center; gap: 12px;
+}
+#pending-bar .perm-node-name {
+  font-size: 13px; font-weight: 600; color: #e1e4e8;
+  cursor: pointer; white-space: nowrap;
+}
+#pending-bar .perm-node-name:hover { color: #fbbf24; }
+#pending-bar .perm-msg { font-size: 13px; color: #fbbf24; flex: 1; }
+#pending-bar .perm-btns { display: flex; gap: 6px; flex-shrink: 0; }
+
 /* ── Report history ── */
 #reports h3 { font-size: 14px; color: #8b949e; margin-bottom: 12px; }
 .report-row {
@@ -485,6 +499,7 @@ a { color: #58a6ff; }
     </div>
     <div class="header-btns" id="header-actions"></div>
   </div>
+  <div id="pending-bar" style="display:none"></div>
   <div id="detail">
     <div class="empty-detail">Select a node from the sidebar to view details and activity</div>
   </div>
@@ -1265,8 +1280,13 @@ async function replyPermission(id, key) {
     await api('/api/nodes/' + id + '/send', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({command: key, raw: true})
+      body: JSON.stringify({command: key + '\n', raw: true})
     });
+    if (!selectedNodeId) {
+      const bar = document.getElementById('pending-bar');
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+    }
   } catch(e) {
     toast('Failed to send reply: ' + e.message, true);
   }
@@ -1665,9 +1685,32 @@ function connectTreeWs() {
 function updatePendingDot() {
   const dot = document.getElementById('pending-dot');
   const wasPending = dot.classList.contains('show');
-  const hasPending = treeData.some(n => _hasPending(n));
+  const node = _findPending(treeData);
+  const hasPending = !!node;
   dot.classList.toggle('show', hasPending);
   updateStats();
+
+  if (!selectedNodeId) {
+    const bar = document.getElementById('pending-bar');
+    if (node) {
+      bar.style.display = 'flex';
+      bar.innerHTML = `
+        <span class="perm-node-name" onclick="selectPendingNode()" title="Select node">${esc(node.name)}</span>
+        <span class="perm-msg">${esc(node.latest_message || 'Waiting for permission')}</span>
+        <div class="perm-btns">
+          <button class="btn btn-primary btn-sm" onclick="replyPermission(${node.id},'y')">Allow Once</button>
+          <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${node.id},'a')">Allow Always</button>
+          <button class="btn btn-danger btn-sm" onclick="replyPermission(${node.id},'n')">Deny</button>
+        </div>
+      `;
+    } else {
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+    }
+  } else {
+    document.getElementById('pending-bar').style.display = 'none';
+  }
+
   if (hasPending && !wasPending) {
     notifyPending();
   }
