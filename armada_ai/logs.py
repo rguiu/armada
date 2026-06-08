@@ -65,6 +65,9 @@ def search_logs(query: str, limit: int = 50, node_name: str | None = None) -> li
 def get_node_logs(node_name: str, limit: int = 50, before_ts: float | None = None) -> list[dict]:
     _ensure_dir()
     log_path = os.path.join(LOGS_DIR, f"{node_name}.jsonl")
+    log_real = os.path.realpath(log_path)
+    if not log_real.startswith(os.path.realpath(LOGS_DIR) + os.sep):
+        return []
     if not os.path.exists(log_path):
         return []
 
@@ -132,6 +135,18 @@ def log_health(node_name: str, dead: bool):
 
 def log_recover(node_name: str):
     log_event(node_name, "recover", {})
+
+
+def log_ws_connect(client_id: str, path: str):
+    log_event("_server", "ws_connect", {"client": client_id, "path": path})
+
+
+def log_ws_disconnect(client_id: str, path: str, reason: str = ""):
+    log_event("_server", "ws_disconnect", {"client": client_id, "path": path, "reason": reason})
+
+
+def log_http_error(method: str, path: str, status: int, detail: str = ""):
+    log_event("_server", "http_error", {"method": method, "path": path, "status": status, "detail": detail[:200]})
 
 
 def log_server_start():

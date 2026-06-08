@@ -6,13 +6,23 @@ from . import logs
 
 
 def start_health_loop(interval: int = 15):
+    _tick = 0
+
     def check():
+        nonlocal _tick
         while True:
             time.sleep(interval)
+            _tick += 1
             try:
                 _run_health_check()
             except Exception:
                 pass
+            if _tick % 20 == 0:
+                try:
+                    db.prune_all_old_reports()
+                    db.vacuum_db()
+                except Exception:
+                    pass
 
     import threading
     thread = threading.Thread(target=check, daemon=True)

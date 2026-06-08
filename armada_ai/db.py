@@ -85,6 +85,15 @@ def init_db():
 
             CREATE INDEX IF NOT EXISTS idx_reports_node
                 ON status_reports(node_id, timestamp DESC);
+
+            CREATE INDEX IF NOT EXISTS idx_nodes_parent
+                ON nodes(parent_id);
+            CREATE INDEX IF NOT EXISTS idx_nodes_killed
+                ON nodes(killed_at);
+            CREATE INDEX IF NOT EXISTS idx_nodes_hidden
+                ON nodes(hidden_at);
+            CREATE INDEX IF NOT EXISTS idx_nodes_project
+                ON nodes(project_label_id);
         """)
         conn.commit()
     _sync_projects_from_json()
@@ -249,6 +258,54 @@ def add_status_report(node_id: int, status: str, message: str | None = None):
         conn.execute("UPDATE nodes SET status = ? WHERE id = ?", (status, node_id))
         conn.commit()
     _execute(_do)
+    _prune_reports_if_needed(node_id)
+
+
+_PRUNE_THRESHOLD = 50
+_MAX_REPORTS_PER_NODE = 200
+_last_prune: dict[int, int] = {}
+
+
+def _prune_reports_if_needed(node_id: int):
+    count = _last_prune.get(node_id, 0) + 1
+    _last_prune[node_id] = count
+    if count >= _PRUNE_THRESHOLD:
+        _last_prune[node_id] = 0
+        _prune_old_reports(node_id, keep=_MAX_REPORTS_PER_NODE)
+
+
+def _prune_old_reports(node_id: int, keep: int = 200):
+    def _do():
+        conn = _get_conn()
+        conn.execute("""
+            DELETE FROM status_reports WHERE id IN (
+                SELECT id FROM status_reports WHERE node_id = ?
+                ORDER BY timestamp DESC LIMIT -1 OFFSET ?
+            )
+        """, (node_id, keep))
+        conn.commit()
+    _execute(_do)
+
+
+def prune_all_old_reports(keep: int = 200):
+    def _do():
+        conn = _get_conn()
+        conn.execute("""
+            DELETE FROM status_reports WHERE id IN (
+                SELECT id FROM status_reports
+                ORDER BY timestamp DESC LIMIT -1 OFFSET ?
+            )
+        """, (keep,))
+        conn.commit()
+    _execute(_do)
+
+
+def vacuum_db():
+    def _do():
+        conn = _get_conn()
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("PRAGMA optimize")
+    _execute(_do)
 
 
 def accumulate_cost(node_id: int, tokens_in: int = 0, tokens_out: int = 0, cost: float = 0.0):
@@ -353,6 +410,21 @@ def get_root_nodes():
         "SELECT id, name, parent_id, project_label_id, colour, status, created_at "
         "FROM nodes WHERE parent_id IS NULL AND killed_at IS NULL AND hidden_at IS NULL "
         "ORDER BY created_at DESC"
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_nodes_by_project_label_id(label_id: str):
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT n.id, n.name, n.colour, n.status, n.agent_type, n.created_at, "
+        "n.total_tokens_in, n.total_tokens_out, n.total_cost, "
+        "(SELECT message FROM status_reports WHERE node_id = n.id "
+        " ORDER BY timestamp DESC LIMIT 1) as latest_message "
+        "FROM nodes n "
+        "WHERE n.project_label_id = ? AND n.killed_at IS NULL AND n.hidden_at IS NULL "
+        "ORDER BY n.created_at DESC",
+        (label_id,),
     ).fetchall()
     return [dict(r) for r in rows]
 

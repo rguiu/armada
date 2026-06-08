@@ -1,6 +1,7 @@
 import subprocess
 import shutil
 import os
+import re
 import json
 import time
 import tempfile
@@ -8,9 +9,12 @@ import threading
 import platform
 from pathlib import Path
 
+from . import logs
+
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
 _attach_counter = 0
+_zdotdirs: dict[str, str] = {}
 
 
 def _next_attach_id():
@@ -239,22 +243,22 @@ def create_node_window(name: str, colour: str, working_dir: str,
     # Install armada skills into the project so the agent loads them
     try:
         install_skills(cwd)
-    except Exception:
-        pass
+    except Exception as e:
+        logs.log_event("_server", "deploy_error", {"step": "install_skills", "cwd": cwd, "error": str(e)})
 
     # For opencode nodes, copy the pending plugin and register it
     if agent_type == "opencode":
         try:
             _deploy_pending_plugin(cwd)
-        except Exception:
-            pass
+        except Exception as e:
+            logs.log_event("_server", "deploy_error", {"step": "pending_plugin", "cwd": cwd, "error": str(e)})
 
     # For claude nodes, install hooks for pending status detection
     if agent_type == "claude":
         try:
             _deploy_claude_hooks(cwd)
-        except Exception:
-            pass
+        except Exception as e:
+            logs.log_event("_server", "deploy_error", {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
 
     # Determine what to run in the tmux window
     if agent_type in ("opencode", "claude"):
@@ -277,6 +281,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
         # bash or auto: inject armada tools via ZDOTDIR (chains user configs)
         tools_dir = Path(__file__).parent / "bin"
         zdotdir = tempfile.mkdtemp(prefix="_armada_zsh_")
+        _zdotdirs[name] = zdotdir
         _write_zsh_startup(zdotdir, tools_dir)
         shell_cmd = (
             f"cd '{safe_dir}' && "
@@ -313,6 +318,10 @@ def create_node_window(name: str, colour: str, working_dir: str,
               "automatic-rename", "off")
         _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
               "allow-rename", "off")
+    else:
+        # Window created but pane_id unreachable — kill it so it doesn't orphan
+        _tmux("kill-window", "-t", f"{ARMADA_SESSION}:{name}")
+        _zdotdirs.pop(name, None)
 
     return pane_id
 
@@ -321,6 +330,12 @@ def kill_node_window(name: str):
     if not _has_tmux():
         return
     _tmux("kill-window", "-t", f"{ARMADA_SESSION}:{name}")
+    zdotdir = _zdotdirs.pop(name, None)
+    if zdotdir:
+        try:
+            shutil.rmtree(zdotdir, ignore_errors=True)
+        except Exception:
+            pass
 
 
 def window_exists(name: str) -> bool:
@@ -337,11 +352,52 @@ def has_attached_clients() -> bool:
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+def _cleanup_stale_view_sessions():
+    """Kill orphaned _view_* tmux sessions that have no attached clients,
+    and remove stale /tmp/_armada_* attach scripts."""
+    result = _tmux("list-sessions", "-F", "#{session_name}")
+    if result.returncode != 0:
+        return
+    for session in result.stdout.strip().split("\n"):
+        if not session.startswith("_view_"):
+            continue
+        clients = _tmux("list-clients", "-t", session)
+        if clients.returncode != 0 or not clients.stdout.strip():
+            _tmux("kill-session", "-t", session)
+
+    # Clean zdotdirs for nodes whose tmux windows no longer exist
+    if _has_tmux():
+        running = running_window_names()
+        stale = [name for name in list(_zdotdirs) if name not in running]
+        for name in stale:
+            zdotdir = _zdotdirs.pop(name, None)
+            if zdotdir:
+                try:
+                    shutil.rmtree(zdotdir, ignore_errors=True)
+                except Exception:
+                    pass
+
+    tmp = tempfile.gettempdir()
+    now = time.time()
+    for pattern in ("_armada_attach_", "_armada_term_attach_", "_armada_zsh_"):
+        for f in Path(tmp).glob(f"{pattern}*"):
+            try:
+                if now - f.stat().st_mtime > 60:
+                    if f.is_dir():
+                        shutil.rmtree(f, ignore_errors=True)
+                    else:
+                        f.unlink()
+            except OSError:
+                pass
+
+
 def attach_node(name: str, colour: str = "#8b949e") -> str | None:
     """Open a terminal attached to the named tmux window.
     Returns None on success, or an error message string."""
     if not _has_tmux():
         return "tmux is not installed"
+
+    _cleanup_stale_view_sessions()
 
     _tmux("set-option", "-t", ARMADA_SESSION, "set-titles", "on")
     _tmux("set-option", "-t", ARMADA_SESSION, "set-titles-string", "#{window_name}")
@@ -354,13 +410,16 @@ def attach_node(name: str, colour: str = "#8b949e") -> str | None:
     system = platform.system()
 
     if system == "Darwin":
-        result = _try_iterm_attach(name, colour)
-        if result is None:
-            return None
+        has_iterm = os.path.exists("/Applications/iTerm.app") or os.path.exists(
+            os.path.expanduser("~/Applications/iTerm.app"))
+        if has_iterm:
+            result = _try_iterm_attach(name, colour)
+            if result is None:
+                return None
         result2 = _try_terminal_attach(name)
         if result2 is None:
             return None
-        return result or "Cannot auto-open terminal. Run: tmux attach -t armada"
+        return "Cannot auto-open terminal. Run: tmux attach -t armada"
     else:
         return _try_linux_attach(name, colour)
 
@@ -369,7 +428,7 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
     """Try opening a new iTerm tab attached to the node, with tab colour."""
     # Write colour escape sequences to a temp file (avoids AppleScript escaping hell)
     r, g, b = _hex_to_rgb(colour)
-    attach_file = f"/tmp/_armada_attach_{os.getpid()}.sh"
+    attach_file = os.path.join(tempfile.gettempdir(), f"_armada_attach_{os.getpid()}.sh")
     with open(attach_file, "w") as f:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
@@ -400,10 +459,22 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
         result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return None
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"iTerm: {result.stderr.strip()}"
     except FileNotFoundError:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return "osascript not available"
     except Exception as e:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"iTerm error: {e}"
 
 
@@ -417,7 +488,7 @@ def _try_terminal_attach(name: str) -> str | None:
     """Try opening a Terminal.app window attached to the node."""
     try:
         tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
-        attach_file = f"/tmp/_armada_term_attach_{os.getpid()}.sh"
+        attach_file = os.path.join(tempfile.gettempdir(), f"_armada_term_attach_{os.getpid()}.sh")
         with open(attach_file, "w") as f:
             f.write(f"exec {tmux_cmd}\n")
         applescript = (
@@ -429,24 +500,47 @@ def _try_terminal_attach(name: str) -> str | None:
         result = subprocess.run(["osascript", "-e", applescript], capture_output=True, text=True, timeout=5)
         if result.returncode == 0:
             return None
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"Terminal: {result.stderr.strip()}"
     except FileNotFoundError:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return None
     except Exception as e:
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
         return f"Terminal error: {e}"
 
 
 def _try_linux_attach(name: str, colour: str = "#8b949e") -> str | None:
     """Try opening a terminal on Linux to attach to the node."""
     tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
-    attach_file = f"/tmp/_armada_attach_{os.getpid()}.sh"
+    tmpdir = tempfile.gettempdir()
+    attach_file = os.path.join(tmpdir, f"_armada_attach_{os.getpid()}.sh")
     r, g, b = _hex_to_rgb(colour)
     with open(attach_file, "w") as f:
+        f.write("#!/bin/bash\n")
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
         f.write(f"exec {tmux_cmd}\n")
     os.chmod(attach_file, 0o755)
+
+    # Schedule cleanup of the temp script after a delay
+    def _cleanup_attach_file():
+        time.sleep(10)
+        try:
+            os.remove(attach_file)
+        except OSError:
+            pass
+    threading.Thread(target=_cleanup_attach_file, daemon=True).start()
 
     terminals = []
     for term_cmd in ["gnome-terminal", "konsole", "xfce4-terminal", "xterm", "alacritty", "kitty", "terminator"]:
@@ -520,7 +614,12 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
     """Send an initial prompt to a node once the agent is ready.
     Waits for the agent process to start, then for its input prompt."""
 
+    sentinel = threading.Semaphore(3)
+
     def _send():
+        if not sentinel.acquire(blocking=False):
+            send_keys(name, prompt)
+            return
         try:
             target = f"{ARMADA_SESSION}:{name}"
             for _ in range(60):
@@ -545,12 +644,14 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
                         return
                 time.sleep(1)
             send_keys(name, prompt)
-        except Exception:
-            # Don't silently lose the prompt on any error
+        except Exception as e:
+            logs.log_event("_server", "prompt_error", {"node": name, "error": str(e)})
             try:
                 send_keys(name, prompt)
-            except Exception:
-                pass
+            except Exception as e2:
+                logs.log_event("_server", "prompt_fallback_error", {"node": name, "error": str(e2)})
+        finally:
+            sentinel.release()
 
     thread = threading.Thread(target=_send, daemon=True)
     thread.start()
@@ -587,3 +688,213 @@ def save_agent_hook(agent_name: str):
     with open(path, "w") as f:
         f.write(agent_hook_instructions(agent_name))
     return path
+
+
+def _skill_description(skill_md: Path) -> str:
+    """Extract a short description from a SKILL.md file."""
+    try:
+        for line in skill_md.read_text().split("\n"):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and len(stripped) > 5:
+                return stripped[:120]
+    except Exception:
+        pass
+    return ""
+
+
+def _scan_skills_dir(skills_dir: Path, project_path: str, bundles_dir: str) -> list[dict]:
+    """Scan a skills directory and return skill entries."""
+    skills = []
+    if not skills_dir.is_dir():
+        return skills
+    for entry in sorted(skills_dir.iterdir()):
+        if not entry.is_dir():
+            continue
+        skill_md = entry / "SKILL.md"
+        if not skill_md.is_file():
+            continue
+        if entry.is_symlink():
+            try:
+                target = str(entry.resolve())
+            except Exception:
+                target = ""
+            source = "armada" if bundles_dir in target else "project"
+        else:
+            source = "project"
+        skills.append({
+            "name": entry.name,
+            "source": source,
+            "path": str(skill_md.relative_to(project_path)) if project_path else str(skill_md),
+            "description": _skill_description(skill_md),
+        })
+    return skills
+
+
+def list_project_skills(project_path: str) -> dict:
+    """Scan a project for skills, merging global skills as fallback.
+    Returns { 'skills': [...] } deduplicated across agents, each with description."""
+    bundles_dir = os.path.expanduser("~/.armada/bundles")
+    home = Path.home()
+    global_dirs = {
+        "opencode": home / ".config" / "opencode" / "skills",
+        "claude": home / ".claude" / "skills",
+    }
+
+    by_name = {}
+    project_path_str = project_path
+
+    for agent in ("opencode", "claude"):
+        project_skills_dir = Path(project_path) / f".{agent}" / "skills"
+        global_skills_dir = global_dirs[agent]
+
+        for skill in _scan_skills_dir(project_skills_dir, project_path_str, bundles_dir):
+            name = skill["name"]
+            if name not in by_name:
+                by_name[name] = skill
+
+        for skill in _scan_skills_dir(global_skills_dir, str(home), bundles_dir):
+            name = skill["name"]
+            if name not in by_name:
+                skill = dict(skill)
+                skill["source"] = "global"
+                by_name[name] = skill
+
+    skills = sorted(by_name.values(), key=lambda s: ({"armada": 0, "project": 1, "global": 2}[s["source"]], s["name"]))
+    return {"skills": skills}
+
+
+def list_project_plugins(project_path: str) -> dict:
+    """Scan project for plugin files from both OpenCode and Claude."""
+    plugins = []
+    project = Path(project_path)
+
+    agent_dirs = [
+        ("opencode", project / ".opencode" / "plugin"),
+        ("opencode", project / ".opencode" / "plugins"),
+        ("claude", project / ".claude" / "plugins"),
+    ]
+
+    seen = set()
+    for agent, d in agent_dirs:
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.is_file() and f.name not in seen:
+                    seen.add(f.name)
+                    plugins.append({"name": f.name, "agent": agent})
+
+    return {"plugins": plugins}
+
+
+def list_project_hooks(project_path: str) -> dict:
+    """Scan project for hook scripts (Claude/OpenCode)."""
+    hooks = []
+    project = Path(project_path)
+
+    agent_dirs = [
+        ("claude", project / ".claude" / "hooks"),
+        ("opencode", project / ".opencode" / "hooks"),
+    ]
+
+    for agent, d in agent_dirs:
+        if d.is_dir():
+            for f in sorted(d.iterdir()):
+                if f.is_file():
+                    hooks.append({"name": f.name, "agent": agent})
+
+    return {"hooks": hooks}
+
+
+_SENSITIVE_KEY_RE = re.compile(r"(token|key|secret|auth|password)", re.IGNORECASE)
+
+
+def _redact_config(obj):
+    """Recursively redact sensitive values in config dicts."""
+    if isinstance(obj, dict):
+        result = {}
+        for k, v in obj.items():
+            if _SENSITIVE_KEY_RE.search(k) and isinstance(v, str) and len(v) > 4:
+                result[k] = v[:4] + "***"
+            else:
+                result[k] = _redact_config(v)
+        return result
+    if isinstance(obj, list):
+        return [_redact_config(item) for item in obj]
+    return obj
+
+
+def get_project_config(project_path: str) -> dict:
+    """Read and summarize project configuration for both OpenCode and Claude."""
+    project = Path(project_path)
+    home = Path.home()
+    configs = {}
+
+    for candidate in [
+        project / "opencode.json",
+        project / "opencode.jsonc",
+        project / ".opencode" / "opencode.json",
+        project / ".opencode" / "opencode.jsonc",
+    ]:
+        if candidate.is_file():
+            try:
+                raw = candidate.read_text()
+                cleaned = re.sub(r"//.*?\n|/\*.*?\*/", "", raw, flags=re.DOTALL)
+                configs["opencode"] = _redact_config(json.loads(cleaned))
+            except Exception:
+                configs["opencode"] = {"_error": f"Could not parse {candidate.name}"}
+            break
+
+    if "opencode" not in configs:
+        global_oc = home / ".config" / "opencode" / "opencode.jsonc"
+        if global_oc.is_file():
+            try:
+                raw = global_oc.read_text()
+                cleaned = re.sub(r"//.*?\n|/\*.*?\*/", "", raw, flags=re.DOTALL)
+                configs["opencode"] = _redact_config(json.loads(cleaned))
+            except Exception:
+                pass
+
+    for candidate in [
+        project / ".claude" / "settings.json",
+        home / ".claude" / "settings.json",
+    ]:
+        if candidate.is_file():
+            try:
+                configs["claude"] = _redact_config(json.loads(candidate.read_text()))
+            except Exception:
+                configs["claude"] = {"_error": "Could not parse settings.json"}
+            break
+
+    return {"configs": configs}
+
+
+def get_project_git_info(project_path: str) -> dict:
+    """Get basic git info for a project."""
+    info = {}
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True, text=True, cwd=project_path, timeout=5,
+        )
+        info["branch"] = r.stdout.strip()
+    except Exception:
+        info["branch"] = ""
+
+    try:
+        r = subprocess.run(
+            ["git", "remote", "get-url", "origin"],
+            capture_output=True, text=True, cwd=project_path, timeout=5,
+        )
+        info["remote"] = r.stdout.strip()
+    except Exception:
+        info["remote"] = ""
+
+    try:
+        r = subprocess.run(
+            ["git", "log", "-1", "--format=%h %s", "--abbrev=8"],
+            capture_output=True, text=True, cwd=project_path, timeout=5,
+        )
+        info["last_commit"] = r.stdout.strip()
+    except Exception:
+        info["last_commit"] = ""
+
+    return {"git": info}

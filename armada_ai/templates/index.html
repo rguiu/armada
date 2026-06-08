@@ -249,6 +249,53 @@ a { color: #58a6ff; }
 .report-time { color: #484f58; font-size: 12px; min-width: 100px; }
 .report-msg { color: #c9d1d9; flex: 1; }
 
+/* ── Skills chips ── */
+#skills-section { margin-top: 16px; }
+#skills-section h3 { font-size: 13px; color: #8b949e; margin-bottom: 6px; cursor: pointer; user-select: none; display: flex; align-items: center; gap: 6px; }
+#skills-section h3 .toggle-arrow { font-size: 10px; color: #484f58; transition: transform 0.15s; }
+#skills-section h3 .toggle-arrow.open { transform: rotate(90deg); }
+#skills-section h3 .summary { font-size: 11px; color: #484f58; font-weight: 400; }
+#skills-chips { display: none; flex-wrap: wrap; gap: 4px; }
+#skills-chips.show { display: flex; }
+.skill-chip { font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: default; white-space: nowrap; display: flex; align-items: center; gap: 4px; }
+.skill-chip .chip-dot { width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0; }
+.skill-chip.armada { background: rgba(88,166,255,0.1); color: #58a6ff; }
+.skill-chip.armada .chip-dot { background: #58a6ff; }
+.skill-chip.project { background: rgba(34,197,94,0.1); color: #22c55e; }
+.skill-chip.project .chip-dot { background: #22c55e; }
+.skill-chip.global { background: rgba(139,148,158,0.1); color: #8b949e; }
+.skill-chip.global .chip-dot { background: #8b949e; }
+.skill-chip:hover { filter: brightness(1.3); }
+
+/* ── Project overview ── */
+#detail.proj-view { overflow-y: auto; }
+#detail.proj-view #reports { display: none; }
+.proj-overview h2 { font-size: 16px; color: #e1e4e8; margin-bottom: 4px; }
+.proj-overview .proj-path { font-size: 11px; color: #484f58; margin-bottom: 20px; word-break: break-all; }
+.proj-overview .proj-section { margin-bottom: 20px; }
+.proj-overview .proj-section h3 { font-size: 13px; color: #8b949e; margin-bottom: 8px; }
+.proj-node-list { display: flex; flex-direction: column; gap: 2px; }
+.proj-node-item {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-radius: 4px; cursor: pointer; font-size: 13px;
+  border: 1px solid transparent;
+}
+.proj-node-item:hover { background: #1c2128; border-color: #21262d; }
+.proj-node-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.proj-node-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-node-item .msg { color: #484f58; font-size: 11px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proj-node-item .cost { font-size: 10px; color: #58a6ff; white-space: nowrap; }
+.proj-empty { color: #484f58; font-size: 13px; padding: 8px 0; }
+.proj-item { display: flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 0; }
+.proj-agent-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; text-transform: uppercase; }
+.proj-agent-badge.opencode { background: rgba(88,166,255,0.12); color: #58a6ff; }
+.proj-agent-badge.claude { background: rgba(255,165,0,0.12); color: #ffa500; }
+.proj-config-block { margin: 0; padding: 8px 12px; background: #0d1117; border: 1px solid #21262d; border-radius: 4px; overflow-x: auto; }
+.proj-config-block pre { margin: 0; font-size: 11px; color: #8b949e; white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, monospace; }
+.proj-git-line { display: flex; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; color: #8b949e; }
+.proj-git-line .label { color: #484f58; min-width: 70px; }
+.proj-git-line code { font-size: 11px; color: #e1e4e8; background: #0d1117; padding: 1px 5px; border-radius: 3px; }
+
 /* ── Command bar ── */
 .cmd-bar {
   display: flex; gap: 6px; padding: 8px 0; border-top: 1px solid #21262d;
@@ -497,8 +544,8 @@ a { color: #58a6ff; }
 <script>
 let treeData = [];
 let selectedNodeId = null;
+let _selectedFingerprint = '';
 let selectedSet = new Set();
-const POLL = 10000;
 
 const isMac = /Mac/i.test(navigator.platform);
 const isLocalhost = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
@@ -517,11 +564,11 @@ let AUTH_TOKEN = '';
   const params = new URLSearchParams(location.search);
   const urlToken = params.get('token');
   if (urlToken) {
-    localStorage.setItem('armada_token', urlToken);
+    sessionStorage.setItem('armada_token', urlToken);
     history.replaceState({}, '', location.pathname);
     AUTH_TOKEN = urlToken;
   } else {
-    AUTH_TOKEN = localStorage.getItem('armada_token') || '';
+    AUTH_TOKEN = sessionStorage.getItem('armada_token') || '';
   }
 })();
 
@@ -533,10 +580,11 @@ async function api(url, opts = {}) {
   const res = await fetch(url, opts);
   if (!res.ok) {
     if (res.status === 401) {
-      localStorage.removeItem('armada_token');
+      sessionStorage.removeItem('armada_token');
       AUTH_TOKEN = '';
     }
     const err = await res.json().catch(() => ({detail: res.statusText}));
+    clientLog('warn', 'API ' + (opts.method || 'GET') + ' ' + url + ' -> ' + res.status + ': ' + (err.detail || ''));
     throw new Error(err.detail || 'Request failed');
   }
   return res.json();
@@ -564,8 +612,10 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
       groups.get(key).push(n);
     }
     for (const [proj, groupNodes] of groups) {
+      const labelId = groupNodes[0].project_label_id || '';
       const header = document.createElement('div');
       header.style.cssText = 'padding:6px 8px 2px;font-size:10px;color:#58a6ff;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px';
+      header.title = 'Click to view project overview';
       const toggleIcon = document.createElement('span');
       toggleIcon.textContent = '\u25BC';
       toggleIcon.style.cssText = 'font-size:8px;width:10px;flex-shrink:0';
@@ -574,7 +624,16 @@ function renderTree(nodes, container, depth = 0, isChild = false) {
       const groupContainer = document.createElement('div');
       groupContainer.className = 'project-group';
       groupNodes.forEach((n, i) => renderNode(n, groupContainer, depth, false, i === groupNodes.length - 1));
-      header.onclick = () => {
+      header.onclick = (e) => {
+        if (e.target === toggleIcon || toggleIcon.contains(e.target)) {
+          const collapsed = groupContainer.classList.toggle('collapsed');
+          toggleIcon.textContent = collapsed ? '\u25B6' : '\u25BC';
+          return;
+        }
+        if (labelId) showProjectOverview(labelId);
+      };
+      toggleIcon.onclick = (e) => {
+        e.stopPropagation();
         const collapsed = groupContainer.classList.toggle('collapsed');
         toggleIcon.textContent = collapsed ? '\u25B6' : '\u25BC';
       };
@@ -735,10 +794,12 @@ function filterTree() {
 }
 
 function selectNode(n) {
+  document.getElementById('detail').classList.remove('proj-view');
   document.querySelectorAll('#tree .node-item.selected').forEach(r => r.classList.remove('selected'));
   const row = document.querySelector('#tree .node-item[data-node-id="' + n.id + '"]');
   if (row) row.classList.add('selected');
   selectedNodeId = n.id;
+  _selectedFingerprint = n.status + '|' + (n.latest_message || '') + '|' + (n.total_cost || 0);
   selectedSet.clear();
   refreshBatchBar();
   loadNodeDetail(n.id);
@@ -746,11 +807,129 @@ function selectNode(n) {
   if (activeTermNodeId && activeTermNodeId !== n.id) closeTerminal();
 }
 
+/* ── Project Overview ── */
+async function showProjectOverview(labelId) {
+  closeTerminal();
+  selectedNodeId = null;
+  _selectedFingerprint = '';
+  document.querySelectorAll('#tree .node-item.selected').forEach(r => r.classList.remove('selected'));
+
+  document.getElementById('main-title').textContent = 'Project';
+  document.getElementById('header-actions').innerHTML = '';
+
+  const detail = document.getElementById('detail');
+  detail.classList.add('proj-view');
+  detail.innerHTML = '<div style="color:#8b949e;padding:12px">Loading...</div>';
+
+  try {
+    const data = await api('/api/project-labels/' + encodeURIComponent(labelId) + '/overview');
+    const l = data.label;
+    const skills = data.skills || [];
+    const nodes = data.nodes || [];
+    const plugins = data.plugins || [];
+    const hooks = data.hooks || [];
+    const configs = data.configs || {};
+    const git = data.git || {};
+
+    const counts = { armada: 0, project: 0, global: 0 };
+    let skillsHtml = '';
+    for (const s of skills) {
+      counts[s.source || 'global']++;
+      skillsHtml += `<span class="skill-chip ${s.source}" title="${esc(s.description || '')}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
+    }
+    if (!skillsHtml) skillsHtml = '<span class="proj-empty">No skills found in this project</span>';
+
+    let pluginsHtml = '';
+    for (const p of plugins) {
+      pluginsHtml += `<div class="proj-item"><span class="proj-agent-badge ${p.agent}">${p.agent}</span> ${esc(p.name)}</div>`;
+    }
+    if (!pluginsHtml) pluginsHtml = '<span class="proj-empty">No plugins configured</span>';
+
+    let hooksHtml = '';
+    for (const h of hooks) {
+      hooksHtml += `<div class="proj-item"><span class="proj-agent-badge ${h.agent}">${h.agent}</span> ${esc(h.name)}</div>`;
+    }
+    if (!hooksHtml) hooksHtml = '<span class="proj-empty">No hooks configured</span>';
+
+    let configHtml = '';
+    for (const [agent, cfg] of Object.entries(configs)) {
+      configHtml += `<div style="margin-bottom:8px"><span class="proj-agent-badge ${agent}">${agent}</span></div>`;
+      configHtml += `<div class="proj-config-block"><pre>${esc(JSON.stringify(cfg, null, 2))}</pre></div>`;
+    }
+    if (!configHtml) configHtml = '<span class="proj-empty">No configuration found</span>';
+
+    let gitHtml = '';
+    if (git.branch) gitHtml += `<div class="proj-git-line"><span class="label">Branch</span><code>${esc(git.branch)}</code></div>`;
+    if (git.remote) gitHtml += `<div class="proj-git-line"><span class="label">Remote</span><code>${esc(git.remote)}</code></div>`;
+    if (git.last_commit) gitHtml += `<div class="proj-git-line"><span class="label">Last commit</span><code>${esc(git.last_commit)}</code></div>`;
+    if (!gitHtml) gitHtml = '<span class="proj-empty">No git repository</span>';
+
+    let nodesHtml = '';
+    if (nodes.length) {
+      nodesHtml = nodes.map(n => `
+        <div class="proj-node-item" onclick="selectNodeById(${n.id})">
+          <span class="dot" style="background:${n.colour || '#8b949e'}"></span>
+          <span class="name">${esc(n.name)}</span>
+          <span class="badge ${n.status === 'active' ? 'active' : n.status === 'pending' ? 'pending' : n.status === 'error' ? 'error' : ''}">${n.status}</span>
+          <span class="msg">${esc(n.latest_message || '')}</span>
+          ${n.total_cost > 0 ? `<span class="cost">$${n.total_cost.toFixed(4)}</span>` : ''}
+          <span style="font-size:10px;color:#484f58">${esc(n.agent_type)}</span>
+        </div>
+      `).join('');
+    } else {
+      nodesHtml = '<div class="proj-empty">No active nodes in this project</div>';
+    }
+
+    detail.innerHTML = `
+      <div class="proj-overview">
+        <h2>${esc(l.name)}</h2>
+        <div class="proj-path">${esc(l.path)}</div>
+        <div class="proj-section">
+          <h3>Skills (${skills.length})</h3>
+          <div style="display:flex;flex-wrap:wrap;gap:4px">${skillsHtml}</div>
+        </div>
+        <div class="proj-section">
+          <h3>Plugins (${plugins.length})</h3>
+          ${pluginsHtml}
+        </div>
+        <div class="proj-section">
+          <h3>Hooks (${hooks.length})</h3>
+          ${hooksHtml}
+        </div>
+        <div class="proj-section">
+          <h3>Configuration</h3>
+          ${configHtml}
+        </div>
+        <div class="proj-section">
+          <h3>Git</h3>
+          ${gitHtml}
+        </div>
+        <div class="proj-section">
+          <h3>Nodes (${nodes.length})</h3>
+          <div class="proj-node-list">${nodesHtml}</div>
+        </div>
+      </div>
+    `;
+  } catch(e) {
+    detail.innerHTML = '<div style="color:#ef4444;padding:12px">Failed to load project: ' + esc(e.message) + '</div>';
+  }
+}
+
+function selectNodeById(id) {
+  const node = _findById(treeData, id);
+  if (node) {
+    const detail = document.getElementById('detail');
+    detail.classList.remove('proj-view');
+    selectNode(node);
+  }
+}
+
 /* ── Detail Panel ── */
 async function loadNodeDetail(nodeId) {
   const data = await api('/api/nodes/' + nodeId);
   const n = data.node;
   const detail = document.getElementById('detail');
+  detail.classList.remove('proj-view');
 
   const statusCls = n.status === 'active' ? 'status-active'
     : n.status === 'error' ? 'status-error'
@@ -815,6 +994,15 @@ async function loadNodeDetail(nodeId) {
       </div>`;
   }
 
+  // Save terminal pane before innerHTML destroys it (WS updates trigger
+  // loadNodeDetail while a terminal may be open inside #detail)
+  const pane = document.getElementById('terminal-pane');
+  const hadTerminal = activeTermNodeId && pane && detail.contains(pane);
+  if (hadTerminal) {
+    detail.classList.remove('has-terminal');
+    document.getElementById('main').appendChild(pane);
+  }
+
   detail.innerHTML = `
     <div class="node-meta">${metaHtml}</div>
     ${permHtml}
@@ -842,6 +1030,20 @@ async function loadNodeDetail(nodeId) {
       </div>
     </div>` : ''}
   `;
+
+  if (hadTerminal) {
+    detail.classList.add('has-terminal');
+    const reports = document.getElementById('reports');
+    if (reports) {
+      const host = document.createElement('div');
+      host.className = 'term-host';
+      host.appendChild(pane);
+      reports.parentNode.insertBefore(host, reports.nextSibling);
+    } else {
+      detail.appendChild(pane);
+    }
+    pane.classList.add('show');
+  }
 }
 
 async function attachNode(id) {
@@ -852,8 +1054,10 @@ async function attachNode(id) {
   try {
     await api('/api/nodes/' + id + '/attach', {method:'POST'});
     toast('Terminal opened — check your iTerm tabs.');
+    clientLog('info', 'Attached node ' + id + ' via native terminal');
   } catch(e) {
     toast('Attach failed: ' + e.message + ' — opening in browser instead.', true);
+    clientLog('warn', 'Native attach failed for node ' + id + ': ' + e.message);
     openTerminal(id);
   }
 }
@@ -955,6 +1159,7 @@ async function openTerminal(id) {
 
   termWs.onopen = () => {
     if (xterm) { xterm.clear(); xterm.writeln('connected'); }
+    clientLog('info', 'Terminal WS connected for node ' + id);
   };
 
   termWs.onmessage = e => {
@@ -974,6 +1179,11 @@ async function openTerminal(id) {
 
   termWs.onclose = () => {
     termWs = null;
+    clientLog('info', 'Terminal WS closed for node ' + id);
+  };
+
+  termWs.onerror = () => {
+    clientLog('error', 'Terminal WS error for node ' + id);
   };
 
   xterm.onData(data => {
@@ -984,6 +1194,7 @@ async function openTerminal(id) {
 }
 
 function closeTerminal() {
+  clientLog('info', 'Closing terminal for node ' + activeTermNodeId);
   activeTermNodeId = null;
   disposeXterm();
   const detail = document.getElementById('detail');
@@ -1237,9 +1448,9 @@ async function refreshLabels() {
     return;
   }
   el.innerHTML = data.map(l => `
-    <div class="label-item">
+    <div class="label-item" onclick="showProjectOverview('${esc(l.id)}')" title="View project overview">
       <div><span>${esc(l.name)}</span> <span class="label-path">${esc(l.path)}</span></div>
-      <span class="label-del" onclick="deleteLabel('${esc(l.id)}')">x</span>
+      <span class="label-del" onclick="event.stopPropagation();deleteLabel('${esc(l.id)}')">x</span>
     </div>
   `).join('');
 }
@@ -1404,9 +1615,13 @@ refreshAll();
 
 let treeWs = null;
 let treeReconnectTimer = null;
+let _wsClosing = false;
 
 function connectTreeWs() {
   if (treeWs && treeWs.readyState === WebSocket.OPEN) return;
+  if (_wsClosing) return;
+  clearTimeout(treeReconnectTimer);
+  treeReconnectTimer = null;
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = proto + '//' + location.host + '/api/ws?token=' + AUTH_TOKEN;
   treeWs = new WebSocket(wsUrl);
@@ -1416,23 +1631,34 @@ function connectTreeWs() {
       const msg = JSON.parse(e.data);
       if (msg.type === 'tree' && msg.data) {
         saveCollapsed();
+        const prevFingerprint = _selectedFingerprint;
         treeData = msg.data;
         renderTree(treeData, document.getElementById('tree'));
         restoreCollapsed();
         updatePendingDot();
+        updateStats();
         if (selectedNodeId) {
-          try { loadNodeDetail(selectedNodeId); } catch(_) {}
+          const node = _findById(treeData, selectedNodeId);
+          const fingerprint = node ? node.status + '|' + (node.latest_message || '') + '|' + (node.total_cost || 0) : '';
+          if (fingerprint !== prevFingerprint) {
+            _selectedFingerprint = fingerprint;
+            try { loadNodeDetail(selectedNodeId); } catch(_) {}
+          }
         }
       }
     } catch(_) {}
   };
   treeWs.onclose = () => {
+    if (_wsClosing) return;
     treeWs = null;
-    treeReconnectTimer = setTimeout(connectTreeWs, 3000);
+    clientLog('warn', 'Tree WS closed, reconnecting in 5s');
+    if (!treeReconnectTimer) {
+      treeReconnectTimer = setTimeout(connectTreeWs, 5000);
+    }
   };
   treeWs.onerror = () => {
     treeWs = null;
-    treeReconnectTimer = setTimeout(connectTreeWs, 3000);
+    clientLog('error', 'Tree WS error');
   };
 }
 
@@ -1458,14 +1684,21 @@ function notifyPending() {
     new Notification('Armada — Permission needed', { body: 'A node is waiting for your input.' });
   }
   try {
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine'; osc.frequency.value = 880;
-    gain.gain.setValueAtTime(0.3, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
-    osc.connect(gain); gain.connect(ctx.destination);
-    osc.start(); osc.stop(ctx.currentTime + 0.15);
+    let ctx;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine'; osc.frequency.value = 880;
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(); osc.stop(ctx.currentTime + 0.15);
+      osc.onended = () => { ctx.close().catch(() => {}); };
+    } catch (_) {
+      if (ctx) ctx.close().catch(() => {});
+      throw _;
+    }
   } catch(_) {}
 }
 
@@ -1609,9 +1842,9 @@ connectTreeWs();
 setInterval(() => {
   if (paused) return;
   if (!treeWs || treeWs.readyState !== WebSocket.OPEN) {
-    refreshTree();
+    connectTreeWs();
   }
-}, POLL);
+}, 30000);
 
 document.querySelectorAll('.modal-overlay').forEach(overlay => {
   overlay.addEventListener('click', (e) => {
@@ -1628,6 +1861,25 @@ function toast(msg, isError = false) {
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
 }
+
+/* ── Client-side logging to server ── */
+function clientLog(level, msg) {
+  try {
+    fetch('/api/client-log', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + AUTH_TOKEN},
+      body: JSON.stringify({level: level, message: msg}),
+    }).catch(() => {});
+  } catch(_) {}
+}
+
+window.addEventListener('error', (e) => {
+  clientLog('error', e.message + ' @ ' + e.filename + ':' + e.lineno);
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  clientLog('error', 'Unhandled rejection: ' + (e.reason?.message || e.reason));
+});
 </script>
 
 <div id="toast"></div>

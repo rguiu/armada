@@ -40,15 +40,25 @@ SERVER_START_TS = 0.0
 _ws_clients: set[WebSocket] = set()
 
 
-async def _broadcast_tree(hide_dead: bool = False):
-    if not _ws_clients:
-        return
-    tree = db.build_tree(include_dead=not hide_dead)
+async def _cleanup_ws_clients():
     dead = [ws for ws in _ws_clients if ws.client_state.name == "DISCONNECTED"]
     for ws in dead:
         _ws_clients.discard(ws)
+
+
+async def _ws_cleanup_loop():
+    while True:
+        await asyncio.sleep(30)
+        await _cleanup_ws_clients()
+
+
+async def _broadcast_tree(hide_dead: bool = False):
+    if not _ws_clients:
+        return
+    await _cleanup_ws_clients()
+    tree = db.build_tree(include_dead=not hide_dead)
     payload = json.dumps({"type": "tree", "data": tree})
-    for ws in _ws_clients:
+    for ws in list(_ws_clients):
         try:
             await ws.send_text(payload)
         except Exception:
@@ -103,16 +113,18 @@ async def auth_middleware(request: Request, call_next):
     exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json")
     if path.startswith("/api/logs") or path.startswith("/static/"):
         if not _check_token(request) and path not in exempt:
+            logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         return await call_next(request)
     if path.startswith("/api/") and path not in exempt and not path.endswith("/ws"):
         if not _check_token(request):
+            logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
     return await call_next(request)
 
 
 @app.on_event("startup")
-def startup():
+async def startup():
     global SERVER_START_TS
     SERVER_START_TS = _time.time()
     db.init_db()
@@ -126,7 +138,20 @@ def startup():
         names = [n["name"] for n in recovered]
         logs.log_event("_server", "recovery", {"recovered_nodes": names})
     health.start_health_loop()
+    asyncio.create_task(_ws_cleanup_loop())
     logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    logs.log_http_error(request.method, request.url.path, exc.status_code, exc.detail)
+    return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logs.log_http_error(request.method, request.url.path, 500, str(exc))
+    return JSONResponse({"detail": "Internal server error"}, status_code=500)
 
 
 # --- Static files ---
@@ -186,26 +211,32 @@ def get_tree(hide_dead: bool = False):
 
 @app.websocket("/api/ws")
 async def tree_ws(websocket: WebSocket):
+    client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
     token = websocket.query_params.get("token")
     if not token:
         auth = websocket.headers.get("authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
     if token != TOKEN:
+        logs.log_ws_disconnect(client, "/api/ws", "bad_token")
         await websocket.close(code=4001)
         return
 
     await websocket.accept()
     _ws_clients.add(websocket)
+    logs.log_ws_connect(client, "/api/ws")
     try:
         tree = db.build_tree(include_dead=True)
         await websocket.send_text(json.dumps({"type": "tree", "data": tree}))
         while True:
             await websocket.receive_text()
-    except Exception:
+    except WebSocketDisconnect:
         pass
+    except Exception as e:
+        logs.log_event("_server", "ws_error", {"client": client, "path": "/api/ws", "error": str(e)})
     finally:
         _ws_clients.discard(websocket)
+        logs.log_ws_disconnect(client, "/api/ws")
 
 
 @app.get("/api/nodes")
@@ -244,6 +275,9 @@ async def create_node(request: Request):
 
     if not project_label_id:
         raise HTTPException(status_code=400, detail="A project must be selected")
+
+    if name and len(name) > 100:
+        raise HTTPException(status_code=400, detail="Node name must be 100 characters or fewer")
 
     existing_names = db.existing_names()
 
@@ -433,25 +467,30 @@ def terminal_view(node_id: int):
 
 @app.websocket("/api/nodes/{node_id}/ws")
 async def terminal_ws(websocket: WebSocket, node_id: int):
+    client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
     token = websocket.query_params.get("token")
     if not token:
         auth = websocket.headers.get("authorization", "")
         if auth.startswith("Bearer "):
             token = auth[7:]
     if token != TOKEN:
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "bad_token")
         await websocket.close(code=4001)
         return
 
     node = db.get_node(node_id)
     if not node:
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "node_not_found")
         await websocket.close(code=4004)
         return
     if not tmux.window_exists(node["name"]):
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "window_gone")
         await websocket.close(code=4004)
         return
 
     target = f"armada:{node['name']}"
     await websocket.accept()
+    logs.log_ws_connect(client, f"/api/nodes/{node_id}/ws")
 
     poll_interval = 0.8
     last_text = ""
@@ -502,8 +541,8 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                     }))
             except WebSocketDisconnect:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logs.log_event("_server", "ws_poll_error", {"client": client, "node_id": node_id, "error": str(e)})
 
     async def recv_keys():
         while True:
@@ -515,13 +554,17 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                     )
             except WebSocketDisconnect:
                 break
-            except Exception:
-                pass
+            except Exception as e:
+                logs.log_event("_server", "ws_recv_error", {"client": client, "node_id": node_id, "error": str(e)})
 
     try:
         await asyncio.gather(poll_pane(), recv_keys())
     except WebSocketDisconnect:
         pass
+    except Exception as e:
+        logs.log_event("_server", "ws_term_error", {"client": client, "node_id": node_id, "error": str(e)})
+    finally:
+        logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws")
 
 
 # --- Project Labels ---
@@ -555,6 +598,38 @@ async def create_project_label(request: Request):
 def delete_project_label(label_id: str):
     db.delete_project_label(label_id)
     return JSONResponse({"ok": True})
+
+
+@app.get("/api/project-labels/{label_id}/overview")
+def project_overview(label_id: str):
+    labels = db.list_project_labels()
+    label = next((lb for lb in labels if lb["id"] == label_id), None)
+    if not label:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    path = label["path"]
+    is_dir = os.path.isdir(path)
+    skills = tmux.list_project_skills(path)["skills"] if is_dir else []
+    nodes = db.get_nodes_by_project_label_id(label_id)
+    plugins = tmux.list_project_plugins(path)["plugins"] if is_dir else []
+    hooks = tmux.list_project_hooks(path)["hooks"] if is_dir else []
+    configs = tmux.get_project_config(path)["configs"] if is_dir else {}
+    git = tmux.get_project_git_info(path)["git"] if is_dir else {}
+
+    return JSONResponse({
+        "label": label,
+        "skills": skills,
+        "nodes": nodes,
+        "plugins": plugins,
+        "hooks": hooks,
+        "configs": configs,
+        "git": git,
+    })
+
+
+@app.get("/api/skills")
+def global_skills():
+    return JSONResponse(tmux.list_project_skills(os.path.expanduser("~")))
 
 
 # --- Maintenance ---
@@ -611,10 +686,15 @@ async def agent_report(request: Request):
 
 # --- Logs ---
 
+_SAFE_LOG_NAME = re.compile(r'^[a-zA-Z0-9_][-a-zA-Z0-9_]*$')
+
+
 @app.get("/api/logs/{node_name}")
 def get_node_logs(node_name: str, limit: int = 50, before: float | None = None):
-    if not db.get_node_by_name(node_name) and node_name not in db.existing_names():
-        pass
+    if not _SAFE_LOG_NAME.match(node_name):
+        raise HTTPException(status_code=400, detail="Invalid node name")
+    if not db.get_node_by_name(node_name) and node_name not in db.existing_names() and node_name != "_server":
+        raise HTTPException(status_code=404, detail="Node not found")
     entries = logs.get_node_logs(node_name, limit=limit, before_ts=before)
     return JSONResponse({"node": node_name, "count": len(entries), "entries": entries})
 
@@ -625,6 +705,21 @@ def search_all_logs(q: str = "", limit: int = 50, node: str | None = None):
         return JSONResponse({"query": q, "count": 0, "entries": []})
     entries = logs.search_logs(q, limit=limit, node_name=node)
     return JSONResponse({"query": q, "count": len(entries), "entries": entries})
+
+
+@app.get("/api/server-log")
+def get_server_log(limit: int = 100):
+    entries = logs.get_node_logs("_server", limit=limit)
+    return JSONResponse({"count": len(entries), "entries": entries, "path": os.path.expanduser("~/.armada/logs/_server.jsonl")})
+
+
+@app.post("/api/client-log")
+async def client_log(request: Request):
+    body = await request.json()
+    level = body.get("level", "info")
+    message = body.get("message", "")[:500]
+    logs.log_event("_client", level, {"message": message})
+    return JSONResponse({"ok": True})
 
 
 # --- Auth & Info ---
