@@ -131,6 +131,11 @@ The `--qr` flag prints an ASCII QR code in the terminal. Scan it to authenticate
 | `armada token --qr --lan` | QR with LAN IP for remote devices |
 | `armada --lan` | Start server bound to LAN IP |
 | `armada --lan --qr` | Start on LAN + show startup QR |
+| `armada config` | Show or set configuration |
+| `armada config set <key> <val>` | Change a config value |
+| `armada service install` | Install as system service (launchd/systemd) |
+| `armada doctor` | Clean up stale tmux sessions and DB state |
+| `armada status` | Show server health and agent counts |
 
 ## Example: Multi-Agent Pipeline
 
@@ -150,16 +155,22 @@ The dashboard updates in real time as each worker reports active/idle.
 
 ## Features
 
-- **Live tree dashboard** — dark theme, 10s auto-refresh, colour-coded status badges
-- **WebSocket push** — real-time tree updates when agents report status
-- **Agent auto-restart** — dead agents restart automatically (max 3 attempts)
+- **Live tree dashboard** — dark/light theme, real-time WebSocket push updates
+- **Dark/light theme** — toggle between GitHub dark and light palettes, persisted
+- **Keyboard shortcuts** — `Cmd+K` command palette, `N` new node, `R` refresh, `/` filter, `Esc` close
+- **Agent auto-restart** — dead agents restart automatically (max 3 attempts, configurable)
 - **Server restart recovery** — agents survive server crashes, reconnect on restart
 - **Error overlay** — "reconnecting..." UI when server is unreachable
+- **Loading states** — spinners and placeholders while tree and terminal load
 - **Per-agent security** — separate tmux session per agent, no cross-agent access
 - **CSP headers** — Content-Security-Policy blocks injected scripts
 - **Docker support** — Dockerfile with HEALTHCHECK, `docker run -p 9100:9100`
 - **Structured logging** — JSONL per agent, searchable, auto-rotated and gzipped
 - **Prometheus metrics** — `/metrics` endpoint for monitoring stacks
+- **PWA ready** — manifest, icon, install to phone/tablet home screen
+- **System service** — `armada service install` for launchd (macOS) or systemd (Linux)
+- **Config file** — `~/.armada/config.yaml` for declarative setup (port, host, defaults)
+- **pip install** — `pip install armada-ai` from PyPI
 - **Agent types** — OpenCode, Claude Code, or Bash workers
 - **Initial prompts** — auto-type a prompt when a node starts
 - **`/send` endpoint** — orchestrators assign tasks to workers via API
@@ -171,7 +182,7 @@ The dashboard updates in real time as each worker reports active/idle.
 
 ## Architecture
 
-SQLite (WAL mode) + FastAPI REST server, daemonized. Each node is a tmux window running an agent. Nodes report status via `POST /api/report`. The dashboard polls every 10 seconds.
+SQLite (WAL mode) + FastAPI REST server, daemonized. Each node is a tmux session running an agent. Nodes report status via `POST /api/report`. The dashboard receives real-time updates over a persistent WebSocket connection.
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -233,6 +244,8 @@ armada setup
 | `GET` | `/api/info` | Server LAN IP and port |
 | `GET` | `/health` | Health check (no auth, Docker HEALTHCHECK) |
 | `GET` | `/metrics` | Prometheus metrics (agent counts, uptime, errors) |
+| `GET` | `/manifest.json` | PWA manifest (install to home screen) |
+| `GET` | `/icon.svg` | App icon (no auth, used by PWA) |
 | `GET` | `/api/qr?url=` | SVG QR code for URL |
 
 ## Development
