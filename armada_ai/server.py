@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from . import db
@@ -28,6 +29,8 @@ _ANSI_RE = re.compile(
 )
 
 app = FastAPI(title="Armada")
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 PID_FILE = os.path.expanduser("~/.armada/server.pid")
 TOKEN_FILE = os.path.expanduser("~/.armada/token")
@@ -111,7 +114,7 @@ def _check_token(request: Request) -> bool:
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
     exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json")
-    if path.startswith("/api/logs") or path.startswith("/static/"):
+    if path.startswith("/api/logs"):
         if not _check_token(request) and path not in exempt:
             logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -125,8 +128,8 @@ async def auth_middleware(request: Request, call_next):
 
 _CSP_HEADER = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh https://cdn.jsdelivr.net; "
-    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
     "connect-src 'self' ws: wss:; "
     "img-src 'self' data: https:; "
     "font-src 'self' data:; "
