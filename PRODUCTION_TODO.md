@@ -33,7 +33,7 @@
 - [x] **`pip install armada`** — publish to PyPI. Already have pyproject.toml, add `[project.scripts]`. (~2h)
 - [ ] **Linux support** — fix `lsof`, iTerm AppleScript, `fuser` platform-specific calls. (~2 days)
 - [ ] **Dockerfile** — `FROM python:3.12-slim`, install tmux, expose 9100. (~1h)
-- [ ] **systemd/launchd service** — survive reboot. `armada service install`. (~2h)
+- [x] **systemd/launchd service** — survive reboot. `armada service install`. (~2h)
 - [ ] **PWA manifest + service worker** — install to phone home screen, push notifications, offline cache. (~1 day)
 - [x] **Config file** — `~/.armada/config.yaml` for declarative setup (projects, default agent type, port). (~2h)
 

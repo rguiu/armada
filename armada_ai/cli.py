@@ -97,8 +97,11 @@ def main():
     elif args[0] == "config":
         _config(args[1:])
 
+    elif args[0] == "service":
+        _service_cmd(args[1:])
+
     else:
-        print("Usage: armada [start|stop|attach|setup|token|doctor|status|config] [--lan] [--qr] [--keep-token]")
+        print("Usage: armada [start|stop|attach|setup|token|doctor|status|config|service] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
         print("  attach       Start server in foreground (for debugging)")
@@ -107,6 +110,7 @@ def main():
         print("  doctor       Clean up orphaned tmux sessions and stale state")
         print("  status       Show server and node status")
         print("  config       Show or manage configuration (~/.armada/config.yaml)")
+        print("  service      Install as system service (launchd/systemd)")
         print("  --lan        Bind to / use LAN IP (for other devices on network)")
         print("  --qr         Show QR code (with token command)")
         print("  --keep-token Reuse existing token (don't regenerate on restart)")
@@ -454,6 +458,16 @@ def _stop_server():
             print(f"Stopped Armada server (PID {found_pid}, found via port).")
         except ProcessLookupError:
             pass
+
+
+def _service_cmd(subargs: list[str]):
+    from . import service
+    if not subargs or subargs[0] == "install":
+        service.install()
+    else:
+        print("Usage: armada service install")
+        print("  Install Armada as a system service (launchd on macOS, systemd on Linux)")
+        print("  The server will start on login and restart automatically on crash.")
 
 
 def _config(subargs: list[str]):

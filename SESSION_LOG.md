@@ -605,3 +605,37 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~35min
+
+---
+
+## 20. Time: 2026-06-09T21:08
+
+### ✅ systemd/launchd service
+
+**Files:** `armada_ai/service.py` (new), `armada_ai/cli.py:97,101,111,556-562`
+
+**What was done:**
+Added `armada service install` to install Armada as a system service that starts on login and auto-restarts on crash.
+
+- **macOS**: Installs a LaunchAgent plist at `~/Library/LaunchAgents/com.armada.daemon.plist` with `RunAtLoad` and `KeepAlive`. Loaded/unloaded via `launchctl`.
+- **Linux**: Installs a systemd user unit at `~/.config/systemd/user/armada.service` with `Restart=on-failure`. Enabled/started via `systemctl --user`.
+- Both auto-detect the armada binary path and set `PATH`/`HOME` environment vars.
+- Idempotent — running install again is a no-op if the file hasn't changed.
+
+**How to test:**
+```bash
+armada service install
+
+# macOS
+cat ~/Library/LaunchAgents/com.armada.daemon.plist
+plutil -lint ~/Library/LaunchAgents/com.armada.daemon.plist
+
+# Linux
+cat ~/.config/systemd/user/armada.service
+systemctl --user status armada
+
+# Run tests
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~20min
