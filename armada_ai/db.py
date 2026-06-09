@@ -2,6 +2,7 @@ import sqlite3
 import os
 import json
 import threading
+import time
 
 DB_DIR = os.path.expanduser("~/.armada")
 DB_PATH = os.path.join(DB_DIR, "armada.db")
@@ -9,6 +10,8 @@ PROJECTS_FILE = os.path.join(DB_DIR, "projects.json")
 _write_lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
 _conn_lock = threading.Lock()
+_MAX_RETRIES = 5
+_RETRY_BASE_DELAY = 0.05
 
 
 def _ensure_dir():
@@ -28,6 +31,7 @@ def _get_conn() -> sqlite3.Connection:
         _conn.execute("PRAGMA foreign_keys=ON")
         _conn.execute("PRAGMA busy_timeout=30000")
         _conn.execute("PRAGMA synchronous=NORMAL")
+        _conn.execute("PRAGMA cache_size=-8000")
         _conn.row_factory = sqlite3.Row
         return _conn
 
@@ -44,8 +48,30 @@ def close_connection():
 
 
 def _execute(fn):
-    with _write_lock:
-        return fn()
+    last_error = None
+    for attempt in range(_MAX_RETRIES):
+        with _write_lock:
+            try:
+                return fn()
+            except sqlite3.OperationalError as e:
+                last_error = e
+                if "locked" not in str(e).lower():
+                    raise
+                time.sleep(_RETRY_BASE_DELAY * (attempt + 1))
+    raise last_error
+
+
+def _execute_read(fn):
+    last_error = None
+    for attempt in range(_MAX_RETRIES):
+        try:
+            return fn()
+        except sqlite3.OperationalError as e:
+            last_error = e
+            if "locked" not in str(e).lower():
+                raise
+            time.sleep(_RETRY_BASE_DELAY * (attempt + 1))
+    raise last_error
 
 
 def init_db():
