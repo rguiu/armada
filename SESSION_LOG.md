@@ -570,3 +570,38 @@ armada token
 ```
 
 **Time spent:** ~20min
+
+---
+
+## 19. Time: 2026-06-09T21:05
+
+### ✅ Config file (`~/.armada/config.yaml`)
+
+**Files:** `armada_ai/config.py` (new), `armada_ai/server.py:23,39-40,178`, `armada_ai/health.py:4,9`, `armada_ai/cli.py:97-98,107,510-554`
+
+**What was done:**
+Added a YAML config file at `~/.armada/config.yaml` with zero external dependencies (minimal YAML parser included). Configurable settings:
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `port` | 9100 | Server listen port |
+| `host` | 127.0.0.1 | Bind address |
+| `default_agent` | opencode | Default agent type for new nodes |
+| `health_interval` | 15 | Health check interval (seconds) |
+| `max_restarts` | 3 | Max auto-restart attempts per agent |
+
+Server and health loop read config on startup. CLI commands:
+- `armada config` — show current settings
+- `armada config init` — create default config file
+- `armada config set <key> <value>` — change a setting
+
+**How to test:**
+```bash
+armada config
+armada config set port 9101
+armada config set max_restarts 5
+cat ~/.armada/config.yaml
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~35min

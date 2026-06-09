@@ -4,9 +4,9 @@ import os
 from . import db
 from . import tmux
 from . import logs
+from . import config
 
-
-_MAX_RESTARTS = 3
+_MAX_RESTARTS = config.get("max_restarts")
 
 
 def start_health_loop(interval: int = 15):

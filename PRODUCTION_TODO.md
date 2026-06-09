@@ -35,7 +35,7 @@
 - [ ] **Dockerfile** — `FROM python:3.12-slim`, install tmux, expose 9100. (~1h)
 - [ ] **systemd/launchd service** — survive reboot. `armada service install`. (~2h)
 - [ ] **PWA manifest + service worker** — install to phone home screen, push notifications, offline cache. (~1 day)
-- [ ] **Config file** — `~/.armada/config.yaml` for declarative setup (projects, default agent type, port). (~2h)
+- [x] **Config file** — `~/.armada/config.yaml` for declarative setup (projects, default agent type, port). (~2h)
 
 ## 🔵 UX Polish (First impressions)
 

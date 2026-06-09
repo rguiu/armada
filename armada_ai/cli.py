@@ -94,8 +94,11 @@ def main():
     elif args[0] == "status":
         _status()
 
+    elif args[0] == "config":
+        _config(args[1:])
+
     else:
-        print("Usage: armada [start|stop|attach|setup|token|doctor|status] [--lan] [--qr] [--keep-token]")
+        print("Usage: armada [start|stop|attach|setup|token|doctor|status|config] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
         print("  attach       Start server in foreground (for debugging)")
@@ -103,6 +106,7 @@ def main():
         print("  token        Print the auth token (--qr for scannable QR code)")
         print("  doctor       Clean up orphaned tmux sessions and stale state")
         print("  status       Show server and node status")
+        print("  config       Show or manage configuration (~/.armada/config.yaml)")
         print("  --lan        Bind to / use LAN IP (for other devices on network)")
         print("  --qr         Show QR code (with token command)")
         print("  --keep-token Reuse existing token (don't regenerate on restart)")
@@ -448,8 +452,227 @@ def _stop_server():
         try:
             os.kill(found_pid, signal.SIGTERM)
             print(f"Stopped Armada server (PID {found_pid}, found via port).")
-            return
-        except Exception:
+        except ProcessLookupError:
             pass
 
-    print("Armada server is not running (no PID file and no process on port 9100).")
+
+def _config(subargs: list[str]):
+    from . import config
+    if not subargs:
+        cfg = config.get_all()
+        for key, value in cfg.items():
+            if isinstance(value, list):
+                print(f"{key}:")
+                for item in value:
+                    if isinstance(item, dict):
+                        for k, v in item.items():
+                            print(f"  - {k}: {v}")
+                    else:
+                        print(f"  - {item}")
+            else:
+                print(f"{key}: {value}")
+    elif subargs[0] == "init":
+        config.init_config()
+        print(f"Config initialized at {config.CONFIG_PATH}")
+    elif subargs[0] == "set" and len(subargs) >= 3:
+        key = subargs[1]
+        val_str = " ".join(subargs[2:])
+        cfg = config.get_all()
+        valid_keys = config.DEFAULTS.keys()
+        if key not in valid_keys:
+            print(f"Unknown key: {key}. Valid keys: {', '.join(valid_keys)}", file=sys.stderr)
+            sys.exit(1)
+        default_value = config.DEFAULTS[key]
+        if isinstance(default_value, bool):
+            cfg[key] = val_str.lower() in ("true", "1", "yes")
+        elif isinstance(default_value, int):
+            try:
+                cfg[key] = int(val_str)
+            except ValueError:
+                print(f"Invalid integer: {val_str}", file=sys.stderr)
+                sys.exit(1)
+        elif isinstance(default_value, float):
+            try:
+                cfg[key] = float(val_str)
+            except ValueError:
+                print(f"Invalid float: {val_str}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            cfg[key] = val_str
+        config.write_config(cfg)
+        print(f"{key} = {cfg[key]}")
+    else:
+        print("Usage: armada config [init|show|set <key> <value>]")
+        print("  armada config              Show current configuration")
+        print("  armada config init          Create default config file")
+        print("  armada config set <key> <v> Set a config value")
+        print(f"\nConfig file: {config.CONFIG_PATH}")
+
+
+def _setup_skills():
+    from . import tmux
+    import glob
+
+    skill_dir = os.path.join(os.path.dirname(__file__), "..", "skills")
+    if not os.path.isdir(skill_dir):
+        print("Skills directory not found. Run from the armada repo root.", file=sys.stderr)
+        sys.exit(1)
+
+    skill_dir = os.path.abspath(skill_dir)
+    print(f"Installing skills from {skill_dir}...")
+
+    from .server import TOKEN_FILE
+    try:
+        token = open(TOKEN_FILE).read().strip()
+    except FileNotFoundError:
+        token = ""
+
+    if token:
+        os.environ["ARMADA_AUTH_TOKEN"] = token
+        print(f"  ARMADA_AUTH_TOKEN set")
+
+    installed = tmux.install_skills(skill_dir)
+    print(f"  {installed} file(s) installed")
+
+    claude_hooks = os.path.expanduser("~/.claude/hooks")
+    if os.path.isdir(claude_hooks):
+        tmux._deploy_claude_hooks(skill_dir)
+        print(f"  Claude Code hooks deployed to {claude_hooks}")
+    else:
+        print("  Claude Code hooks directory not found (skip)")
+
+
+def _status():
+    import json
+    try:
+        import urllib.request
+        req = urllib.request.Request("http://127.0.0.1:9100/health")
+        resp = urllib.request.urlopen(req, timeout=5)
+        data = json.loads(resp.read())
+        print(f"Armada server: running (v{data.get('version','?')})")
+        print(f"Uptime: {data.get('uptime',0):.0f}s")
+        print(f"Agents: {data.get('agents',0)} (active={data.get('active',0)} pending={data.get('pending',0)} idle={data.get('idle',0)})")
+    except Exception:
+        print("Armada server: not reachable")
+
+
+def _doctor(nuke: bool = False):
+    import sqlite3
+    import glob
+    from . import tmux as _tmux_mod
+
+    print("Armada Doctor\n")
+
+    # 1. Check tmux
+    print("[1] Tmux sessions")
+    try:
+        running = _tmux_mod.running_window_names()
+        if running:
+            print(f"  Live windows: {', '.join(running)}")
+        else:
+            print("  No armada windows found")
+    except Exception as e:
+        print(f"  Error checking tmux: {e}")
+
+    # 2. Check server
+    print("\n[2] Server process")
+    found_pid = _get_pid_from_port(9100)
+    pid_file = os.path.expanduser("~/.armada/server.pid")
+    pid_file_pid = None
+    try:
+        with open(pid_file) as f:
+            pid_file_pid = int(f.read().strip())
+    except (FileNotFoundError, ValueError):
+        pass
+
+    if found_pid:
+        print(f"  Listening on port 9100 (PID {found_pid})")
+    elif pid_file_pid:
+        try:
+            os.kill(pid_file_pid, 0)
+            print(f"  PID file says {pid_file_pid} (but not on port 9100)")
+        except OSError:
+            print(f"  PID file says {pid_file_pid} (process is dead — cleaning up)")
+            os.remove(pid_file)
+    else:
+        print("  Not running")
+
+    if nuke:
+        print("\n--nuke: Killing all armada tmux sessions and resetting state...")
+        try:
+            subprocess.run(["tmux", "kill-server"], capture_output=True, timeout=5)
+        except Exception:
+            pass
+        db_path = os.path.expanduser("~/.armada/armada.db")
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            print("  Removed armada.db")
+        if os.path.exists(pid_file):
+            os.remove(pid_file)
+            print("  Removed PID file")
+        log_dir = os.path.expanduser("~/.armada/logs")
+        if os.path.isdir(log_dir):
+            for f in os.listdir(log_dir):
+                os.remove(os.path.join(log_dir, f))
+            print("  Cleared logs")
+        print("\nDone. Start fresh with: armada")
+        sys.exit(0)
+
+    # 3. Sync DB with tmux
+    print("\n[3] Database sync")
+    db_path = os.path.expanduser("~/.armada/armada.db")
+    if os.path.exists(db_path):
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        live_nodes = conn.execute(
+            "SELECT id, name FROM nodes WHERE status != 'dead'"
+        ).fetchall()
+        running_names = _tmux_mod.running_window_names() if 'running' in dir() else []
+        stale = [(row["id"], row["name"]) for row in live_nodes if row["name"] not in running_names]
+        if stale:
+            for nid, name in stale:
+                conn.execute(
+                    "UPDATE nodes SET status='dead' WHERE id=?",
+                    (nid,)
+                )
+            conn.commit()
+            print(f"  Marked {len(stale)} node(s) as dead: {', '.join(n for _, n in stale)}")
+        else:
+            print("  All DB nodes have live tmux windows")
+        conn.close()
+    else:
+        print("  No DB found (nothing to sync)")
+
+    # 4. Clean up /tmp/_armada_* temp files
+    print("\n[4] Temp files (/tmp/_armada_*)")
+    temps = glob.glob("/tmp/_armada_*")
+    if temps:
+        for f in temps:
+            try:
+                os.remove(f)
+            except OSError:
+                pass
+        print(f"  Removed {len(temps)} file(s)")
+    else:
+        print("  None found")
+
+    # 5. Clean up stale hooks
+    print("\n[5] Stale hook files")
+    hooks_dir = os.path.expanduser("~/.armada/hooks")
+    if os.path.isdir(hooks_dir):
+        running = _tmux_mod.running_window_names()
+        removed = 0
+        for hook_file in os.listdir(hooks_dir):
+            if hook_file.endswith(".md"):
+                node_name = hook_file[:-3]
+                if node_name not in running:
+                    os.remove(os.path.join(hooks_dir, hook_file))
+                    removed += 1
+        if removed:
+            print(f"  Removed {removed} stale hook file(s)")
+        else:
+            print("  None found")
+    else:
+        print("  No hooks directory")
+
+    print("\nDone.")

@@ -21,6 +21,7 @@ from . import tmux
 from . import health
 from . import logs
 from . import metrics
+from . import config
 
 _ANSI_RE = re.compile(
     r'\x1b\[[0-9;]*[a-zA-Z]'
@@ -35,8 +36,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 PID_FILE = os.path.expanduser("~/.armada/server.pid")
 TOKEN_FILE = os.path.expanduser("~/.armada/token")
-HOST = "127.0.0.1"
-PORT = 9100
+HOST = config.get("host")
+PORT = config.get("port")
 
 TOKEN = ""
 SERVER_START_TS = 0.0
@@ -174,7 +175,7 @@ async def startup():
             except Exception:
                 pass
         threading.Thread(target=_notify_recovery, daemon=True).start()
-    health.start_health_loop()
+    health.start_health_loop(interval=config.get("health_interval"))
     asyncio.create_task(_ws_cleanup_loop())
     logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
 
