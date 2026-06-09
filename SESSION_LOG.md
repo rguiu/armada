@@ -608,6 +608,34 @@ python -m pytest tests/ -v
 
 ---
 
+## 21. Time: 2026-06-09T21:10
+
+### ✅ PWA manifest + service worker
+
+**Files:** `armada_ai/server.py:197-209,220-246,117`, `armada_ai/templates/index.html:5-14,610-612`
+
+**What was done:**
+Completed PWA support so the Armada dashboard can be installed to a phone/tablet home screen:
+
+1. **Manifest** (`/manifest.json`): Added icons (SVG, 192x192 + 512x512 with `purpose: any maskable`), proper display mode (`standalone`), orientation, theme colors
+2. **SVG icon** (`/icon.svg`): Fleet anchor icon with gradient background, no external assets
+3. **Meta tags**: Added `theme-color`, `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style`, `apple-mobile-web-app-title`, `viewport-fit=cover` for iOS notch support
+4. **Service worker** (`/sw.js`): Registered in HTML, self-destructs cache on activate (prevents stale cache issues)
+5. **Auth exempt**: Added `/icon.svg` to the auth exemption list
+
+**How to test:**
+```bash
+curl -s http://127.0.0.1:9100/manifest.json | python -m json.tool
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9100/icon.svg
+# On mobile: open dashboard, "Add to Home Screen" in browser menu
+# Run Lighthouse PWA audit in Chrome DevTools
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~20min
+
+---
+
 ## 20. Time: 2026-06-09T21:08
 
 ### ✅ systemd/launchd service
