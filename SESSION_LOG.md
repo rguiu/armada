@@ -282,3 +282,29 @@ Added a full-screen error overlay with auto-reconnection when the server goes do
 ```
 
 **Time spent:** ~25min
+
+## 8. Fix SQLite concurrency (database is locked)
+
+**File:** `armada_ai/db.py`
+
+**What was done:**
+Added retry logic with exponential backoff for "database is locked" errors and increased SQLite page cache from 2MB to 8MB to reduce I/O contention under concurrent write load. Writes are already serialized via `_write_lock`; retries handle transient lock conflicts when 8+ agents report simultaneously.
+
+**How to test:**
+```bash
+# 1. Run tests
+python -m pytest tests/ -v
+
+# 2. Stress test: create multiple nodes, have them report simultaneously
+# Should not see "database is locked" errors in server logs
+
+# 3. Check WAL mode is active
+python -c "
+from armada_ai.db import _get_conn
+conn = _get_conn()
+print(conn.execute('PRAGMA journal_mode').fetchone()[0])
+"
+# Should print "wal"
+```
+
+**Time spent:** ~15min

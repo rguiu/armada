@@ -14,7 +14,7 @@
 
 ## 🟠 Reliability (Can't trust it without these)
 
-- [ ] **Fix SQLite concurrency** — "database is locked" with 8+ nodes. Single connection + serialized writes. (~2h)
+- [x] **Fix SQLite concurrency** — "database is locked" with 8+ nodes. Single connection + serialized writes. (~2h)
 - [ ] **Server restart recovery** — server crash → agents survive in tmux but server can't reconnect. Auto-reconnect on restart. (~2 days)
 - [ ] **Agent auto-restart on crash** — dead tmux pane → restart with same config + resume prompt. (~1 day)
 - [x] **Error page** — show "reconnecting..." instead of blank white when server restarts. (~1h)
