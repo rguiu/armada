@@ -196,3 +196,21 @@ python -m pytest tests/ -v
 
 ---
 
+
+## 5. Vendor xterm.js locally
+
+**Files:** `armada_ai/static/xterm.js`, `armada_ai/static/xterm.css`, `armada_ai/server.py:14,34-36,138-145`, `armada_ai/templates/index.html:7-14`
+
+**What was done:**
+Removed CDN deps by vendoring xterm@5.5.0 into `armada_ai/static/`. Added StaticFiles mount, updated importmap + CSS link to local paths, removed /static/ from auth middleware, tightened CSP to remove CDN domains.
+
+**How to test:**
+```bash
+# Verify static files served
+python -c "from armada_ai.server import app; from fastapi.testclient import TestClient; c=TestClient(app); assert c.get('/static/xterm.css').status_code==200; assert c.get('/static/xterm.js').status_code==200; print('OK')"
+# Verify no CDN references in HTML or CSP
+curl -s http://127.0.0.1:9100/ | grep -E 'esm\.sh|jsdelivr'  # should be empty
+# Browser: open terminal view, should work normally
+```
+
+**Time spent:** ~20min

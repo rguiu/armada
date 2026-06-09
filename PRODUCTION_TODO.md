@@ -8,7 +8,7 @@
 - [x] **Move token out of URL** — `Authorization: Bearer` header or cookie. Token in URL leaks via browser history, screenshots, QR photos. (~1h)
 - [x] **Add CSP header** — Content-Security-Policy to block injected scripts from agent output. (~15min)
 - [ ] **Separate tmux session per agent** — currently all agents share one tmux session. Agent in one window can access all others. (~1 day)
-- [ ] **Vendor xterm.js locally** — remove jsdelivr/esm.sh CDN dependency. Compromised CDN = compromised dashboard. (~1 day)
+- [x] **Vendor xterm.js locally** — remove jsdelivr/esm.sh CDN dependency. Compromised CDN = compromised dashboard. (~1 day)
 - [x] **Clear sensitive env vars** — agents inherit `~/.ssh`, `~/.aws`, all shell vars. Sanitize before spawn. (~1h)
 - [x] **Audit xterm.js `innerHTML`** — agent output could inject HTML/JS. Switch to `textContent`. (~1h)
 
