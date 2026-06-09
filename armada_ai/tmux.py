@@ -349,6 +349,16 @@ def kill_node_window(name: str):
     if not _has_tmux():
         return
     _tmux("kill-session", "-t", _agent_session(name))
+
+
+def capture_pane_content(name: str, max_lines: int = 200) -> str:
+    if not _has_tmux():
+        return ""
+    target = _agent_session(name)
+    result = _tmux("capture-pane", "-p", "-t", target, "-S", f"-{max_lines}")
+    if result.returncode != 0:
+        return ""
+    return result.stdout
     zdotdir = _zdotdirs.pop(name, None)
     if zdotdir:
         try:

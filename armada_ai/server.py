@@ -370,6 +370,12 @@ def delete_node(node_id: int):
     killed = db.kill_node(node_id)
     for entry in killed:
         try:
+            content = tmux.capture_pane_content(entry["name"])
+            if content:
+                logs.log_agent_output(entry["name"], content)
+        except Exception:
+            pass
+        try:
             tmux.kill_node_window(entry["name"])
         except Exception:
             pass

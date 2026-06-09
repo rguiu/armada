@@ -62,7 +62,14 @@ def _run_health_check():
 def _mark_node_dead(node_id: int):
     dead = db.kill_node(node_id)
     for entry in dead:
+        name = entry["name"]
         try:
-            tmux.kill_node_window(entry["name"])
+            content = tmux.capture_pane_content(name)
+            if content:
+                logs.log_agent_output(name, content)
+        except Exception:
+            pass
+        try:
+            tmux.kill_node_window(name)
         except Exception:
             pass
