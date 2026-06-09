@@ -261,10 +261,13 @@ def create_node_window(name: str, colour: str, working_dir: str,
             logs.log_event("_server", "deploy_error", {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
 
     # Determine what to run in the tmux window
+    sanitize_prefix = _sanitize_env_prefix()
+
     if agent_type in ("opencode", "claude"):
         agent_bin = shutil.which(agent_type)
         if agent_bin:
             shell_cmd = (
+                f"{sanitize_prefix}"
                 f"cd '{safe_dir}' && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
@@ -272,6 +275,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
             )
         else:
             shell_cmd = (
+                f"{sanitize_prefix}"
                 f"cd '{safe_dir}' && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
@@ -284,6 +288,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
         _zdotdirs[name] = zdotdir
         _write_zsh_startup(zdotdir, tools_dir)
         shell_cmd = (
+            f"{sanitize_prefix}"
             f"cd '{safe_dir}' && "
             f"printf '\\033]2;{name}\\033\\\\' && "
             f"export ARMADA_NODE_NAME='{safe_name}' && "
@@ -805,6 +810,39 @@ def list_project_hooks(project_path: str) -> dict:
 
 
 _SENSITIVE_KEY_RE = re.compile(r"(token|key|secret|auth|password)", re.IGNORECASE)
+
+
+SENSITIVE_ENV_VARS = [
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN", "AWS_DEFAULT_REGION", "AWS_REGION",
+    "AWS_PROFILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+    "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_ACCESS_TOKEN",
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CO_API_KEY",
+    "GOOGLE_API_KEY", "GEMINI_API_KEY",
+    "DOCKER_PASSWORD", "DOCKER_USERNAME",
+    "NPM_TOKEN", "NPM_AUTH_TOKEN",
+    "PYPI_TOKEN", "PYPI_PASSWORD",
+    "SLACK_TOKEN", "DISCORD_TOKEN", "DISCORD_WEBHOOK",
+    "TELEGRAM_TOKEN", "TELEGRAM_BOT_TOKEN",
+    "HOMEBREW_GITHUB_API_TOKEN",
+    "GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN",
+    "DIGITALOCEAN_ACCESS_TOKEN",
+    "HEROKU_API_KEY",
+    "NETLIFY_AUTH_TOKEN",
+    "VERCEL_TOKEN",
+    "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY",
+    "SENTRY_AUTH_TOKEN", "SENTRY_DSN",
+    "STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY",
+    "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+]
+
+
+def _sanitize_env_prefix() -> str:
+    """Generate shell code to clear known sensitive environment variables."""
+    vars_to_unset = [v for v in SENSITIVE_ENV_VARS if v in os.environ]
+    if not vars_to_unset:
+        return ""
+    return "unset " + " ".join(vars_to_unset) + " 2>/dev/null; "
 
 
 def _redact_config(obj):
