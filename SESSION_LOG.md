@@ -427,3 +427,27 @@ docker ps  # should show healthy
 ```
 
 **Time spent:** ~10min
+
+---
+
+## 15. Time: 2026-06-09T20:50
+
+### Fix: Dashboard breakage after vendoring
+
+**Files:** `armada_ai/templates/index.html:8-15,1223-1224,1698-1699`, `armada_ai/server.py:209-226`
+
+**What was done:**
+Two bugs introduced during the vendoring session broke the dashboard:
+
+1. **xterm.js ES module import failure**: The vendored `xterm.js` is a UMD bundle, not an ES module. The importmap (`import { Terminal } from '@xterm/xterm'`) failed because the file does not provide a named ES module export. Fix: Changed to a regular `<script src="/static/xterm.js">` tag.
+
+2. **WebSocket URL mangling**: `connectTreeWs()` built WebSocket URLs using `location.host` concatenation, which produced a broken URL like `ws://127.0.0.1:9100/ws//127.0.0.1:9100/api/ws`. Fix: Changed both WS url constructions to use `location.origin.replace(/^http/, 'ws')` which reliably produces the correct origin.
+
+3. **Service worker cache**: Changed the service worker to self-destruct on activate — deletes all caches and doesn't cache anything new. Prevents stale cached pages from being served after code changes.
+
+**How to test:**
+- Open dashboard at http://127.0.0.1:9100
+- Check browser console — no more xterm import errors or WebSocket URL errors
+- Dashboard tree should connect and show agents
+
+**Time spent:** ~20min
