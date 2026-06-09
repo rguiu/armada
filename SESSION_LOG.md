@@ -451,3 +451,52 @@ Two bugs introduced during the vendoring session broke the dashboard:
 - Dashboard tree should connect and show agents
 
 **Time spent:** ~20min
+
+---
+
+## 16. Time: 2026-06-09T20:52
+
+### ✅ Prometheus /metrics endpoint
+
+**Files:** `armada_ai/metrics.py` (new), `armada_ai/server.py:21,117,698-716,803-819`
+
+**What was done:**
+Added a `/metrics` endpoint returning Prometheus text format. No external dependencies — the metrics module has its own simple registry with zero-alloc text rendering.
+
+Metrics exposed:
+- **`armada_uptime_seconds`** — gauge, refreshed on every scrape
+- **`armada_agents{status="..."}`** — gauge per status (active, idle, pending)
+- **`armada_reports_total`** — counter, incremented on each `/api/report` call
+- **`armada_errors_total`** — counter, incremented when agent reports error status
+- **`armada_nodes_created_total`** — counter, incremented on each `/api/nodes` POST
+- **`armada_report_latency_seconds`** — histogram, client-to-server report latency (buckets: 0.1, 0.5, 1, 5, 10, 30, 60, 300, 900, 3600s)
+
+Implementation details:
+- Thread-safe in-memory registry with `threading.Lock`
+- No auth required (added to exempt list alongside `/health`)
+- `metrics.init()` called on server startup
+- Counter increments hooked into existing create_node and agent_report paths
+- Health endpoint also updates agent gauges for immediate visibility
+
+**How to test:**
+```bash
+# Verify endpoint returns Prometheus format
+curl -s http://127.0.0.1:9100/metrics
+
+# Verify no auth required
+curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:9100/metrics
+# Should return 200
+
+# Scrape with Prometheus
+# Add to prometheus.yml:
+# scrape_configs:
+#   - job_name: 'armada'
+#     static_configs:
+#       - targets: ['localhost:9100']
+#     metrics_path: '/metrics'
+
+# Run tests
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~30min

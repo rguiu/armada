@@ -20,6 +20,7 @@ from . import naming
 from . import tmux
 from . import health
 from . import logs
+from . import metrics
 
 _ANSI_RE = re.compile(
     r'\x1b\[[0-9;]*[a-zA-Z]'
@@ -113,7 +114,7 @@ def _check_token(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json", "/health")
+    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json", "/health", "/metrics")
     if path.startswith("/api/logs"):
         if not _check_token(request) and path not in exempt:
             logs.log_http_error(request.method, path, 401, "missing or invalid token")
@@ -149,6 +150,7 @@ async def csp_middleware(request: Request, call_next):
 async def startup():
     global SERVER_START_TS
     SERVER_START_TS = _time.time()
+    metrics.init()
     db.init_db()
     try:
         tmux.ensure_armada_session()
@@ -353,6 +355,7 @@ async def create_node(request: Request):
     db.add_status_report(node_id, "idle",
         f"node created (agent={agent_type}, project={project_label_id or 'cwd'})")
     logs.log_create(agent_name, agent_type, project_label_id)
+    metrics.counter_inc("armada_nodes_created_total")
     tmux.save_agent_hook(agent_name)
 
     if initial_prompt:
@@ -707,6 +710,12 @@ async def agent_report(request: Request):
 
     db.add_status_report(node["id"], status, message)
     logs.log_report(name, status, message)
+    metrics.counter_inc("armada_reports_total")
+    report_latency = _time.time() - (body.get("_client_ts") or 0)
+    if report_latency > 0 and report_latency < 3600:
+        metrics.histogram_observe("armada_report_latency_seconds", report_latency)
+    if status == "error":
+        metrics.counter_inc("armada_errors_total")
     if tokens or cost:
         db.accumulate_cost(
             node["id"],
@@ -773,10 +782,14 @@ def server_info():
 @app.get("/health")
 def health_check():
     uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
+    metrics.gauge_set("armada_uptime_seconds", uptime_seconds)
     nodes = db.get_all_nodes(include_dead=False)
     active = sum(1 for n in nodes if n["status"] == "active")
     pending = sum(1 for n in nodes if n["status"] == "pending")
     idle = sum(1 for n in nodes if n["status"] == "idle")
+    metrics.gauge_set("armada_agents", active, ("active",))
+    metrics.gauge_set("armada_agents", pending, ("pending",))
+    metrics.gauge_set("armada_agents", idle, ("idle",))
     return JSONResponse({
         "status": "ok",
         "agents": len(nodes),
@@ -786,6 +799,21 @@ def health_check():
         "uptime": round(uptime_seconds, 1),
         "version": "0.2.0",
     })
+
+
+@app.get("/metrics")
+def prometheus_metrics():
+    uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
+    metrics.gauge_set("armada_uptime_seconds", uptime_seconds)
+    nodes = db.get_all_nodes(include_dead=False)
+    statuses = {"active": 0, "pending": 0, "idle": 0}
+    for n in nodes:
+        s = n["status"]
+        if s in statuses:
+            statuses[s] += 1
+    for s, count in statuses.items():
+        metrics.gauge_set("armada_agents", count, (s,))
+    return Response(content=metrics.generate_latest(), media_type="text/plain; charset=utf-8")
 
 
 @app.get("/api/qr")
