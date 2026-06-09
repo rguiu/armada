@@ -667,3 +667,28 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~20min
+
+---
+
+## 22. Time: 2026-06-10T01:35
+
+### ✅ Loading states + Empty states
+
+**Files:** `armada_ai/templates/index.html:138-148,510,558,1233`
+
+**What was done:**
+Added visual feedback for loading moments:
+
+1. **Tree loading**: Initial spinner with "Loading agents..." text, cleared on first WebSocket tree message
+2. **Terminal loading**: "Loading terminal..." with spinner while API call resolves
+3. **Terminal placeholder**: "Select a node to view its terminal" when no node selected
+
+**Empty states** were already implemented (no-nodes message in renderTree). Marked complete.
+
+**How to test:**
+```bash
+curl -s http://127.0.0.1:9100/ | grep loading
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~15min

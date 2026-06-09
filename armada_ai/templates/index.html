@@ -137,6 +137,17 @@ a { color: #58a6ff; }
 .node-item.dragging { opacity: 0.4; }
 #tree .no-nodes { padding: 24px 12px; color: #484f58; font-size: 13px; text-align: center; }
 
+/* ── Loading skeleton ── */
+.skeleton { background: linear-gradient(90deg, #21262d 25%, #30363d 50%, #21262d 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 4px; }
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+.skeleton-row { display: flex; align-items: center; gap: 8px; padding: 6px 12px; }
+.skeleton-dot { width: 8px; height: 8px; border-radius: 50%; }
+.skeleton-line { height: 12px; flex: 1; }
+.loading-tree { padding: 16px 12px; }
+.spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #30363d; border-top-color: #58a6ff; border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-terminal { display: flex; align-items: center; justify-content: center; height: 100%; color: #8b949e; font-size: 13px; }
+
 /* ── Labels section ── */
 #labels-section { border-top: 1px solid #21262d; padding: 8px; }
 #labels-section .section-header {
@@ -502,7 +513,7 @@ a { color: #58a6ff; }
     <span class="stat" id="stat-cost">$0.00</span>
   </div>
   <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
-  <div id="tree"></div>
+  <div id="tree"><div class="loading-tree"><div class="spinner"></div> Loading agents...</div></div>
   <div id="batch-bar">
     <span class="count" id="batch-count">0 selected</span>
     <button class="btn btn-outline-blue" onclick="batchAttach()" style="padding:4px 10px;font-size:11px">Attach</button>
@@ -553,7 +564,7 @@ a { color: #58a6ff; }
       <span id="terminal-title">Terminal</span>
       <button class="term-close" onclick="closeTerminal()">X</button>
     </div>
-    <div id="terminal-container"><div id="terminal-inner"></div></div>
+    <div id="terminal-container"><div id="terminal-inner"><div class="loading-terminal">Select a node to view its terminal</div></div></div>
   </div>
 </div>
 
@@ -1219,6 +1230,8 @@ async function openTerminal(id) {
   }
   pane.classList.add('show');
 
+  const inner = document.getElementById('terminal-inner');
+  inner.innerHTML = '<div class="loading-terminal"><span class="spinner"></span> Loading terminal...</div>';
   xterm = null;
   try {
     const info = await api('/api/nodes/' + id + '/terminal');

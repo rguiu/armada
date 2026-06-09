@@ -41,9 +41,9 @@
 
 - [ ] **WebSocket push for dashboard** — replace 10s polling with real-time updates. (~1 day)
 - [ ] **Dark/light theme toggle** — already dark, add light mode. (~2h)
-- [ ] **Loading states** — spinner/skeleton while tree loads, instead of blank pane. (~1h)
+- [x] **Loading states** — spinner/skeleton while tree loads, instead of blank pane. (~1h)
 - [ ] **Keyboard shortcuts** — `Cmd+K` command bar, `r` refresh, `n` new node. (~2h)
-- [ ] **Empty states** — "No agents yet. Create your first node →" instead of empty tree. (~1h)
+- [x] **Empty states** — "No agents yet. Create your first node →" instead of empty tree. (~1h)
 
 ## ⚪ Future (v2+)
 
