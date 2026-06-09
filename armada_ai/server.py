@@ -113,7 +113,7 @@ def _check_token(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json")
+    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json", "/health")
     if path.startswith("/api/logs"):
         if not _check_token(request) and path not in exempt:
             logs.log_http_error(request.method, path, 401, "missing or invalid token")
@@ -777,6 +777,24 @@ def server_info():
         "uptime": round(uptime_seconds, 1),
         "version": "0.2.0",
         "started_at": SERVER_START_TS,
+    })
+
+
+@app.get("/health")
+def health_check():
+    uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
+    nodes = db.get_all_nodes(include_dead=False)
+    active = sum(1 for n in nodes if n["status"] == "active")
+    pending = sum(1 for n in nodes if n["status"] == "pending")
+    idle = sum(1 for n in nodes if n["status"] == "idle")
+    return JSONResponse({
+        "status": "ok",
+        "agents": len(nodes),
+        "active": active,
+        "pending": pending,
+        "idle": idle,
+        "uptime": round(uptime_seconds, 1),
+        "version": "0.2.0",
     })
 
 
