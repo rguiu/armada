@@ -86,16 +86,11 @@ def _install_launchd(armada_path: str, home: str, path_env: str) -> bool:
     existing = None
     if os.path.exists(plist_path):
         existing = open(plist_path).read()
+        _run_cmd(["launchctl", "unload", plist_path])
 
     with open(plist_path, "w") as f:
         f.write(plist_content)
 
-    if existing and existing.strip() == plist_content.strip():
-        print(f"LaunchAgent already up to date ({plist_path})")
-    else:
-        print(f"LaunchAgent installed: {plist_path}")
-
-    _run_cmd(["launchctl", "unload", plist_path])
     _run_cmd(["launchctl", "load", plist_path])
     print("Armada will start automatically on login.")
     print(f"To start now: launchctl start com.armada.daemon")
@@ -116,14 +111,10 @@ def _install_systemd(armada_path: str, home: str, path_env: str) -> bool:
     existing = None
     if os.path.exists(unit_path):
         existing = open(unit_path).read()
+        _run_cmd(["systemctl", "--user", "stop", "armada.service"])
 
     with open(unit_path, "w") as f:
         f.write(unit_content)
-
-    if existing and existing.strip() == unit_content.strip():
-        print(f"Systemd unit already up to date ({unit_path})")
-    else:
-        print(f"Systemd unit installed: {unit_path}")
 
     _run_cmd(["systemctl", "--user", "daemon-reload"])
     _run_cmd(["systemctl", "--user", "enable", "armada.service"])
