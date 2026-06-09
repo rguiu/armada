@@ -500,3 +500,37 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~30min
+
+---
+
+## 17. Time: 2026-06-09T20:58
+
+### ✅ Structured logging — log rotation
+
+**Files:** `armada_ai/logs.py:116-129`, `armada_ai/health.py:24-30`
+
+**What was done:**
+Log rotation was already implemented (`rotate_logs` function gzips .jsonl files over 50MB) but never called automatically. Added:
+1. Hooked `logs.rotate_logs()` into the periodic health loop (every 20 ticks = ~5 min)
+2. Added `logs.cleanup_old_rotated_logs()` that deletes .gz files older than 30 days
+
+Combined with the previously-done log levels (#10) and existing JSONL format, structured logging is now complete:
+- Log levels: DEBUG/INFO/WARN/ERROR (done in #10)
+- JSON format: one JSON object per line (existing)
+- Log rotation: automated gzip + old file cleanup (this step)
+
+**How to test:**
+```bash
+# Verify log rotation function works
+python -c "
+from armada_ai import logs
+logs.rotate_logs(max_size_mb=50)
+logs.cleanup_old_rotated_logs(max_age_days=30)
+print('OK')
+"
+
+# Run tests
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~10min

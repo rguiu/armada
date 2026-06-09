@@ -25,6 +25,8 @@ def start_health_loop(interval: int = 15):
                 try:
                     db.prune_all_old_reports()
                     db.vacuum_db()
+                    logs.rotate_logs()
+                    logs.cleanup_old_rotated_logs()
                 except Exception:
                     pass
 

@@ -113,6 +113,21 @@ def rotate_logs(max_size_mb: int = 50):
             pass
 
 
+def cleanup_old_rotated_logs(max_age_days: int = 30):
+    _ensure_dir()
+    now = time.time()
+    cutoff = now - (max_age_days * 86400)
+    for filename in os.listdir(LOGS_DIR):
+        if not filename.endswith(".jsonl.gz"):
+            continue
+        filepath = os.path.join(LOGS_DIR, filename)
+        try:
+            if os.path.getmtime(filepath) < cutoff:
+                os.remove(filepath)
+        except (IOError, OSError):
+            pass
+
+
 def log_report(node_name: str, status: str, message: str | None):
     log_event(node_name, "report", {"status": status, "message": message}, level="info")
 
