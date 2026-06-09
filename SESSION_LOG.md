@@ -725,3 +725,31 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~25min
+
+---
+
+## 24. Time: 2026-06-10T01:45
+
+### ✅ Dark/light theme toggle
+
+**Files:** `armada_ai/templates/index.html:19-55,543,671-682`
+
+**What was done:**
+Added CSS custom properties for all major colors and a theme toggle button in the sidebar header.
+
+- **CSS variables**: `--bg`, `--bg-card`, `--bg-input`, `--border`, `--border-light`, `--text`, `--text-muted`, `--text-dim`, `--accent`, `--green`, `--yellow`, `--red`, `--hover`, `--btn-bg`, `--btn-hover`, `--overlay`
+- **Dark theme** (default): GitHub dark palette (#0f1117 backgrounds, #e1e4e8 text)
+- **Light theme** (`[data-theme="light"]`): GitHub light palette (#ffffff backgrounds, #24292f text)
+- **Toggle button**: Sun/Moon icon in sidebar header, click to toggle
+- **Persistence**: Saved to `localStorage` under `armada-theme`
+- **System preference**: Defaults to system `prefers-color-scheme` if no saved preference
+
+**How to test:**
+```bash
+# Open dashboard, click the ☀/☼ button in sidebar header
+# Check localStorage: armada-theme = 'light' | 'dark'
+# System dark mode users will see light mode initially if no pref set
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~25min
