@@ -2053,6 +2053,78 @@ window.addEventListener('error', (e) => {
   clientLog('error', e.message + ' @ ' + e.filename + ':' + e.lineno);
 });
 
+/* ── Keyboard shortcuts ── */
+const _isMac = /Mac/i.test(navigator.platform);
+const _cmd = e => _isMac ? e.metaKey : e.ctrlKey;
+
+document.addEventListener('keydown', (e) => {
+  const tag = document.activeElement && document.activeElement.tagName;
+  const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement.isContentEditable;
+  const mod = _cmd(e);
+
+  if (mod && e.key === 'k') {
+    e.preventDefault();
+    toggleCommandPalette();
+    return;
+  }
+
+  if (isInput) return;
+
+  if (e.key === 'n' && !mod && !e.shiftKey) {
+    e.preventDefault();
+    openModal('node-modal');
+  } else if (e.key === 'r' && !mod && !e.shiftKey) {
+    e.preventDefault();
+    connectTreeWs();
+    toast('Refreshing...');
+  } else if (e.key === '/' && !mod) {
+    e.preventDefault();
+    const search = document.getElementById('tree-search');
+    search.focus();
+    search.select();
+  } else if (e.key === 'Escape') {
+    const pal = document.getElementById('command-palette');
+    if (pal.classList.contains('show')) {
+      pal.classList.remove('show');
+    } else {
+      closeModal('node-modal');
+      closeModal('label-modal');
+    }
+  }
+});
+
+/* ── Command palette ── */
+function toggleCommandPalette() {
+  const pal = document.getElementById('command-palette');
+  if (pal.classList.contains('show')) {
+    pal.classList.remove('show');
+  } else {
+    pal.classList.add('show');
+    const input = document.getElementById('palette-input');
+    input.value = '';
+    input.focus();
+    filterPalette();
+  }
+}
+
+function filterPalette() {
+  const q = document.getElementById('palette-input').value.toLowerCase();
+  document.querySelectorAll('.palette-item').forEach(el => {
+    el.style.display = !q || el.textContent.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+
+function runPaletteAction(action) {
+  document.getElementById('command-palette').classList.remove('show');
+  switch (action) {
+    case 'new-node': openModal('node-modal'); break;
+    case 'new-project': openModal('label-modal'); break;
+    case 'refresh': connectTreeWs(); toast('Refreshing...'); break;
+    case 'focus-search': document.getElementById('tree-search').focus(); break;
+    case 'toggle-pause': togglePause(); break;
+  }
+}
+
 window.addEventListener('unhandledrejection', (e) => {
   clientLog('error', 'Unhandled rejection: ' + (e.reason?.message || e.reason));
 });
@@ -2065,5 +2137,38 @@ window.addEventListener('unhandledrejection', (e) => {
   <div class="ctx-item" onclick="ctxAction('terminal')">Terminal <span class="ctx-kbd">t</span></div>
   <div class="ctx-item ctx-danger" onclick="ctxAction('kill')">Kill <span class="ctx-kbd">x</span></div>
 </div>
+<!-- ── Command palette ── -->
+<div class="modal-overlay" id="command-palette">
+  <div class="modal" style="max-width:420px">
+    <input type="text" id="palette-input" placeholder="Type a command..." oninput="filterPalette()"
+      style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid #30363d;background:#0d1117;color:#e1e4e8;font-size:14px;margin-bottom:8px">
+    <div class="palette-item" onclick="runPaletteAction('new-node')"
+      style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px">
+      <span style="color:#58a6ff;margin-right:8px">+</span>New Node <span style="color:#484f58;float:right">N</span>
+    </div>
+    <div class="palette-item" onclick="runPaletteAction('new-project')"
+      style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px">
+      <span style="color:#3fb950;margin-right:8px">+</span>New Project
+    </div>
+    <div class="palette-item" onclick="runPaletteAction('refresh')"
+      style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px">
+      <span style="color:#fbbf24;margin-right:8px">↻</span>Refresh Tree <span style="color:#484f58;float:right">R</span>
+    </div>
+    <div class="palette-item" onclick="runPaletteAction('focus-search')"
+      style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px">
+      <span style="color:#8b949e;margin-right:8px">/</span>Filter Nodes <span style="color:#484f58;float:right">/</span>
+    </div>
+    <div class="palette-item" onclick="runPaletteAction('toggle-pause')"
+      style="padding:8px 12px;border-radius:6px;cursor:pointer;font-size:13px">
+      <span style="color:#ff7b72;margin-right:8px">⏸</span>Toggle Pause
+    </div>
+    <style>
+      #command-palette .modal { background: #161b22; border: 1px solid #30363d; padding: 16px; }
+      .palette-item:hover { background: #1c2128; }
+      #palette-input:focus { outline: none; border-color: #58a6ff; }
+    </style>
+  </div>
+</div>
+
 </body>
 </html>

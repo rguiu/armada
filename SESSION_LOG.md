@@ -692,3 +692,36 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~15min
+
+---
+
+## 23. Time: 2026-06-10T01:40
+
+### ✅ Keyboard shortcuts + Command palette
+
+**Files:** `armada_ai/templates/index.html:2055-2125,2142-2180`
+
+**What was done:**
+Added keyboard-driven navigation and a Cmd+K command palette:
+
+**Shortcuts:**
+| Key | Action |
+|-----|--------|
+| `Cmd+K` / `Ctrl+K` | Toggle command palette |
+| `N` | New node modal |
+| `R` | Refresh tree (reconnect WS) |
+| `/` | Focus search/filter input |
+| `Esc` | Close palette, modals |
+
+**Command palette**: Searchable overlay with actions (New Node, New Project, Refresh Tree, Filter Nodes, Toggle Pause). Filterable by typing. Click or Enter to execute. Esc to dismiss.
+
+Ignores shortcuts when focus is in input/textarea/select fields.
+
+**How to test:**
+```bash
+# Open dashboard, press Cmd+K or Ctrl+K
+# Try: N, R, /, Esc
+python -m pytest tests/ -v
+```
+
+**Time spent:** ~25min
