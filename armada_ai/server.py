@@ -209,20 +209,10 @@ def manifest():
 @app.get("/sw.js")
 def service_worker():
     sw = """\
-const CACHE = 'armada-v1';
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/'])));
-});
-self.addEventListener('fetch', e => {
-  e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
-      if (resp.ok && e.request.method === 'GET') {
-        const clone = resp.clone();
-        caches.open(CACHE).then(c => c.put(e.request, clone));
-      }
-      return resp;
-    }))
-  );
+self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => {
+  caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+  e.waitUntil(clients.claim());
 });"""
     return Response(content=sw, media_type="application/javascript")
 

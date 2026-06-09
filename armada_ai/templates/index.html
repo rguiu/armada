@@ -5,17 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Fleet Dashboard</title>
 <link rel="stylesheet" href="/static/xterm.css">
-<script type="importmap">
-{
-  "imports": {
-    "@xterm/xterm": "/static/xterm.js"
-  }
-}
-</script>
-<script type="module">
-import { Terminal } from '@xterm/xterm';
-window.Terminal = Terminal;
-</script>
+<script src="/static/xterm.js"></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
@@ -1230,8 +1220,7 @@ async function openTerminal(id) {
   xterm.writeln('connecting...');
   xterm.focus();
 
-  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const wsUrl = proto + '//' + location.host + '/api/nodes/' + id + '/ws?token=' + AUTH_TOKEN;
+  const wsUrl = location.origin.replace(/^http/, 'ws') + '/api/nodes/' + id + '/ws?token=' + AUTH_TOKEN;
   termWs = new WebSocket(wsUrl);
 
   termWs.onopen = () => {
@@ -1705,8 +1694,7 @@ function connectTreeWs() {
   clearTimeout(treeReconnectTimer);
   treeReconnectTimer = null;
   updateConnIndicator('reconnecting');
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const wsUrl = proto + '//' + location.host + '/api/ws?token=' + AUTH_TOKEN;
+  const wsUrl = location.origin.replace(/^http/, 'ws') + '/api/ws?token=' + AUTH_TOKEN;
   treeWs = new WebSocket(wsUrl);
   treeWs.onopen = () => {
     connState = 'connected';
