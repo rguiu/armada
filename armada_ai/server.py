@@ -123,6 +123,25 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+_CSP_HEADER = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://esm.sh https://cdn.jsdelivr.net; "
+    "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+    "connect-src 'self' ws: wss:; "
+    "img-src 'self' data: https:; "
+    "font-src 'self' data:; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def csp_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _CSP_HEADER
+    return response
+
+
 @app.on_event("startup")
 async def startup():
     global SERVER_START_TS
