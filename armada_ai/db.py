@@ -577,6 +577,17 @@ def active_colours():
     return [r[0] for r in rows]
 
 
+_restart_counts: dict[str, int] = {}
+
+
+def get_restart_count_for_name(name: str) -> int:
+    return _restart_counts.get(name, 0)
+
+
+def increment_restart_count(name: str):
+    _restart_counts[name] = _restart_counts.get(name, 0) + 1
+
+
 # --- Projects JSON persistence ---
 
 def _save_projects_to_json():

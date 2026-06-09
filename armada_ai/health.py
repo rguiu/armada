@@ -1,8 +1,12 @@
 import time
+import os
 
 from . import db
 from . import tmux
 from . import logs
+
+
+_MAX_RESTARTS = 3
 
 
 def start_health_loop(interval: int = 15):
@@ -57,6 +61,13 @@ def _run_health_check():
         if name not in running_windows:
             logs.log_health(name, dead=True)
             _mark_node_dead(node["id"])
+            _auto_restart_node(
+                name=name,
+                colour=node["colour"],
+                agent_type=node["agent_type"],
+                project_label_id=node["project_label_id"],
+                working_dir=db.get_project_label_path(node["project_label_id"]) or os.getcwd(),
+            )
 
 
 def _mark_node_dead(node_id: int):
@@ -73,3 +84,33 @@ def _mark_node_dead(node_id: int):
             tmux.kill_node_window(name)
         except Exception:
             pass
+
+
+def _auto_restart_node(name: str, colour: str, agent_type: str,
+                        project_label_id: str, working_dir: str):
+    restart_count = db.get_restart_count_for_name(name)
+    if restart_count >= _MAX_RESTARTS:
+        logs.log_event(name, "restart_limit", {"count": restart_count}, level="error")
+        return
+
+    try:
+        pane_id = tmux.create_node_window(
+            name=name, colour=colour,
+            working_dir=working_dir, agent_type=agent_type,
+        )
+        if pane_id:
+            node_id = db.create_node(
+                name=name, colour=colour,
+                parent_id=None,
+                project_label_id=project_label_id,
+                tmux_pane_id=pane_id, agent_type=agent_type,
+            )
+            db.add_status_report(node_id, "active",
+                f"auto-restarted (attempt {restart_count + 1}/{_MAX_RESTARTS})")
+            db.increment_restart_count(name)
+            logs.log_event(name, "restarted", {
+                "attempt": restart_count + 1,
+                "agent_type": agent_type,
+            }, level="warn")
+    except Exception as e:
+        logs.log_event(name, "restart_failed", {"error": str(e)}, level="error")
