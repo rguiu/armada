@@ -308,3 +308,48 @@ print(conn.execute('PRAGMA journal_mode').fetchone()[0])
 ```
 
 **Time spent:** ~15min
+
+## 9. Persistent workspace per agent
+
+**File:** `armada_ai/tmux.py:16,26-27,275-308`
+
+**What was done:**
+Each agent now gets a persistent workspace at `~/.armada/workspaces/<node_name>/`. The `ARMADA_WORKSPACE` env var is exported in every agent shell. The workspace directory is created on node creation. Agent hook instructions also reference the workspace so agents know where to save persistent output.
+
+**How to test:**
+```bash
+# 1. Create a node, check workspace exists
+ls ~/.armada/workspaces/
+# Should show directories per node
+
+# 2. Inside agent: echo $ARMADA_WORKSPACE
+# Should show ~/.armada/workspaces/<node_name>
+
+# 3. Agent can write: echo "hello" > $ARMADA_WORKSPACE/output.txt
+# File survives tmux pane death
+```
+
+**Time spent:** ~10min
+
+## 10. Structured agent logs with levels and output capture
+
+**Files:** `armada_ai/logs.py`, `armada_ai/tmux.py:341-348`, `armada_ai/health.py:62-71`, `armada_ai/server.py:371-378`
+
+**What was done:**
+Added `level` field (debug/info/warn/error) to all log events. Added `log_agent_output()` to capture tmux pane content when a node is killed (both manual delete and health-check death detection). Output is stored in the node's JSONL log file at `~/.armada/logs/{name}.jsonl`.
+
+**How to test:**
+```bash
+# 1. Check log levels in events
+cat ~/.armada/logs/_server.jsonl | python -m json.tool
+# Should show "level": "info" on each line
+
+# 2. Kill a node, check its log for captured output
+cat ~/.armada/logs/<node_name>.jsonl | python -m json.tool
+# Should have "output" event with pane content
+
+# 3. Search logs via API
+curl -s "http://127.0.0.1:9100/api/logs?token=...&q=error" | python -m json.tool
+```
+
+**Time spent:** ~20min
