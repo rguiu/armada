@@ -534,3 +534,39 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~10min
+
+---
+
+## 18. Time: 2026-06-09T21:00
+
+### ✅ `pip install armada` — PyPI-ready package
+
+**Files:** `pyproject.toml:1-55`, `README.md:14-19`
+
+**What was done:**
+Made the project pip-installable as `armada-ai`:
+1. Added PyPI metadata: readme, license (MIT), authors, keywords, classifiers, project URLs
+2. Added `[project.scripts]` entry point: `armada = "armada_ai.cli:main"` (already existed)
+3. Configured `[tool.setuptools.packages.find]` to include only `armada_ai` (exclude tests)
+4. Added `[tool.setuptools.package-data]` to include `templates/**` and `static/**`
+5. Updated README with `pip install armada-ai` install instructions
+6. Verified: `python -m build --wheel` produces clean wheel (no test files)
+7. Verified: `pip install dist/*.whl` installs and `armada --help` works
+
+**How to test:**
+```bash
+# Build wheel
+python -m build --wheel
+
+# Install locally
+pip install dist/armada_ai-0.1.0-py3-none-any.whl
+
+# Verify CLI
+armada --help
+armada token
+
+# Publish to PyPI (requires twine + API token)
+# twine upload dist/*
+```
+
+**Time spent:** ~20min

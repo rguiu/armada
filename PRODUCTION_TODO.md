@@ -30,7 +30,7 @@
 
 ## 🟢 Platform (More users = more feedback)
 
-- [ ] **`pip install armada`** — publish to PyPI. Already have pyproject.toml, add `[project.scripts]`. (~2h)
+- [x] **`pip install armada`** — publish to PyPI. Already have pyproject.toml, add `[project.scripts]`. (~2h)
 - [ ] **Linux support** — fix `lsof`, iTerm AppleScript, `fuser` platform-specific calls. (~2 days)
 - [ ] **Dockerfile** — `FROM python:3.12-slim`, install tmux, expose 9100. (~1h)
 - [ ] **systemd/launchd service** — survive reboot. `armada service install`. (~2h)

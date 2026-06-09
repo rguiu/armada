@@ -6,7 +6,24 @@ build-backend = "setuptools.build_meta"
 name = "armada-ai"
 version = "0.1.0"
 description = "Terminal orchestration for Open Code and Claude Code agents"
+readme = "README.md"
+license = "MIT"
 requires-python = ">=3.10"
+authors = [
+    {name = "Armada Contributors"}
+]
+keywords = ["ai", "agents", "tmux", "llm", "orchestration", "claude", "opencode"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: User Interfaces",
+    "Topic :: System :: Clustering",
+]
 dependencies = [
     "click>=8.0",
     "fastapi>=0.100",
@@ -15,6 +32,11 @@ dependencies = [
     "jinja2>=3.0",
     "qrcode>=8.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/rguiu/armada"
+Repository = "https://github.com/rguiu/armada"
+Issues = "https://github.com/rguiu/armada/issues"
 
 [project.optional-dependencies]
 test = [
@@ -29,6 +51,13 @@ armada = "armada_ai.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
+include = ["armada_ai", "armada_ai.*"]
+
+[tool.setuptools.exclude-package-data]
+"tests" = ["*"]
+
+[tool.setuptools.package-data]
+"armada_ai" = ["templates/**", "static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

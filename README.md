@@ -13,6 +13,14 @@ Armada wraps OpenCode and Claude Code agents in persistent tmux sessions and exp
 
 **Prerequisites:** Python 3.10+, tmux (`brew install tmux`), OpenCode or Claude Code.
 
+### Quick install (PyPI)
+
+```bash
+pip install armada-ai
+```
+
+### From source
+
 ```bash
 git clone https://github.com/rguiu/armada.git
 cd armada
