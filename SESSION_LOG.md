@@ -257,3 +257,28 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~45min
+
+## 7. Error page with reconnection UI
+
+**File:** `armada_ai/templates/index.html`
+
+**What was done:**
+Added a full-screen error overlay with auto-reconnection when the server goes down:
+- CSS error overlay (full-screen dark background with centered content)
+- Connection indicator dot in sidebar (green/yellow/red)
+- Auto-retry with exponential backoff (1.5s → 2.2s → 3.3s → ... up to 30s)
+- Live countdown in the overlay ("Reconnecting in 5s...")
+- "Retry Now" button for immediate manual reconnect
+- State machine: connected → reconnecting → disconnected
+
+**How to test:**
+```bash
+# 1. Start armada, open dashboard
+# 2. Kill the server (Ctrl+C)
+# 3. Dashboard should show the error overlay immediately
+# 4. Countdown should auto-retry with increasing intervals
+# 5. Click "Retry Now" to skip the timer
+# 6. Restart server — overlay should disappear automatically
+```
+
+**Time spent:** ~25min

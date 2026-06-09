@@ -17,7 +17,7 @@
 - [ ] **Fix SQLite concurrency** — "database is locked" with 8+ nodes. Single connection + serialized writes. (~2h)
 - [ ] **Server restart recovery** — server crash → agents survive in tmux but server can't reconnect. Auto-reconnect on restart. (~2 days)
 - [ ] **Agent auto-restart on crash** — dead tmux pane → restart with same config + resume prompt. (~1 day)
-- [ ] **Error page** — show "reconnecting..." instead of blank white when server restarts. (~1h)
+- [x] **Error page** — show "reconnecting..." instead of blank white when server restarts. (~1h)
 - [ ] **Structured agent logs** — JSONL per agent, searchable. Currently everything is in tmux scrollback. (~1 day)
 - [ ] **Persistent artifacts per agent** — mount `./armada/artifacts/<node>/` so agent output survives pane death. (~2h)
 
