@@ -395,3 +395,35 @@ Added explicit recovery notification on server restart. The existing `recover_on
 ```
 
 **Time spent:** ~10min
+
+## 13. /health endpoint
+
+**File:** `armada_ai/server.py:768-783,112`
+
+**What was done:**
+Added public `/health` endpoint returning `{"status":"ok","agents":N,"active":N,"pending":N,"idle":N,"uptime":S,"version":"0.2.0"}`. No auth required (added to exempt list). Enables Docker HEALTHCHECK, Kubernetes probes, and uptime monitoring.
+
+**How to test:**
+```bash
+curl http://127.0.0.1:9100/health
+# {"status":"ok","agents":2,"active":1,"pending":0,"idle":1,"uptime":120.5,"version":"0.2.0"}
+```
+
+**Time spent:** ~10min
+
+## 14. Dockerfile
+
+**Files:** `Dockerfile`, `.dockerignore`
+
+**What was done:**
+Multi-stage-ready Dockerfile with python:3.12-slim, tmux + git installed, HEALTHCHECK using /health endpoint, armada server as ENTRYPOINT. Added .dockerignore for efficient builds.
+
+**How to test:**
+```bash
+docker build -t armada .
+docker run -d -p 9100:9100 --name armada armada
+curl http://127.0.0.1:9100/health
+docker ps  # should show healthy
+```
+
+**Time spent:** ~10min
