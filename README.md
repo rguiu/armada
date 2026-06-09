@@ -19,6 +19,14 @@ Armada wraps OpenCode and Claude Code agents in persistent tmux sessions and exp
 pip install armada-ai
 ```
 
+### Docker
+
+```bash
+docker build -t armada .
+docker run -d -p 9100:9100 --name armada armada
+curl http://127.0.0.1:9100/health
+```
+
 ### From source
 
 ```bash
@@ -143,6 +151,15 @@ The dashboard updates in real time as each worker reports active/idle.
 ## Features
 
 - **Live tree dashboard** — dark theme, 10s auto-refresh, colour-coded status badges
+- **WebSocket push** — real-time tree updates when agents report status
+- **Agent auto-restart** — dead agents restart automatically (max 3 attempts)
+- **Server restart recovery** — agents survive server crashes, reconnect on restart
+- **Error overlay** — "reconnecting..." UI when server is unreachable
+- **Per-agent security** — separate tmux session per agent, no cross-agent access
+- **CSP headers** — Content-Security-Policy blocks injected scripts
+- **Docker support** — Dockerfile with HEALTHCHECK, `docker run -p 9100:9100`
+- **Structured logging** — JSONL per agent, searchable, auto-rotated and gzipped
+- **Prometheus metrics** — `/metrics` endpoint for monitoring stacks
 - **Agent types** — OpenCode, Claude Code, or Bash workers
 - **Initial prompts** — auto-type a prompt when a node starts
 - **`/send` endpoint** — orchestrators assign tasks to workers via API
@@ -214,6 +231,8 @@ armada setup
 | `POST` | `/api/report` | Agent status report |
 | `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
 | `GET` | `/api/info` | Server LAN IP and port |
+| `GET` | `/health` | Health check (no auth, Docker HEALTHCHECK) |
+| `GET` | `/metrics` | Prometheus metrics (agent counts, uptime, errors) |
 | `GET` | `/api/qr?url=` | SVG QR code for URL |
 
 ## Development
