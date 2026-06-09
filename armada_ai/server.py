@@ -462,7 +462,7 @@ def terminal_view(node_id: int):
     if not tmux.window_exists(node["name"]):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    target = f"armada:{node['name']}"
+    target = f"armada-{node['name']}"
 
     dims = subprocess.run(
         ["tmux", "display-message", "-p", "-t", target,
@@ -513,7 +513,7 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
         await websocket.close(code=4004)
         return
 
-    target = f"armada:{node['name']}"
+    target = f"armada-{node['name']}"
     await websocket.accept()
     logs.log_ws_connect(client, f"/api/nodes/{node_id}/ws")
 
