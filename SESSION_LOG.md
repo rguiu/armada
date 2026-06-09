@@ -353,3 +353,45 @@ curl -s "http://127.0.0.1:9100/api/logs?token=...&q=error" | python -m json.tool
 ```
 
 **Time spent:** ~20min
+
+## 11. Agent auto-restart on crash
+
+**Files:** `armada_ai/health.py:75-95`, `armada_ai/db.py:586-593`
+
+**What was done:**
+When the health check detects an agent's tmux session has died, it now auto-restarts the agent with the same configuration. Max 3 restart attempts per agent name (reset on server restart). Restart reuses the existing DB node entry via `create_node`'s IntegrityError handler which reactivates dead nodes.
+
+**How to test:**
+```bash
+# 1. Create a node, manually kill its tmux session
+tmux kill-session -t armada-<node_name>
+
+# 2. Wait for health check (15s interval)
+# Check logs:
+cat ~/.armada/logs/<node_name>.jsonl | grep restarted
+# Should show "restarted" event
+
+# 3. Dashboard should show the node as active again
+
+# 4. After 3 restarts, should see "restart_limit" event and stop restarting
+```
+
+**Time spent:** ~25min
+
+## 12. Server restart recovery
+
+**File:** `armada_ai/server.py:142-157`
+
+**What was done:**
+Added explicit recovery notification on server restart. The existing `recover_on_startup()` already found surviving tmux sessions and reconnected them. Added a delayed status report update to each recovered node broadcasting the reconnection.
+
+**How to test:**
+```bash
+# 1. Start server, create agents
+# 2. Kill server (Ctrl+C)
+# 3. Restart server
+# 4. Dashboard should show agents with "server restarted — reconnected to agent" status
+# 5. Health loop resumes monitoring
+```
+
+**Time spent:** ~10min
