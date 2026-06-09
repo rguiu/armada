@@ -24,7 +24,7 @@
 ## 🟡 Observability (Can't debug without these)
 
 - [x] **`/health` endpoint** — `{"status":"ok","agents":5,"uptime":3600}`. Unlocks Docker, K8s, monitoring. (~30min)
-- [ ] **Prometheus `/metrics` endpoint** — agent_count, tasks_total, task_duration_seconds, errors_total. (~2h)
+- [x] **Prometheus `/metrics` endpoint** — agent_count, tasks_total, task_duration_seconds, errors_total. (~2h)
 - [ ] **Structured logging** — log levels (DEBUG/INFO/WARN/ERROR), JSON format, log rotation. (~2h)
 - [ ] **Per-agent cost tracking** — token usage, API spend. Already in schema but needs UI. (~1 day)
 
