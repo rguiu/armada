@@ -857,25 +857,25 @@ async function showProjectOverview(labelId) {
     let skillsHtml = '';
     for (const s of skills) {
       counts[s.source || 'global']++;
-      skillsHtml += `<span class="skill-chip ${s.source}" title="${esc(s.description || '')}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
+      skillsHtml += `<span class="skill-chip ${esc(s.source)}" title="${esc(s.description || '')}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
     }
     if (!skillsHtml) skillsHtml = '<span class="proj-empty">No skills found in this project</span>';
 
     let pluginsHtml = '';
     for (const p of plugins) {
-      pluginsHtml += `<div class="proj-item"><span class="proj-agent-badge ${p.agent}">${p.agent}</span> ${esc(p.name)}</div>`;
+      pluginsHtml += `<div class="proj-item"><span class="proj-agent-badge ${esc(p.agent)}">${esc(p.agent)}</span> ${esc(p.name)}</div>`;
     }
     if (!pluginsHtml) pluginsHtml = '<span class="proj-empty">No plugins configured</span>';
 
     let hooksHtml = '';
     for (const h of hooks) {
-      hooksHtml += `<div class="proj-item"><span class="proj-agent-badge ${h.agent}">${h.agent}</span> ${esc(h.name)}</div>`;
+      hooksHtml += `<div class="proj-item"><span class="proj-agent-badge ${esc(h.agent)}">${esc(h.agent)}</span> ${esc(h.name)}</div>`;
     }
     if (!hooksHtml) hooksHtml = '<span class="proj-empty">No hooks configured</span>';
 
     let configHtml = '';
     for (const [agent, cfg] of Object.entries(configs)) {
-      configHtml += `<div style="margin-bottom:8px"><span class="proj-agent-badge ${agent}">${agent}</span></div>`;
+      configHtml += `<div style="margin-bottom:8px"><span class="proj-agent-badge ${esc(agent)}">${esc(agent)}</span></div>`;
       configHtml += `<div class="proj-config-block"><pre>${esc(JSON.stringify(cfg, null, 2))}</pre></div>`;
     }
     if (!configHtml) configHtml = '<span class="proj-empty">No configuration found</span>';
