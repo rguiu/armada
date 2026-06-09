@@ -159,6 +159,19 @@ async def startup():
     if recovered:
         names = [n["name"] for n in recovered]
         logs.log_event("_server", "recovery", {"recovered_nodes": names})
+        toast_msg = {"type": "toast", "message": f"Reconnected to {len(recovered)} agent(s)"}
+        # Broadcast recovery notification to WebSocket clients once connected
+        def _notify_recovery():
+            time.sleep(2)
+            try:
+                loop = asyncio.get_event_loop()
+                for name in names:
+                    db.add_status_report(
+                        next((n["id"] for n in recovered if n["name"] == name), 0),
+                        "idle", "server restarted — reconnected to agent")
+            except Exception:
+                pass
+        threading.Thread(target=_notify_recovery, daemon=True).start()
     health.start_health_loop()
     asyncio.create_task(_ws_cleanup_loop())
     logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
