@@ -214,3 +214,46 @@ curl -s http://127.0.0.1:9100/ | grep -E 'esm\.sh|jsdelivr'  # should be empty
 ```
 
 **Time spent:** ~20min
+
+## 6. Separate tmux session per agent
+
+**Files:** `armada_ai/tmux.py`, `armada_ai/server.py:465,516`, `tests/test_tmux.py`
+
+**What was done:**
+Refactored tmux architecture from one shared session (`armada`) with per-agent windows to per-agent sessions (`armada-{name}`). This prevents agents from accessing other agents' windows via tmux commands.
+
+Key changes:
+- Added `_agent_session(name)` / `_agent_target(name)` helpers returning `armada-{name}`
+- `create_node_window`: uses `tmux new-session -d -s armada-{name}` instead of `new-window`
+- `kill_node_window`: uses `tmux kill-session -t armada-{name}` instead of `kill-window`
+- `window_exists`: uses `tmux has-session` instead of parsing `list-windows`
+- `running_window_names`: parses `list-sessions` filtered by `armada-` prefix
+- `has_attached_clients`: uses `list-clients` (all sessions) instead of session-scoped
+- `attach_node`: uses `tmux attach-session -t armada-{name}` directly instead of creating `_view_*` sessions
+- `send_keys` / `send_raw_keys` / `send_initial_prompt`: target changed to `armada-{name}`
+- Server terminal WS: target changed from `armada:{name}` to `armada-{name}`
+- Removed unused `_next_attach_id` / `_attach_counter`
+
+**How to test:**
+```bash
+# 1. Create a node, verify it gets its own session
+# Start armada, create node, then:
+tmux list-sessions
+# Should show: armada (overview) and armada-{node_name}
+
+# 2. Verify agent isolation: from one agent's session,
+# try to send keys to another agent:
+tmux send-keys -t armada-other-agent "echo pwned"
+# Should fail (session doesn't exist or different session)
+
+# 3. Run tests
+python -m pytest tests/ -v
+
+# 4. Verify attach still works (via iTerm, Terminal, or web terminal)
+# Should attach directly to agent's session
+
+# 5. Verify server restart recovery
+# Kill server, restart, check health loop recovers nodes
+```
+
+**Time spent:** ~45min
