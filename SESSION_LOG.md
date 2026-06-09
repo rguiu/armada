@@ -728,7 +728,24 @@ python -m pytest tests/ -v
 
 ---
 
-## 24. Time: 2026-06-10T01:45
+## 25. Time: 2026-06-10T01:50
+
+### ✅ WebSocket push (already implemented) + README update
+
+**What was done:**
+Verified that WebSocket push for real-time dashboard updates was already fully implemented:
+- Server broadcasts tree via `_broadcast_tree()` to all connected WS clients on every state change
+- Dashboard receives push updates via `treeWs.onmessage` handler
+- JSON message format: `{type: "tree", data: tree}`
+- 30s reconnect fallback as safety net
+
+Updated `README.md` with all features added during this production-readiness session:
+- Theme toggle, keyboard shortcuts, loading states, PWA support, system service, config file
+- Commands: `config`, `config set`, `service install`, `doctor`, `status`
+- API: `/manifest.json`, `/icon.svg`
+- Fixed architecture description (WebSocket push, not polling)
+
+**Time spent:** ~10min
 
 ### ✅ Dark/light theme toggle
 
