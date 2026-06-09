@@ -576,14 +576,21 @@ let termResizeObs = null;
 let AUTH_TOKEN = '';
 
 (function initAuth() {
-  const params = new URLSearchParams(location.search);
-  const urlToken = params.get('token');
-  if (urlToken) {
-    sessionStorage.setItem('armada_token', urlToken);
-    history.replaceState({}, '', location.pathname);
-    AUTH_TOKEN = urlToken;
+  // Prefer meta tag (embedded by server), then URL param (legacy), then sessionStorage
+  const metaToken = document.querySelector('meta[name="armada-token"]');
+  if (metaToken) {
+    AUTH_TOKEN = metaToken.content;
+    sessionStorage.setItem('armada_token', AUTH_TOKEN);
   } else {
-    AUTH_TOKEN = sessionStorage.getItem('armada_token') || '';
+    const params = new URLSearchParams(location.search);
+    const urlToken = params.get('token');
+    if (urlToken) {
+      sessionStorage.setItem('armada_token', urlToken);
+      history.replaceState({}, '', location.pathname);
+      AUTH_TOKEN = urlToken;
+    } else {
+      AUTH_TOKEN = sessionStorage.getItem('armada_token') || '';
+    }
   }
 })();
 
@@ -1482,7 +1489,7 @@ async function refreshNodeModalDropdowns() {
   function addNodes(nodes, prefix = '') {
     let opts = '';
     nodes.forEach(n => {
-      opts += `<option value="${n.id}">${prefix}${n.name}</option>`;
+      opts += `<option value="${n.id}">${prefix}${esc(n.name)}</option>`;
       if (n.children) opts += addNodes(n.children, prefix + '  ');
     });
     return opts;
