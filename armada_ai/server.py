@@ -217,7 +217,10 @@ self.addEventListener('fetch', e => {
 def dashboard_page():
     html_path = TEMPLATE_DIR / "index.html"
     if html_path.exists():
-        return html_path.read_text()
+        html = html_path.read_text()
+        meta = f'<meta name="armada-token" content="{TOKEN}">'
+        html = html.replace("<head>", "<head>\n" + meta, 1)
+        return html
     return HTMLResponse("<h1>Dashboard not found</h1>")
 
 
@@ -826,7 +829,7 @@ def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = Fal
 
     if open_browser and not lan:
         import webbrowser
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}?token={token}")).start()
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}")).start()
 
     try:
         uvicorn.run(app, host=host, port=PORT, log_level="warning")
