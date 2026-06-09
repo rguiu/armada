@@ -31,7 +31,7 @@
 ## 🟢 Platform (More users = more feedback)
 
 - [x] **`pip install armada`** — publish to PyPI. Already have pyproject.toml, add `[project.scripts]`. (~2h)
-- [ ] **Linux support** — fix `lsof`, iTerm AppleScript, `fuser` platform-specific calls. (~2 days)
+- [x] **Linux support** — fix `lsof`, iTerm AppleScript, `fuser` platform-specific calls. (~2 days)
 - [ ] **Dockerfile** — `FROM python:3.12-slim`, install tmux, expose 9100. (~1h)
 - [x] **systemd/launchd service** — survive reboot. `armada service install`. (~2h)
 - [x] **PWA manifest + service worker** — install to phone home screen, push notifications, offline cache. (~1 day)

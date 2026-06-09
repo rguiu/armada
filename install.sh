@@ -17,12 +17,20 @@ echo ""
 echo "1/4  Checking prerequisites..."
 
 if ! command -v python3 &>/dev/null; then
-    echo "  ✗ python3 not found. Install with: brew install python3"
+    if command -v apt &>/dev/null; then
+        echo "  ✗ python3 not found. Install with: sudo apt install python3"
+    else
+        echo "  ✗ python3 not found. Install with: brew install python3"
+    fi
     exit 1
 fi
 
 if ! command -v tmux &>/dev/null; then
-    echo "  ✗ tmux not found. Install with: brew install tmux"
+    if command -v apt &>/dev/null; then
+        echo "  ✗ tmux not found. Install with: sudo apt install tmux"
+    else
+        echo "  ✗ tmux not found. Install with: brew install tmux"
+    fi
     exit 1
 fi
 

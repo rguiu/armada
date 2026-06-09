@@ -790,3 +790,19 @@ Added Prometheus metrics:
 - `armada_cost_total` — gauge from DB on each scrape
 
 **Time spent:** ~15min
+
+---
+
+## 27. Time: 2026-06-10T02:00
+
+### ✅ Linux support
+
+**Files:** `install.sh:19-32`, `armada_ai/tmux.py:68-70`
+
+**What was done:**
+Linux support was already ~90% implemented: port detection (ss/fuser), DB lock detection, 6 terminal emulators for attach, systemd service. Remaining fixes:
+
+1. **install.sh**: Added Linux apt detection for prerequisite install instructions
+2. **tmux.py error message**: Shows `sudo apt install tmux` on Linux, `brew install tmux` on macOS
+
+**Time spent:** ~15min

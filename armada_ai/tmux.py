@@ -65,6 +65,8 @@ def _tmux(*args: str) -> subprocess.CompletedProcess:
 
 def ensure_armada_session():
     if not _has_tmux():
+        if platform.system() == "Linux":
+            raise RuntimeError("tmux is not installed. Install with: sudo apt install tmux")
         raise RuntimeError("tmux is not installed. Install with: brew install tmux")
     result = _tmux("has-session", "-t", ARMADA_SESSION)
     if result.returncode != 0:
