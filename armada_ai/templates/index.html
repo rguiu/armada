@@ -416,6 +416,44 @@ a { color: #58a6ff; }
   .cmd-bar { flex-wrap: wrap; }
 }
 
+/* ── Connection indicator ── */
+#conn-indicator {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+  background: #22c55e; transition: background 0.3s;
+}
+#conn-indicator.disconnected { background: #f85149; }
+#conn-indicator.reconnecting { background: #fbbf24; animation: pulse-pending 1s ease-in-out infinite; }
+
+/* ── Error overlay (server down) ── */
+#error-overlay {
+  display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: #0f1117; z-index: 999; align-items: center; justify-content: center;
+  flex-direction: column; gap: 16px;
+}
+#error-overlay.show { display: flex; }
+#error-overlay .err-icon {
+  font-size: 48px; animation: pulse-pending 2s ease-in-out infinite;
+}
+#error-overlay .err-title {
+  font-size: 20px; color: #e1e4e8; font-weight: 600;
+}
+#error-overlay .err-msg {
+  font-size: 14px; color: #8b949e; max-width: 400px;
+  text-align: center; line-height: 1.6;
+}
+#error-overlay .err-code {
+  font-size: 12px; color: #484f58; font-family: monospace;
+}
+#error-overlay .err-retry {
+  margin-top: 8px; padding: 10px 24px; border-radius: 6px;
+  background: #238636; color: #fff; border: 1px solid #2ea043;
+  font-size: 14px; font-weight: 600; cursor: pointer;
+}
+#error-overlay .err-retry:hover { background: #2ea043; }
+#error-overlay .err-spinner {
+  margin-top: 4px; font-size: 13px; color: #58a6ff;
+}
+
 .preset-chips {
   display: flex; gap: 4px; flex-wrap: wrap; padding-bottom: 6px;
 }
@@ -435,11 +473,22 @@ a { color: #58a6ff; }
 </head>
 <body>
 
+<!-- ── Error Overlay ── -->
+<div id="error-overlay">
+  <div class="err-icon">&#9888;</div>
+  <div class="err-title" id="err-title">Connection Lost</div>
+  <div class="err-msg" id="err-msg">The Armada server is not responding. Your agents are still running in tmux — they haven't lost any work.</div>
+  <div class="err-code" id="err-code"></div>
+  <div class="err-spinner" id="err-spinner">Reconnecting in <span id="err-countdown">5</span>s...</div>
+  <button class="err-retry" onclick="retryConnection()">Retry Now</button>
+</div>
+
 <!-- ── Sidebar ── -->
 <div id="sidebar">
   <div id="sidebar-header">
     <div style="display:flex;align-items:center;gap:6px">
       <span id="pending-dot" title="Pending permission" onclick="selectPendingNode()"></span>
+      <span id="conn-indicator" title="Server connected"></span>
       <h2>Fleet</h2>
     </div>
     <div style="display:flex;align-items:center;gap:8px">
@@ -571,6 +620,12 @@ let activeTermNodeId = null;
 let xterm = null;
 let termWs = null;
 let termResizeObs = null;
+
+/* ── Connection state ── */
+let connState = 'connected'; // connected | reconnecting | disconnected
+let _reconnectAttempt = 0;
+let _reconnectTimer = null;
+let _reconnectCountdown = null;
 
 /* ── Auth ── */
 let AUTH_TOKEN = '';
@@ -1649,9 +1704,16 @@ function connectTreeWs() {
   if (_wsClosing) return;
   clearTimeout(treeReconnectTimer);
   treeReconnectTimer = null;
+  updateConnIndicator('reconnecting');
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const wsUrl = proto + '//' + location.host + '/api/ws?token=' + AUTH_TOKEN;
   treeWs = new WebSocket(wsUrl);
+  treeWs.onopen = () => {
+    connState = 'connected';
+    _reconnectAttempt = 0;
+    hideErrorOverlay();
+    updateConnIndicator('connected');
+  };
   treeWs.onmessage = (e) => {
     if (paused) return;
     try {
@@ -1678,15 +1740,68 @@ function connectTreeWs() {
   treeWs.onclose = () => {
     if (_wsClosing) return;
     treeWs = null;
-    clientLog('warn', 'Tree WS closed, reconnecting in 5s');
-    if (!treeReconnectTimer) {
-      treeReconnectTimer = setTimeout(connectTreeWs, 5000);
-    }
+    connState = 'disconnected';
+    updateConnIndicator('disconnected');
+    showErrorOverlay('Connection closed');
+    scheduleReconnect();
   };
   treeWs.onerror = () => {
     treeWs = null;
-    clientLog('error', 'Tree WS error');
+    connState = 'disconnected';
+    updateConnIndicator('disconnected');
+    showErrorOverlay('Connection error');
+    scheduleReconnect();
   };
+}
+
+function scheduleReconnect() {
+  clearTimeout(_reconnectTimer);
+  clearInterval(_reconnectCountdown);
+  _reconnectAttempt++;
+  const delay = Math.min(1000 * Math.pow(1.5, _reconnectAttempt - 1), 30000);
+  const seconds = Math.round(delay / 1000);
+  const countdownEl = document.getElementById('err-countdown');
+  const spinnerEl = document.getElementById('err-spinner');
+  let remaining = seconds;
+  spinnerEl.style.display = '';
+  document.getElementById('err-code').textContent = 'Attempt ' + _reconnectAttempt + ' · retrying in ' + seconds + 's';
+  if (countdownEl) countdownEl.textContent = remaining;
+  _reconnectCountdown = setInterval(() => {
+    remaining--;
+    if (countdownEl) countdownEl.textContent = Math.max(remaining, 0);
+    document.getElementById('err-code').textContent = 'Attempt ' + _reconnectAttempt + ' · retrying in ' + remaining + 's';
+  }, 1000);
+  _reconnectTimer = setTimeout(() => {
+    clearInterval(_reconnectCountdown);
+    updateConnIndicator('reconnecting');
+    connectTreeWs();
+  }, delay);
+}
+
+function retryConnection() {
+  clearTimeout(_reconnectTimer);
+  clearInterval(_reconnectCountdown);
+  _reconnectAttempt = 0;
+  updateConnIndicator('reconnecting');
+  connectTreeWs();
+}
+
+function showErrorOverlay(reason) {
+  const overlay = document.getElementById('error-overlay');
+  overlay.classList.add('show');
+  document.getElementById('err-title').textContent = 'Connection Lost';
+  document.getElementById('err-msg').textContent = 'The Armada server is not responding. Your agents are still running in tmux — they haven\'t lost any work.';
+}
+
+function hideErrorOverlay() {
+  document.getElementById('error-overlay').classList.remove('show');
+}
+
+function updateConnIndicator(state) {
+  const el = document.getElementById('conn-indicator');
+  if (!el) return;
+  el.className = state === 'connected' ? '' : state === 'disconnected' ? 'disconnected' : 'reconnecting';
+  el.title = state === 'connected' ? 'Server connected' : state === 'disconnected' ? 'Server disconnected' : 'Reconnecting...';
 }
 
 function updatePendingDot() {
