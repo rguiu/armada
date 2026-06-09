@@ -134,4 +134,6 @@ def init():
     register_counter("armada_reports_total", "Total agent status reports")
     register_counter("armada_errors_total", "Total error events")
     register_counter("armada_nodes_created_total", "Total nodes created")
+    register_counter("armada_tokens_total", "Total tokens consumed", ("direction",))
+    register_gauge("armada_cost_total", "Total cost in USD")
     register_histogram("armada_report_latency_seconds", "Latency of agent reports")

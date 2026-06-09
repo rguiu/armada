@@ -751,6 +751,9 @@ async def agent_report(request: Request):
             tokens_out=tokens.get("output", 0) if tokens else 0,
             cost=cost or 0.0,
         )
+        if tokens:
+            metrics.counter_inc("armada_tokens_total", tokens.get("input", 0), ("input",))
+            metrics.counter_inc("armada_tokens_total", tokens.get("output", 0), ("output",))
     await _broadcast_tree()
     return JSONResponse({"ok": True})
 
@@ -841,6 +844,8 @@ def prometheus_metrics():
             statuses[s] += 1
     for s, count in statuses.items():
         metrics.gauge_set("armada_agents", count, (s,))
+    total_cost = sum(n.get("total_cost", 0) or 0 for n in nodes)
+    metrics.gauge_set("armada_cost_total", total_cost)
     return Response(content=metrics.generate_latest(), media_type="text/plain; charset=utf-8")
 
 

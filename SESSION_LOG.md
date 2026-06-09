@@ -770,3 +770,23 @@ python -m pytest tests/ -v
 ```
 
 **Time spent:** ~25min
+
+---
+
+## 26. Time: 2026-06-10T01:55
+
+### ✅ Per-agent cost tracking
+
+**Files:** `armada_ai/metrics.py:98-99`, `armada_ai/server.py:852-853,750-753`
+
+**What was done:**
+Cost tracking was already fully implemented in DB, API, and dashboard UI:
+- **DB**: `total_tokens_in`, `total_tokens_out`, `total_cost` with `accumulate_cost()`
+- **API**: Cost fields in all node queries, aggregated costs in `/metrics`
+- **UI**: Cost badges in tree, detail with cost + token counts, stats bar total
+
+Added Prometheus metrics:
+- `armada_tokens_total{direction="input|output"}` — counter per report
+- `armada_cost_total` — gauge from DB on each scrape
+
+**Time spent:** ~15min
