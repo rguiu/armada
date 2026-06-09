@@ -13,6 +13,7 @@ from . import logs
 
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
+WORKSPACES_DIR = os.path.expanduser("~/.armada/workspaces")
 
 
 def _agent_session(name: str) -> str:
@@ -21,6 +22,11 @@ def _agent_session(name: str) -> str:
 
 def _agent_target(name: str) -> str:
     return _agent_session(name)
+
+
+def _agent_workspace(name: str) -> str:
+    return os.path.join(WORKSPACES_DIR, name)
+
 
 _zdotdirs: dict[str, str] = {}
 
@@ -264,6 +270,9 @@ def create_node_window(name: str, colour: str, working_dir: str,
 
     # Determine what to run in the tmux window
     sanitize_prefix = _sanitize_env_prefix()
+    workspace = _agent_workspace(name)
+    os.makedirs(workspace, exist_ok=True)
+    safe_workspace = workspace.replace("'", "'\\''")
 
     if agent_type in ("opencode", "claude"):
         agent_bin = shutil.which(agent_type)
@@ -273,6 +282,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
                 f"cd '{safe_dir}' && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
+                f"export ARMADA_WORKSPACE='{safe_workspace}' && "
                 f"exec {agent_bin}"
             )
         else:
@@ -281,6 +291,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
                 f"cd '{safe_dir}' && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
+                f"export ARMADA_WORKSPACE='{safe_workspace}' && "
                 f"exec {os.environ.get('SHELL', '/bin/zsh')}"
             )
     else:
@@ -294,6 +305,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
             f"cd '{safe_dir}' && "
             f"printf '\\033]2;{name}\\033\\\\' && "
             f"export ARMADA_NODE_NAME='{safe_name}' && "
+            f"export ARMADA_WORKSPACE='{safe_workspace}' && "
             f"export ZDOTDIR='{zdotdir}' && "
             f"echo '[armada] {safe_name} - tools ready' && "
             f"exec zsh"
@@ -676,6 +688,7 @@ def running_window_names() -> set[str]:
 
 
 def agent_hook_instructions(agent_name: str) -> str:
+    workspace = _agent_workspace(agent_name)
     return f"""You are node "{agent_name}". You are being monitored by Armada.
 
 REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
@@ -685,6 +698,10 @@ REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
 - After completing work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"idle","message":"<what you just did>"}}'`
 
 Keep messages under 10 words. Be specific: "spawning 3 workers", "polling children", "reading results", "summing apples", not generic "working".
+
+PERSISTENT WORKSPACE: {workspace}
+Save important output to your workspace — it survives node restarts.
+export ARMADA_WORKSPACE="{workspace}"
 
 Your activity is visible at http://127.0.0.1:9100
 """
