@@ -579,8 +579,10 @@ def _upsert_extensions(ext_list: list[dict]):
         conn = _get_conn()
         for ext in ext_list:
             conn.execute(
-                "INSERT OR REPLACE INTO extensions (id, type, name, description, source) "
-                "VALUES (?, ?, ?, ?, ?)",
+                "INSERT INTO extensions (id, type, name, description, source) "
+                "VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT(id) DO UPDATE SET description = excluded.description, "
+                "name = excluded.name, type = excluded.type",
                 (ext["id"], ext["type"], ext["name"], ext["description"], ext["source"]),
             )
         conn.commit()

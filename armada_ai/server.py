@@ -786,7 +786,7 @@ def list_extensions(project: str | None = None):
     except Exception:  # pragma: no cover
         db._migrate_extensions()  # pragma: no cover
         exts = []  # pragma: no cover
-    if not exts or not any(e.get("assigned_project") is not None and e.get("source") != "armada" for e in exts):
+    if not exts:
         try:
             db.scan_builtin_extensions()
             exts = db.list_extensions(project_label_id=project)
