@@ -884,6 +884,63 @@ def extension_content(extension_id: str):
     raise HTTPException(status_code=404, detail="Extension file not found")
 
 
+@app.post("/api/extensions/install")
+async def install_extension_endpoint(request: Request):  # pragma: no cover
+    """Copy an extension's file(s) into a project directory."""
+    import shutil
+    from pathlib import Path as _Path
+
+    body = await request.json()
+    extension_id = body.get("extension_id")
+    project_label_id = body.get("project_label_id")
+
+    if not extension_id or not project_label_id:
+        raise HTTPException(status_code=400, detail="extension_id and project_label_id are required")
+
+    project_path = db.get_project_label_path(project_label_id)
+    if not project_path or not os.path.isdir(project_path):
+        raise HTTPException(status_code=400, detail="Project not found or path does not exist")
+
+    repo_root = _Path(__file__).parent.parent
+    target = _Path(project_path)
+    copied = []
+
+    if extension_id.startswith("hook-"):
+        hook_name = extension_id[5:]
+        src = repo_root / "armada_ai" / "hooks" / f"{hook_name}.sh"
+        if src.exists():
+            dst_dir = target / ".claude" / "hooks"
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst = dst_dir / f"{hook_name}.sh"
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+            copied.append(str(dst))
+
+    elif extension_id.startswith("plugin-"):
+        plugin_name = extension_id[7:]
+        dst_dir = target / ".opencode" / "plugins"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for suffix in (".ts", ".js"):
+            src = repo_root / ".opencode" / "plugins" / f"{plugin_name}{suffix}"
+            if src.exists():
+                dst = dst_dir / f"{plugin_name}{suffix}"
+                shutil.copy2(src, dst)
+                copied.append(str(dst))
+
+    else:
+        src = repo_root / "skills" / extension_id / "SKILL.md"
+        if src.exists():
+            for agent_dir in (".opencode", ".claude"):
+                dst_dir = target / agent_dir / "skills" / extension_id
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                dst = dst_dir / "SKILL.md"
+                shutil.copy2(src, dst)
+                copied.append(str(dst))
+
+    if not copied:
+        raise HTTPException(status_code=404, detail="Extension source file not found")
+
+    return JSONResponse({"ok": True, "copied": copied})
 
 
 # --- Maintenance ---
