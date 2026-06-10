@@ -129,7 +129,7 @@ class TestSyncProjects:
         monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
-        assert any(l["id"] == "jsonproj" for l in labels)
+        assert any(lb["id"] == "jsonproj" for lb in labels)
 
     def test_sync_projects_creates_file(self, temp_db, monkeypatch, tmp_path):
         projects_file = tmp_path / "nonexistent.json"
@@ -147,7 +147,7 @@ class TestSyncProjects:
         temp_db.add_project_label("goodlabel", "Good", str(tmp_path))
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
-        assert any(l["id"] == "goodlabel" for l in labels)
+        assert any(lb["id"] == "goodlabel" for lb in labels)
 
 
 class TestNodeByName:

@@ -83,9 +83,7 @@ def _install_launchd(armada_path: str, home: str, path_env: str) -> bool:
 
     os.makedirs(launchd_dir, exist_ok=True)
 
-    existing = None
     if os.path.exists(plist_path):
-        existing = open(plist_path).read()
         _run_cmd(["launchctl", "unload", plist_path])
 
     with open(plist_path, "w") as f:
@@ -93,7 +91,7 @@ def _install_launchd(armada_path: str, home: str, path_env: str) -> bool:
 
     _run_cmd(["launchctl", "load", plist_path])
     print("Armada will start automatically on login.")
-    print(f"To start now: launchctl start com.armada.daemon")
+    print("To start now: launchctl start com.armada.daemon")
     print(f"To stop:       launchctl unload {plist_path}")
     return True
 
@@ -108,9 +106,7 @@ def _install_systemd(armada_path: str, home: str, path_env: str) -> bool:
 
     os.makedirs(systemd_dir, exist_ok=True)
 
-    existing = None
     if os.path.exists(unit_path):
-        existing = open(unit_path).read()
         _run_cmd(["systemctl", "--user", "stop", "armada.service"])
 
     with open(unit_path, "w") as f:
@@ -120,9 +116,9 @@ def _install_systemd(armada_path: str, home: str, path_env: str) -> bool:
     _run_cmd(["systemctl", "--user", "enable", "armada.service"])
     _run_cmd(["systemctl", "--user", "restart", "armada.service"])
     print("Armada will start automatically on login.")
-    print(f"To start now: systemctl --user start armada")
-    print(f"To stop:      systemctl --user stop armada")
-    print(f"Status:       systemctl --user status armada")
+    print("To start now: systemctl --user start armada")
+    print("To stop:      systemctl --user stop armada")
+    print("Status:       systemctl --user status armada")
     return True
 
 

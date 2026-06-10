@@ -525,7 +525,6 @@ def _config(subargs: list[str]):
 
 def _setup_skills():
     from . import tmux
-    import glob
 
     skill_dir = os.path.join(os.path.dirname(__file__), "..", "skills")
     if not os.path.isdir(skill_dir):
@@ -543,7 +542,7 @@ def _setup_skills():
 
     if token:
         os.environ["ARMADA_AUTH_TOKEN"] = token
-        print(f"  ARMADA_AUTH_TOKEN set")
+        print("  ARMADA_AUTH_TOKEN set")
 
     installed = tmux.install_skills(skill_dir)
     print(f"  {installed} file(s) installed")
