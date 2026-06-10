@@ -598,6 +598,7 @@ a { color: var(--accent); }
       <div style="display:flex;gap:4px">
         <button class="section-add" onclick="refreshHooks()" title="Re-deploy hooks & skills to all projects">Sync</button>
         <button class="section-add" onclick="openModal('label-modal')" title="Add project">+ Add</button>
+        <button class="section-add" onclick="toggleProjects()" id="proj-toggle">&#9660;</button>
       </div>
     </div>
     <div id="labels-list"></div>
@@ -614,7 +615,7 @@ a { color: var(--accent); }
   <div id="qr-section">
     <div class="section-header">
       <span class="section-title">Connect Phone</span>
-      <button class="section-add" id="qr-toggle" onclick="toggleQR()">Show</button>
+      <button class="section-add" id="qr-toggle" onclick="toggleQR()">&#9654;</button>
     </div>
     <div id="qr-content" style="padding:8px;text-align:center;display:none">
       <div style="margin-bottom:12px;text-align:left">
@@ -1793,12 +1794,19 @@ function toggleQR() {
   const btn = document.getElementById('qr-toggle');
   if (content.style.display === 'none') {
     content.style.display = 'block';
-    btn.textContent = 'Hide';
+    btn.innerHTML = '&#9660;';
     if (!_qrInited) { initQR(); _qrInited = true; }
   } else {
     content.style.display = 'none';
-    btn.textContent = 'Show';
+    btn.innerHTML = '&#9654;';
   }
+}
+
+let _projOpen = true;
+function toggleProjects() {
+  _projOpen = !_projOpen;
+  document.getElementById('labels-list').style.display = _projOpen ? 'block' : 'none';
+  document.getElementById('proj-toggle').innerHTML = _projOpen ? '&#9660;' : '&#9654;';
 }
 
 function initQR() {
