@@ -410,3 +410,14 @@ class TestSyncProjectsEdgeCases:
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
         assert any(lb["id"] == "persist" for lb in labels)
+
+
+class TestStats:
+    def test_snapshot_and_query(self, temp_db):
+        temp_db.create_node("statnode", "#111")
+        temp_db.snapshot_stats()
+        history = temp_db.get_hourly_stats(24)
+        assert len(history) >= 1
+        summary = temp_db.get_stats_summary()
+        assert summary["total_agents"] >= 1
+        assert "history" in summary

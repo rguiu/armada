@@ -35,6 +35,9 @@ recover_nodes = _db.recover_nodes
 recover_live_nodes = _db.recover_live_nodes
 get_restart_count_for_name = _db.get_restart_count_for_name
 increment_restart_count = _db.increment_restart_count
+snapshot_stats = _db.snapshot_stats
+get_hourly_stats = _db.get_hourly_stats
+get_stats_summary = _db.get_stats_summary
 _sync_projects_from_json = _db._sync_projects_from_json
 
 
