@@ -4,7 +4,9 @@ import time
 import gzip
 import threading
 
-LOGS_DIR = os.path.expanduser("~/.armada/logs")
+from . import constants
+
+LOGS_DIR = constants.LOGS_DIR
 _write_lock = threading.Lock()
 
 LOG_LEVELS = ("debug", "info", "warn", "error")

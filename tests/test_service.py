@@ -1,8 +1,6 @@
 """Tests for armada_ai.service."""
-import os
 import sys
-import pytest
-from unittest.mock import MagicMock, patch, call
+from unittest.mock import MagicMock
 from armada_ai import service
 
 
@@ -23,7 +21,6 @@ class TestInstall:
 
 class TestInstallLaunchd:
     def test_installs_launchd(self, monkeypatch, tmp_path):
-        launchd_dir = tmp_path / "LaunchAgents"
         monkeypatch.setattr(service.shutil, "which", lambda _: "/usr/local/bin/armada")
         monkeypatch.setattr(service.platform, "system", lambda: "Darwin")
         monkeypatch.setattr(service.os.path, "expanduser", lambda _: str(tmp_path))

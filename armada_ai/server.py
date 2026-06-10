@@ -1,11 +1,14 @@
+"""FastAPI server — refactored to delegate business logic to domain/infrastructure layers.
+
+Maintains backward-compatible module-level exports (TOKEN, app, start_server, etc.)
+so existing tests and CLI continue to work unchanged.
+"""
 import os
 import sys
 import subprocess
 import threading
 import re
 import json
-import secrets
-import socket
 import asyncio
 import time as _time
 from pathlib import Path
@@ -15,13 +18,23 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-from . import db
-from . import naming
-from . import tmux
-from . import health
+from . import constants
+from . import config
 from . import logs
 from . import metrics
-from . import config
+from . import naming
+from .infrastructure import database as db
+from . import tmux as tmux
+from .infrastructure.auth_manager import TokenManager, AuthExemptPaths
+from .infrastructure import deployment
+from .project_explorer import (
+    list_project_skills, list_project_plugins, list_project_hooks,
+    get_project_config, get_project_git_info,
+)
+from .domain.models import AgentStatus, CreateNodeRequest, AgentReportRequest
+from .transport.middleware import _CSP_HEADER
+from .transport.static_assets import manifest_route, service_worker_route, app_icon_route
+
 
 _ANSI_RE = re.compile(
     r'\x1b\[[0-9;]*[a-zA-Z]'
@@ -34,16 +47,18 @@ app = FastAPI(title="Armada")
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
-PID_FILE = os.path.expanduser("~/.armada/server.pid")
-TOKEN_FILE = os.path.expanduser("~/.armada/token")
+
 HOST = config.get("host")
 PORT = config.get("port")
 
-TOKEN = ""
+_token_manager = TokenManager(constants.TOKEN_FILE)
+TOKEN = ""  # backward compat: set during startup
 SERVER_START_TS = 0.0
 
 _ws_clients: set[WebSocket] = set()
 
+
+# --- WebSocket broadcast ---
 
 async def _cleanup_ws_clients():
     dead = [ws for ws in _ws_clients if ws.client_state.name == "DISCONNECTED"]
@@ -79,20 +94,16 @@ def _schedule_broadcast():
         pass
 
 
+# --- Auth (delegated to auth_manager) ---
+
 def _ensure_token(keep: bool = True):
     global TOKEN
-    if not TOKEN:
-        if keep and os.path.exists(TOKEN_FILE):
-            TOKEN = Path(TOKEN_FILE).read_text().strip()
-            if TOKEN:
-                return TOKEN
-        TOKEN = secrets.token_hex(16)
-        os.makedirs(os.path.dirname(TOKEN_FILE), exist_ok=True)
-        Path(TOKEN_FILE).write_text(TOKEN)
+    TOKEN = _token_manager.ensure(keep=keep)
     return TOKEN
 
 
 def _lan_ip() -> str:
+    import socket
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("8.8.8.8", 80))
@@ -104,40 +115,31 @@ def _lan_ip() -> str:
 
 
 def _check_token(request: Request) -> bool:
-    token = request.query_params.get("token")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
-    return token == TOKEN
+    token = TokenManager.extract_from_request(request)
+    return bool(token and token == TOKEN)
+
+
+# --- Middleware ---
 
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json", "/health", "/metrics", "/icon.svg")
+
     if path.startswith("/api/logs"):
-        if not _check_token(request) and path not in exempt:
+        if (not _check_token(request) and path not in AuthExemptPaths.EXEMPT
+                and not path.endswith("/ws")):
             logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         return await call_next(request)
-    if path.startswith("/api/") and path not in exempt and not path.endswith("/ws"):
+
+    if (path.startswith("/api/") and path not in AuthExemptPaths.EXEMPT
+            and not path.endswith("/ws")):
         if not _check_token(request):
             logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
     return await call_next(request)
-
-
-_CSP_HEADER = (
-    "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
-    "style-src 'self' 'unsafe-inline'; "
-    "connect-src 'self' ws: wss:; "
-    "img-src 'self' data: https:; "
-    "font-src 'self' data:; "
-    "base-uri 'self'; "
-    "form-action 'self'"
-)
 
 
 @app.middleware("http")
@@ -147,10 +149,13 @@ async def csp_middleware(request: Request, call_next):
     return response
 
 
+# --- Startup ---
+
 @app.on_event("startup")
 async def startup():
-    global SERVER_START_TS
+    global SERVER_START_TS, TOKEN
     SERVER_START_TS = _time.time()
+    TOKEN = _token_manager.ensure(keep=True)
     metrics.init()
     db.init_db()
     try:
@@ -158,25 +163,126 @@ async def startup():
     except RuntimeError:
         pass
     logs.log_server_start()
-    recovered = health.recover_on_startup()
+
+    recovered = _recover_on_startup()
     if recovered:
         names = [n["name"] for n in recovered]
         logs.log_event("_server", "recovery", {"recovered_nodes": names})
-        # Broadcast recovery notification to WebSocket clients once connected
         def _notify_recovery():
             _time.sleep(2)
             try:
                 for name in names:
-                    db.add_status_report(
-                        next((n["id"] for n in recovered if n["name"] == name), 0),
-                        "idle", "server restarted — reconnected to agent")
+                    rid = next((n["id"] for n in recovered if n["name"] == name), 0)
+                    if rid:
+                        db.add_status_report(rid, "idle",
+                                             "server restarted — reconnected to agent")
             except Exception:
                 pass
         threading.Thread(target=_notify_recovery, daemon=True).start()
-    health.start_health_loop(interval=config.get("health_interval"))
+
+    _start_health_loop(interval=config.get("health_interval"))
     asyncio.create_task(_ws_cleanup_loop())
     logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
 
+
+def _recover_on_startup():
+    running = tmux.running_window_names()
+    if not running:
+        return []
+    live = db.recover_live_nodes(running)
+    recovered = []
+    for node in live:
+        name = node.name
+        if name not in running:
+            continue
+        logs.log_recover(name)
+        db.add_status_report(node.id, "idle", "server restarted — reconnected to tmux window")
+        recovered.append(node.as_summary())
+    db.recover_nodes(running)
+    return recovered
+
+
+def _start_health_loop(interval: int = 15):
+    _tick = 0
+
+    def check():
+        nonlocal _tick
+        while True:
+            _time.sleep(interval)
+            _tick += 1
+            try:
+                _run_health_check()
+            except Exception:
+                pass
+            if _tick % 20 == 0:
+                try:
+                    db.prune_all_old_reports()
+                    db.vacuum_db()
+                    logs.rotate_logs()
+                    logs.cleanup_old_rotated_logs()
+                except Exception:
+                    pass
+
+    threading.Thread(target=check, daemon=True).start()
+
+
+def _run_health_check():
+    nodes = db.get_all_nodes(include_dead=False)
+    running_windows = tmux.running_window_names()
+
+    for node in nodes:
+        if node.name not in running_windows:
+            logs.log_health(node.name, dead=True)
+            _mark_node_dead(node.id)
+            _auto_restart_node(node)
+
+
+def _mark_node_dead(node_id: int):
+    dead = db.kill_node(node_id)
+    for entry in dead:
+        name = entry["name"]
+        try:
+            content = tmux.capture_pane_content(name)
+            if content:
+                logs.log_agent_output(name, content)
+        except Exception:
+            pass
+        try:
+            tmux.kill_node_window(name)
+        except Exception:
+            pass
+
+
+def _auto_restart_node(node):
+    name = node.name
+    restart_count = db.get_restart_count_for_name(name)
+    if restart_count >= constants.MAX_RESTARTS:
+        logs.log_event(name, "restart_limit", {"count": restart_count}, level="error")
+        return
+    try:
+        working_dir = db.get_project_label_path(node.project_label_id) or os.getcwd()
+        pane_id = tmux.create_node_window(
+            name=name, colour=node.colour,
+            working_dir=working_dir, agent_type=node.agent_type,
+        )
+        if pane_id:
+            nid = db.create_node(
+                name=name, colour=node.colour, parent_id=None,
+                project_label_id=node.project_label_id,
+                tmux_pane_id=pane_id, agent_type=node.agent_type,
+            )
+            db.add_status_report(nid, "active",
+                f"auto-restarted (attempt {restart_count + 1}/{constants.MAX_RESTARTS})")
+            db.increment_restart_count(name)
+            logs.log_event(name, "restarted", {
+                "attempt": restart_count + 1,
+                "agent_type": node.agent_type,
+            }, level="warn")
+    except Exception as e:
+        logs.log_event(name, "restart_failed", {"error": str(e)}, level="error")
+
+
+# --- Exception handlers ---
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -194,55 +300,17 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.get("/manifest.json")
 def manifest():
-    return JSONResponse({
-        "name": "Armada Fleet Dashboard",
-        "short_name": "Armada",
-        "description": "Command your fleet of AI agents",
-        "start_url": "/",
-        "display": "standalone",
-        "orientation": "any",
-        "background_color": "#0f1117",
-        "theme_color": "#0f1117",
-        "icons": [
-            {"src": "/icon.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any"},
-            {"src": "/icon.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any maskable"},
-        ]
-    })
+    return manifest_route()
 
 
 @app.get("/sw.js")
 def service_worker():
-    sw = """\
-self.addEventListener('install', e => self.skipWaiting());
-self.addEventListener('activate', e => {
-  caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
-  e.waitUntil(clients.claim());
-});"""
-    return Response(content=sw, media_type="application/javascript")
+    return service_worker_route()
 
 
 @app.get("/icon.svg")
 def app_icon():
-    icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#0f1117"/>
-      <stop offset="100%" stop-color="#161b22"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="92" fill="url(#bg)"/>
-  <g transform="translate(256,256)" fill="none" stroke="#58a6ff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="-40" cy="-60" r="32"/>
-    <circle cx="40" cy="-60" r="32"/>
-    <circle cx="0" cy="20" r="32"/>
-    <line x1="-40" y1="-28" x2="0" y2="-12"/>
-    <line x1="40" y1="-28" x2="0" y2="-12"/>
-    <line x1="0" y1="52" x2="0" y2="160"/>
-    <line x1="-80" y1="160" x2="80" y2="160"/>
-    <path d="M-160,200 Q0,260 160,200" stroke-width="22"/>
-  </g>
-</svg>"""
-    return Response(content=icon, media_type="image/svg+xml")
+    return app_icon_route()
 
 
 # --- Dashboard ---
@@ -268,11 +336,7 @@ def get_tree(hide_dead: bool = False):
 @app.websocket("/api/ws")
 async def tree_ws(websocket: WebSocket):
     client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
-    token = websocket.query_params.get("token")
-    if not token:
-        auth = websocket.headers.get("authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
+    token = TokenManager.extract_from_websocket(websocket)
     if token != TOKEN:
         logs.log_ws_disconnect(client, "/api/ws", "bad_token")
         await websocket.close(code=4001)
@@ -297,12 +361,14 @@ async def tree_ws(websocket: WebSocket):
 
 @app.get("/api/nodes")
 def list_nodes(hide_dead: bool = False):
-    return JSONResponse(db.get_all_nodes(include_dead=not hide_dead))
+    nodes = db.get_all_nodes(include_dead=not hide_dead)
+    return JSONResponse([n.as_summary() for n in nodes])
 
 
 @app.get("/api/nodes/history")
 def list_killed_nodes(limit: int = 50):
-    return JSONResponse(db.get_killed_nodes(limit))
+    nodes = db.get_killed_nodes(limit)
+    return JSONResponse([n.as_summary() for n in nodes])
 
 
 @app.get("/api/nodes/{node_id}")
@@ -312,7 +378,11 @@ def get_node(node_id: int):
         raise HTTPException(status_code=404, detail="Node not found")
     reports = db.get_node_reports(node_id)
     children = db.get_node_children(node_id)
-    return JSONResponse({"node": node, "reports": reports, "children": children})
+    return JSONResponse({
+        "node": node.as_summary(),
+        "reports": reports,
+        "children": [c.as_summary() for c in children],
+    })
 
 
 @app.get("/api/nodes/{node_id}/reports")
@@ -323,74 +393,69 @@ def get_reports(node_id: int, limit: int = 30):
 @app.post("/api/nodes")
 async def create_node(request: Request):
     body = await request.json()
-    name = body.get("name") or None
-    parent_id = body.get("parent_id") or None
-    project_label_id = body.get("project_label_id") or None
-    agent_type = body.get("agent_type", "auto")
-    initial_prompt = (body.get("initial_prompt") or "").strip()
+    req = CreateNodeRequest(
+        name=body.get("name") or None,
+        project_label_id=body.get("project_label_id") or None,
+        agent_type=body.get("agent_type", "auto"),
+        parent_id=body.get("parent_id") or None,
+        initial_prompt=(body.get("initial_prompt") or "").strip() or None,
+    )
 
-    if not project_label_id:
+    if not req.project_label_id:
         raise HTTPException(status_code=400, detail="A project must be selected")
 
-    if name and len(name) > 100:
-        raise HTTPException(status_code=400, detail="Node name must be 100 characters or fewer")
-
     existing_names = db.existing_names()
+    validation_error = req.validate_name(existing_names)
+    if isinstance(validation_error, str):
+        if "already exists" in validation_error:
+            raise HTTPException(status_code=409, detail=validation_error)
+        raise HTTPException(status_code=400, detail=validation_error)
 
-    if name and name in existing_names:
-        raise HTTPException(status_code=409, detail=f"Node '{name}' already exists")
-
-    path = db.get_project_label_path(project_label_id)
+    path = db.get_project_label_path(req.project_label_id)
     if not path:
         raise HTTPException(status_code=400, detail="Project label not found")
     if not os.path.isdir(path):
         raise HTTPException(status_code=400,
             detail=f"Project path does not exist: {path}")
-    working_dir = path
 
-    if parent_id:
-        parent = db.get_node(parent_id)
+    if req.parent_id:
+        parent = db.get_node(req.parent_id)
         if not parent:
             raise HTTPException(status_code=400, detail="Parent node not found")
 
     colour = naming.next_colour(db.active_colours())
+    agent_name = req.name or naming.generate_sequential_name(
+        req.project_label_id, existing_names)
 
-    if name:
-        agent_name = name
-    else:
-        agent_name = naming.generate_sequential_name(project_label_id, existing_names)
+    # Deploy skills/hooks before creating tmux window
+    deployment.deploy_for_agent_type(agent_name, req.agent_type, path)
 
     pane_id = tmux.create_node_window(
-        name=agent_name, colour=colour, working_dir=working_dir,
-        agent_type=agent_type,
+        name=agent_name, colour=colour, working_dir=path,
+        agent_type=req.agent_type,
     )
-
     if pane_id is None:
         raise HTTPException(status_code=500,
             detail="Failed to create tmux window. Is tmux installed and running?")
 
     node_id = db.create_node(
-        name=agent_name,
-        colour=colour,
-        parent_id=parent_id,
-        project_label_id=project_label_id,
-        tmux_pane_id=pane_id,
-        agent_type=agent_type,
+        name=agent_name, colour=colour, parent_id=req.parent_id,
+        project_label_id=req.project_label_id, tmux_pane_id=pane_id,
+        agent_type=req.agent_type,
     )
 
     db.add_status_report(node_id, "idle",
-        f"node created (agent={agent_type}, project={project_label_id or 'cwd'})")
-    logs.log_create(agent_name, agent_type, project_label_id)
+        f"node created (agent={req.agent_type}, project={req.project_label_id or 'cwd'})")
+    logs.log_create(agent_name, req.agent_type, req.project_label_id)
     metrics.counter_inc("armada_nodes_created_total")
-    tmux.save_agent_hook(agent_name)
 
-    if initial_prompt:
-        delay = 8.0 if agent_type in ("opencode", "claude") else 3.0
-        tmux.send_initial_prompt(agent_name, initial_prompt, delay=delay)
+    if req.initial_prompt:
+        delay = 8.0 if req.agent_type in ("opencode", "claude") else 3.0
+        tmux.send_initial_prompt(agent_name, req.initial_prompt, delay=delay)
 
     node = db.get_node(node_id)
     await _broadcast_tree()
-    return JSONResponse(node, status_code=201)
+    return JSONResponse(node.as_summary(), status_code=201)
 
 
 @app.delete("/api/nodes/{node_id}")
@@ -428,17 +493,16 @@ async def send_to_node(node_id: int, request: Request):
     node = db.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-    if node.get("status") == "dead":
+    if node.is_dead():
         raise HTTPException(status_code=410, detail="Node is dead")
-
-    if not tmux.window_exists(node["name"]):
+    if not tmux.window_exists(node.name):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    ok = tmux.send_raw_keys(node["name"], command) if raw else tmux.send_keys(node["name"], command)
+    ok = tmux.send_raw_keys(node.name, command) if raw else tmux.send_keys(node.name, command)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to send command")
 
-    logs.log_send(node["name"], command)
+    logs.log_send(node.name, command)
     return JSONResponse({"ok": True})
 
 
@@ -457,8 +521,7 @@ async def patch_node(node_id: int, request: Request):
     if action == "reparent":
         new_parent = body.get("parent_id") or None
         if new_parent:
-            parent_node = db.get_node(new_parent)
-            if not parent_node:
+            if not db.get_node(new_parent):
                 raise HTTPException(status_code=400, detail="Parent node not found")
         db.reparent_node(node_id, new_parent)
         await _broadcast_tree()
@@ -467,8 +530,7 @@ async def patch_node(node_id: int, request: Request):
         new_name = body.get("name", "").strip()
         if not new_name:
             raise HTTPException(status_code=400, detail="name is required")
-        existing = db.existing_names()
-        if new_name in existing:
+        if new_name in db.existing_names():
             raise HTTPException(status_code=409, detail=f"Node '{new_name}' already exists")
         db.rename_node(node_id, new_name)
         await _broadcast_tree()
@@ -481,14 +543,14 @@ def attach(node_id: int):
     node = db.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-    if not tmux.window_exists(node["name"]):
+    if not tmux.window_exists(node.name):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    error = tmux.attach_node(node["name"], node["colour"])
+    error = tmux.attach_node(node.name, node.colour)
     if error:
         raise HTTPException(status_code=500, detail=error)
 
-    logs.log_attach(node["name"])
+    logs.log_attach(node.name)
     return JSONResponse({"ok": True})
 
 
@@ -497,10 +559,10 @@ def terminal_view(node_id: int):
     node = db.get_node(node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
-    if not tmux.window_exists(node["name"]):
+    if not tmux.window_exists(node.name):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    target = f"armada-{node['name']}"
+    target = f"armada-{node.name}"
 
     dims = subprocess.run(
         ["tmux", "display-message", "-p", "-t", target,
@@ -531,11 +593,7 @@ def terminal_view(node_id: int):
 @app.websocket("/api/nodes/{node_id}/ws")
 async def terminal_ws(websocket: WebSocket, node_id: int):
     client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
-    token = websocket.query_params.get("token")
-    if not token:
-        auth = websocket.headers.get("authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
+    token = TokenManager.extract_from_websocket(websocket)
     if token != TOKEN:
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "bad_token")
         await websocket.close(code=4001)
@@ -546,12 +604,12 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "node_not_found")
         await websocket.close(code=4004)
         return
-    if not tmux.window_exists(node["name"]):
+    if not tmux.window_exists(node.name):
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "window_gone")
         await websocket.close(code=4004)
         return
 
-    target = f"armada-{node['name']}"
+    target = f"armada-{node.name}"
     await websocket.accept()
     logs.log_ws_connect(client, f"/api/nodes/{node_id}/ws")
 
@@ -598,14 +656,13 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                 if text != last_text:
                     last_text = text
                     await websocket.send_text(json.dumps({
-                        "cols": pane_cols,
-                        "rows": pane_rows,
-                        "text": text,
+                        "cols": pane_cols, "rows": pane_rows, "text": text,
                     }))
             except WebSocketDisconnect:
                 break
             except Exception as e:
-                logs.log_event("_server", "ws_poll_error", {"client": client, "node_id": node_id, "error": str(e)})
+                logs.log_event("_server", "ws_poll_error",
+                               {"client": client, "node_id": node_id, "error": str(e)})
 
     async def recv_keys():
         while True:
@@ -613,19 +670,21 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
                 data = await websocket.receive_text()
                 if data:
                     await asyncio.to_thread(
-                        lambda: tmux.send_raw_keys(node["name"], data)
+                        lambda: tmux.send_raw_keys(node.name, data)
                     )
             except WebSocketDisconnect:
                 break
             except Exception as e:
-                logs.log_event("_server", "ws_recv_error", {"client": client, "node_id": node_id, "error": str(e)})
+                logs.log_event("_server", "ws_recv_error",
+                               {"client": client, "node_id": node_id, "error": str(e)})
 
     try:
         await asyncio.gather(poll_pane(), recv_keys())
     except WebSocketDisconnect:
         pass
     except Exception as e:
-        logs.log_event("_server", "ws_term_error", {"client": client, "node_id": node_id, "error": str(e)})
+        logs.log_event("_server", "ws_term_error",
+                       {"client": client, "node_id": node_id, "error": str(e)})
     finally:
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws")
 
@@ -634,23 +693,24 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
 
 @app.get("/api/project-labels")
 def list_project_labels():
-    return JSONResponse(db.list_project_labels())
+    labels = db.list_project_labels()
+    return JSONResponse([{"id": lb.id, "name": lb.name, "path": lb.path} for lb in labels])
 
 
 @app.post("/api/project-labels")
 async def create_project_label(request: Request):
     body = await request.json()
-    id = body.get("id", "").strip()
+    label_id = body.get("id", "").strip()
     name = body.get("name", "").strip()
     path = body.get("path", "").strip()
 
-    if not id or not name:
+    if not label_id or not name:
         raise HTTPException(status_code=400, detail="id and name are required")
     if not path:
         path = os.getcwd()
 
     try:
-        db.add_project_label(id, name, os.path.abspath(path))
+        db.add_project_label(label_id, name, os.path.abspath(path))
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
@@ -666,23 +726,22 @@ def delete_project_label(label_id: str):
 @app.get("/api/project-labels/{label_id}/overview")
 def project_overview(label_id: str):
     labels = db.list_project_labels()
-    label = next((lb for lb in labels if lb["id"] == label_id), None)
+    label = next((lb for lb in labels if lb.id == label_id), None)
     if not label:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    path = label["path"]
-    is_dir = os.path.isdir(path)
-    skills = tmux.list_project_skills(path)["skills"] if is_dir else []
+    is_dir = os.path.isdir(label.path)
+    skills = list_project_skills(label.path)["skills"] if is_dir else []
     nodes = db.get_nodes_by_project_label_id(label_id)
-    plugins = tmux.list_project_plugins(path)["plugins"] if is_dir else []
-    hooks = tmux.list_project_hooks(path)["hooks"] if is_dir else []
-    configs = tmux.get_project_config(path)["configs"] if is_dir else {}
-    git = tmux.get_project_git_info(path)["git"] if is_dir else {}
+    plugins = list_project_plugins(label.path)["plugins"] if is_dir else []
+    hooks = list_project_hooks(label.path)["hooks"] if is_dir else []
+    configs = get_project_config(label.path)["configs"] if is_dir else {}
+    git = get_project_git_info(label.path)["git"] if is_dir else {}
 
     return JSONResponse({
-        "label": label,
+        "label": {"id": label.id, "name": label.name, "path": label.path},
         "skills": skills,
-        "nodes": nodes,
+        "nodes": [n.as_summary() for n in nodes],
         "plugins": plugins,
         "hooks": hooks,
         "configs": configs,
@@ -692,7 +751,7 @@ def project_overview(label_id: str):
 
 @app.get("/api/skills")
 def global_skills():
-    return JSONResponse(tmux.list_project_skills(os.path.expanduser("~")))
+    return JSONResponse(list_project_skills(os.path.expanduser("~")))
 
 
 # --- Maintenance ---
@@ -702,13 +761,12 @@ def refresh_hooks():
     labels = db.list_project_labels()
     updated = []
     for label in labels:
-        path = label["path"]
-        if not os.path.isdir(path):
+        if not os.path.isdir(label.path):
             continue
         try:
-            tmux.install_skills(path)
-            tmux._deploy_claude_hooks(path)
-            updated.append(label["id"])
+            deployment.install_skills_to_project(label.path)
+            deployment.deploy_claude_hooks(label.path)
+            updated.append(label.id)
         except Exception:
             pass
     return JSONResponse({"updated": updated})
@@ -719,39 +777,47 @@ def refresh_hooks():
 @app.post("/api/report")
 async def agent_report(request: Request):
     body = await request.json()
-    name = body.get("name")
-    status = body.get("status", "idle")
-    message = body.get("message")
-    tokens = body.get("tokens")
-    cost = body.get("cost")
+    report = AgentReportRequest(
+        name=body.get("name"),
+        status=body.get("status", "idle"),
+        message=body.get("message"),
+        tokens=body.get("tokens"),
+        cost=body.get("cost"),
+        client_ts=body.get("_client_ts") or 0,
+    )
 
-    if not name:
-        raise HTTPException(status_code=400, detail="name is required")
-    if status not in ("active", "idle", "error", "pending"):
-        raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
+    validation_error = report.validate()
+    if validation_error:
+        raise HTTPException(status_code=400, detail=validation_error)
 
-    node = db.get_node_by_name(name)
+    node = db.get_node_by_name(report.name)
     if not node:
-        raise HTTPException(status_code=404, detail=f"Unknown node: {name}")
+        raise HTTPException(status_code=404, detail=f"Unknown node: {report.name}")
 
-    db.add_status_report(node["id"], status, message)
-    logs.log_report(name, status, message)
+    db.add_status_report(node.id, report.status, report.message)
+    logs.log_report(report.name, report.status, report.message)
     metrics.counter_inc("armada_reports_total")
-    report_latency = _time.time() - (body.get("_client_ts") or 0)
-    if report_latency > 0 and report_latency < 3600:
+
+    report_latency = _time.time() - report.client_ts
+    if 0 < report_latency < 3600:
         metrics.histogram_observe("armada_report_latency_seconds", report_latency)
-    if status == "error":
+
+    if report.status == AgentStatus.ERROR.value:
         metrics.counter_inc("armada_errors_total")
-    if tokens or cost:
+
+    if report.tokens or report.cost:
         db.accumulate_cost(
-            node["id"],
-            tokens_in=tokens.get("input", 0) if tokens else 0,
-            tokens_out=tokens.get("output", 0) if tokens else 0,
-            cost=cost or 0.0,
+            node.id,
+            tokens_in=report.tokens.get("input", 0) if report.tokens else 0,
+            tokens_out=report.tokens.get("output", 0) if report.tokens else 0,
+            cost=report.cost or 0.0,
         )
-        if tokens:
-            metrics.counter_inc("armada_tokens_total", tokens.get("input", 0), ("input",))
-            metrics.counter_inc("armada_tokens_total", tokens.get("output", 0), ("output",))
+        if report.tokens:
+            metrics.counter_inc("armada_tokens_total",
+                                report.tokens.get("input", 0), ("input",))
+            metrics.counter_inc("armada_tokens_total",
+                                report.tokens.get("output", 0), ("output",))
+
     await _broadcast_tree()
     return JSONResponse({"ok": True})
 
@@ -765,7 +831,8 @@ _SAFE_LOG_NAME = re.compile(r'^[a-zA-Z0-9_][-a-zA-Z0-9_]*$')
 def get_node_logs(node_name: str, limit: int = 50, before: float | None = None):
     if not _SAFE_LOG_NAME.match(node_name):
         raise HTTPException(status_code=400, detail="Invalid node name")
-    if not db.get_node_by_name(node_name) and node_name not in db.existing_names() and node_name != "_server":
+    node = db.get_node_by_name(node_name)
+    if not node and node_name not in db.existing_names() and node_name != "_server":
         raise HTTPException(status_code=404, detail="Node not found")
     entries = logs.get_node_logs(node_name, limit=limit, before_ts=before)
     return JSONResponse({"node": node_name, "count": len(entries), "entries": entries})
@@ -782,7 +849,10 @@ def search_all_logs(q: str = "", limit: int = 50, node: str | None = None):
 @app.get("/api/server-log")
 def get_server_log(limit: int = 100):
     entries = logs.get_node_logs("_server", limit=limit)
-    return JSONResponse({"count": len(entries), "entries": entries, "path": os.path.expanduser("~/.armada/logs/_server.jsonl")})
+    return JSONResponse({
+        "count": len(entries), "entries": entries,
+        "path": os.path.join(constants.LOGS_DIR, "_server.jsonl"),
+    })
 
 
 @app.post("/api/client-log")
@@ -803,7 +873,7 @@ def server_info():
         "lan_ip": _lan_ip(),
         "port": PORT,
         "uptime": round(uptime_seconds, 1),
-        "version": "0.2.0",
+        "version": constants.VERSION,
         "started_at": SERVER_START_TS,
     })
 
@@ -813,20 +883,18 @@ def health_check():
     uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
     metrics.gauge_set("armada_uptime_seconds", uptime_seconds)
     nodes = db.get_all_nodes(include_dead=False)
-    active = sum(1 for n in nodes if n["status"] == "active")
-    pending = sum(1 for n in nodes if n["status"] == "pending")
-    idle = sum(1 for n in nodes if n["status"] == "idle")
+    active = sum(1 for n in nodes if n.status == "active")
+    pending = sum(1 for n in nodes if n.status == "pending")
+    idle = sum(1 for n in nodes if n.status == "idle")
     metrics.gauge_set("armada_agents", active, ("active",))
     metrics.gauge_set("armada_agents", pending, ("pending",))
     metrics.gauge_set("armada_agents", idle, ("idle",))
     return JSONResponse({
         "status": "ok",
         "agents": len(nodes),
-        "active": active,
-        "pending": pending,
-        "idle": idle,
+        "active": active, "pending": pending, "idle": idle,
         "uptime": round(uptime_seconds, 1),
-        "version": "0.2.0",
+        "version": constants.VERSION,
     })
 
 
@@ -837,12 +905,12 @@ def prometheus_metrics():
     nodes = db.get_all_nodes(include_dead=False)
     statuses = {"active": 0, "pending": 0, "idle": 0}
     for n in nodes:
-        s = n["status"]
+        s = n.status
         if s in statuses:
             statuses[s] += 1
     for s, count in statuses.items():
         metrics.gauge_set("armada_agents", count, (s,))
-    total_cost = sum(n.get("total_cost", 0) or 0 for n in nodes)
+    total_cost = sum(n.total_cost for n in nodes)
     metrics.gauge_set("armada_cost_total", total_cost)
     return Response(content=metrics.generate_latest(), media_type="text/plain; charset=utf-8")
 
@@ -863,13 +931,9 @@ def qr_code(url: str = ""):
 
 @app.get("/api/auth/status")
 def auth_status(request: Request):
-    token = request.query_params.get("token")
-    if not token:
-        auth = request.headers.get("Authorization", "")
-        if auth.startswith("Bearer "):
-            token = auth[7:]
+    token = TokenManager.extract_from_request(request)
     return JSONResponse({
-        "valid": token == TOKEN,
+        "valid": bool(token and token == TOKEN),
         "has_token": bool(TOKEN),
         "server_alive": True,
         "uptime": round(_time.time() - SERVER_START_TS, 1) if SERVER_START_TS else 0,
@@ -877,6 +941,9 @@ def auth_status(request: Request):
 
 
 # --- Daemon ---
+
+PID_FILE = constants.PID_FILE
+
 
 def _write_pid():
     os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
@@ -907,7 +974,8 @@ def _daemonize():
     _write_pid()
 
 
-def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = False, keep_token: bool = True):
+def start_server(daemon: bool = True, open_browser: bool = True,
+                 lan: bool = False, keep_token: bool = True):
     host = "0.0.0.0" if lan else HOST
     _ensure_token(keep=keep_token)
 

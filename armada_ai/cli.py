@@ -5,6 +5,15 @@ import socket
 import subprocess
 import platform
 
+from . import constants
+
+
+def _read_token():
+    try:
+        return open(constants.TOKEN_FILE).read().strip()
+    except FileNotFoundError:
+        return ""
+
 
 def _hyperlink(url: str, text: str | None = None) -> str:
     if text is None:
@@ -12,7 +21,7 @@ def _hyperlink(url: str, text: str | None = None) -> str:
     return f"\033]8;;{url}\007{text}\033]8;;\007"
 
 
-def _get_pid_from_port(port: int = 9100) -> int | None:
+def _get_pid_from_port(port: int = constants.DEFAULT_PORT) -> int | None:
     system = platform.system()
     try:
         if system == "Darwin":
@@ -133,12 +142,7 @@ def _lan_ip():
 
 
 def _print_startup_info(lan: bool = False, qr: bool = False):
-    token_file = os.path.expanduser("~/.armada/token")
-    try:
-        token = open(token_file).read().strip()
-    except FileNotFoundError:
-        return
-
+    token = _read_token()
     if not token:
         return
 
@@ -159,13 +163,7 @@ def _print_startup_info(lan: bool = False, qr: bool = False):
 
 
 def _print_token(qr: bool = False, lan: bool = False):
-    token_file = os.path.expanduser("~/.armada/token")
-    try:
-        token = open(token_file).read().strip()
-    except FileNotFoundError:
-        print("No token found. Start Armada first with: armada start", file=sys.stderr)
-        sys.exit(1)
-
+    token = _read_token()
     if not token:
         print("No token found. Start Armada first with: armada start", file=sys.stderr)
         sys.exit(1)
@@ -184,257 +182,6 @@ def _print_token(qr: bool = False, lan: bool = False):
         print(token)
 
 
-def _setup_skills():
-    from . import tmux
-    paths = tmux.install_user_skills()
-    if not paths:
-        print("Could not detect Open Code or Claude Code. Skills not installed.")
-        print("Create .opencode/skills/ or .claude/skills/ in your home directory first.")
-        sys.exit(1)
-    for p in paths:
-        print(f"Installed: {p}")
-    print(f"\nSkills installed to {len(paths)} location(s). Agents will now auto-load Armada skills.")
-
-
-def _status():
-    import sqlite3
-    from . import tmux as _tmux_mod
-
-    pid_file = os.path.expanduser("~/.armada/server.pid")
-    server_running = False
-    server_pid = None
-    if os.path.exists(pid_file):
-        try:
-            server_pid = int(open(pid_file).read().strip())
-            os.kill(server_pid, 0)
-            server_running = True
-        except (ValueError, ProcessLookupError, IOError):
-            pass
-
-    if not server_running:
-        found_pid = _get_pid_from_port(9100)
-        if found_pid:
-            server_pid = found_pid
-            server_running = True
-
-    if server_running:
-        print(f"Server: running (PID {server_pid})")
-    else:
-        print("Server: stopped")
-
-    if _tmux_mod._has_tmux():
-        windows = _tmux_mod.running_window_names()
-        print(f"Tmux:   armada session with {len(windows)} window(s)")
-    else:
-        print("Tmux:   not installed")
-        return
-
-    db_path = os.path.expanduser("~/.armada/armada.db")
-    if not os.path.exists(db_path):
-        print("DB:     not found")
-        return
-
-    conn = sqlite3.connect(db_path, timeout=5)
-    conn.row_factory = sqlite3.Row
-    nodes = conn.execute(
-        "SELECT n.name, n.status, n.colour, n.agent_type, n.created_at, "
-        "  (SELECT message FROM status_reports WHERE node_id = n.id "
-        "   ORDER BY timestamp DESC LIMIT 1) as message "
-        "FROM nodes n WHERE n.killed_at IS NULL AND n.hidden_at IS NULL "
-        "ORDER BY n.created_at DESC"
-    ).fetchall()
-    conn.close()
-
-    if not nodes:
-        print("Nodes:  none active")
-        return
-
-    print(f"Nodes:  {len(nodes)} active\n")
-    for n in nodes:
-        status_icon = {"active": "+", "idle": "-", "pending": "?", "error": "!"}.get(n["status"], " ")
-        msg = n["message"] or ""
-        if len(msg) > 50:
-            msg = msg[:47] + "..."
-        print(f"  [{status_icon}] {n['name']:<20} {n['status']:<8} {n['agent_type']:<10} {msg}")
-
-
-def _doctor(nuke: bool = False):
-    import glob
-    from . import tmux as _tmux_mod
-
-    print("Armada Doctor")
-    print("=" * 40)
-
-    if nuke:
-        print("\n[NUKE] Killing ALL armada tmux sessions and resetting DB...")
-        result = subprocess.run(
-            ["tmux", "list-sessions", "-F", "#{session_name}"],
-            capture_output=True, text=True,
-        )
-        if result.returncode == 0:
-            killed = 0
-            for session in result.stdout.strip().split("\n"):
-                if session.startswith("armada") or session.startswith("_view_"):
-                    subprocess.run(["tmux", "kill-session", "-t", session],
-                                   capture_output=True)
-                    killed += 1
-            print(f"  Killed {killed} tmux session(s)")
-
-        db_path = os.path.expanduser("~/.armada/armada.db")
-        if os.path.exists(db_path):
-            import sqlite3
-            conn = sqlite3.connect(db_path)
-            conn.execute("DELETE FROM status_reports")
-            conn.execute("DELETE FROM nodes")
-            conn.commit()
-            conn.close()
-            print("  Reset DB (cleared nodes and reports)")
-
-        temps = glob.glob("/tmp/_armada_*")
-        for f in temps:
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-        if temps:
-            print(f"  Removed {len(temps)} temp file(s)")
-
-        print("\nDone. Fresh start.")
-        return
-
-    # 0. Kill stale armada server processes
-    print("\n[0] Stale server processes")
-    current_server_pid = None
-    pid_file = os.path.expanduser("~/.armada/server.pid")
-    if os.path.exists(pid_file):
-        try:
-            current_server_pid = int(open(pid_file).read().strip())
-        except (ValueError, IOError):
-            pass
-
-    stale_killed = 0
-    db_path = os.path.expanduser("~/.armada/armada.db")
-    if os.path.exists(db_path):
-        pids = _get_db_lock_pids(db_path, current_server_pid)
-        for pid in pids:
-            try:
-                cmdline = subprocess.run(
-                    ["ps", "-p", str(pid), "-o", "command="],
-                    capture_output=True, text=True,
-                ).stdout.strip()
-                if "armada" in cmdline and "python" in cmdline.lower():
-                    os.kill(pid, signal.SIGTERM)
-                    stale_killed += 1
-            except (ProcessLookupError, PermissionError):
-                pass
-
-    if stale_killed:
-        print(f"  Killed {stale_killed} stale server process(es)")
-    else:
-        print("  None found")
-
-    if os.path.exists(db_path):
-        try:
-            import sqlite3
-            conn = sqlite3.connect(db_path, timeout=5)
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-            conn.close()
-        except Exception:
-            pass
-
-    # 1. Kill orphaned _view_* sessions
-    print("\n[1] Orphaned _view_* sessions")
-    result = subprocess.run(
-        ["tmux", "list-sessions", "-F", "#{session_name}"],
-        capture_output=True, text=True,
-    )
-    if result.returncode == 0:
-        sessions = result.stdout.strip().split("\n")
-        view_sessions = [s for s in sessions if s.startswith("_view_")]
-        if view_sessions:
-            for session in view_sessions:
-                subprocess.run(["tmux", "kill-session", "-t", session],
-                               capture_output=True)
-            print(f"  Killed {len(view_sessions)} orphaned view session(s)")
-        else:
-            print("  None found")
-    else:
-        print("  tmux not running")
-
-    # 2. Kill duplicate armada-N grouped sessions
-    print("\n[2] Duplicate armada-N sessions")
-    if result.returncode == 0:
-        dupes = [s for s in sessions if s.startswith("armada-") and s[7:].isdigit()]
-        if dupes:
-            for session in dupes:
-                subprocess.run(["tmux", "kill-session", "-t", session],
-                               capture_output=True)
-            print(f"  Killed {len(dupes)} duplicate session(s)")
-        else:
-            print("  None found")
-
-    # 3. Sync DB — mark nodes dead if their tmux window is gone
-    print("\n[3] Stale DB nodes (tmux window gone)")
-    if os.path.exists(db_path):
-        import sqlite3
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        live_nodes = conn.execute(
-            "SELECT id, name FROM nodes WHERE killed_at IS NULL AND hidden_at IS NULL"
-        ).fetchall()
-
-        running = _tmux_mod.running_window_names()
-        stale = [(r["id"], r["name"]) for r in live_nodes if r["name"] not in running]
-
-        if stale:
-            for node_id, name in stale:
-                conn.execute(
-                    "UPDATE nodes SET killed_at = datetime('now'), status = 'dead' WHERE id = ?",
-                    (node_id,),
-                )
-            conn.commit()
-            print(f"  Marked {len(stale)} node(s) as dead: {', '.join(n for _, n in stale)}")
-        else:
-            print("  All DB nodes have live tmux windows")
-        conn.close()
-    else:
-        print("  No DB found (nothing to sync)")
-
-    # 4. Clean up /tmp/_armada_* temp files
-    print("\n[4] Temp files (/tmp/_armada_*)")
-    temps = glob.glob("/tmp/_armada_*")
-    if temps:
-        for f in temps:
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-        print(f"  Removed {len(temps)} file(s)")
-    else:
-        print("  None found")
-
-    # 5. Clean up stale hooks
-    print("\n[5] Stale hook files")
-    hooks_dir = os.path.expanduser("~/.armada/hooks")
-    if os.path.isdir(hooks_dir):
-        running = _tmux_mod.running_window_names()
-        removed = 0
-        for hook_file in os.listdir(hooks_dir):
-            if hook_file.endswith(".md"):
-                node_name = hook_file[:-3]
-                if node_name not in running:
-                    os.remove(os.path.join(hooks_dir, hook_file))
-                    removed += 1
-        if removed:
-            print(f"  Removed {removed} stale hook file(s)")
-        else:
-            print("  None found")
-    else:
-        print("  No hooks directory")
-
-    print("\nDone.")
-
-
 def _stop_server():
     pid_file = os.path.expanduser("~/.armada/server.pid")
     try:
@@ -451,7 +198,7 @@ def _stop_server():
         except OSError:
             pass
 
-    found_pid = _get_pid_from_port(9100)
+    found_pid = _get_pid_from_port(constants.DEFAULT_PORT)
     if found_pid:
         try:
             os.kill(found_pid, signal.SIGTERM)
@@ -534,11 +281,7 @@ def _setup_skills():
     skill_dir = os.path.abspath(skill_dir)
     print(f"Installing skills from {skill_dir}...")
 
-    from .server import TOKEN_FILE
-    try:
-        token = open(TOKEN_FILE).read().strip()
-    except FileNotFoundError:
-        token = ""
+    token = _read_token()
 
     if token:
         os.environ["ARMADA_AUTH_TOKEN"] = token
@@ -549,7 +292,7 @@ def _setup_skills():
 
     claude_hooks = os.path.expanduser("~/.claude/hooks")
     if os.path.isdir(claude_hooks):
-        tmux._deploy_claude_hooks(skill_dir)
+        tmux.deploy_claude_hooks(skill_dir)
         print(f"  Claude Code hooks deployed to {claude_hooks}")
     else:
         print("  Claude Code hooks directory not found (skip)")
@@ -589,7 +332,7 @@ def _doctor(nuke: bool = False):
 
     # 2. Check server
     print("\n[2] Server process")
-    found_pid = _get_pid_from_port(9100)
+    found_pid = _get_pid_from_port(constants.DEFAULT_PORT)
     pid_file = os.path.expanduser("~/.armada/server.pid")
     pid_file_pid = None
     try:
@@ -599,11 +342,11 @@ def _doctor(nuke: bool = False):
         pass
 
     if found_pid:
-        print(f"  Listening on port 9100 (PID {found_pid})")
+        print(f"  Listening on port {constants.DEFAULT_PORT} (PID {found_pid})")
     elif pid_file_pid:
         try:
             os.kill(pid_file_pid, 0)
-            print(f"  PID file says {pid_file_pid} (but not on port 9100)")
+            print(f"  PID file says {pid_file_pid} (but not on port {constants.DEFAULT_PORT})")
         except OSError:
             print(f"  PID file says {pid_file_pid} (process is dead — cleaning up)")
             os.remove(pid_file)

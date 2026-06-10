@@ -123,17 +123,19 @@ class TestNodeOperations:
 class TestSyncProjects:
     def test_sync_projects_from_json(self, temp_db, monkeypatch, tmp_path):
         import json
+        import armada_ai.constants as const_mod
         projects_file = tmp_path / "projects.json"
         projects_data = [{"id": "jsonproj", "name": "JSON Project", "path": str(tmp_path)}]
         projects_file.write_text(json.dumps(projects_data))
-        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        monkeypatch.setattr(const_mod, "PROJECTS_FILE", str(projects_file))
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
         assert any(lb["id"] == "jsonproj" for lb in labels)
 
     def test_sync_projects_creates_file(self, temp_db, monkeypatch, tmp_path):
+        import armada_ai.constants as const_mod
         projects_file = tmp_path / "nonexistent.json"
-        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        monkeypatch.setattr(const_mod, "PROJECTS_FILE", str(projects_file))
         temp_db.add_project_label("dblabel", "DB Label", str(tmp_path))
         temp_db._sync_projects_from_json()
         import json
@@ -141,9 +143,10 @@ class TestSyncProjects:
         assert any(p["id"] == "dblabel" for p in data)
 
     def test_sync_projects_json_corrupt(self, temp_db, monkeypatch, tmp_path):
+        import armada_ai.constants as const_mod
         projects_file = tmp_path / "corrupt.json"
         projects_file.write_text("{invalid json")
-        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        monkeypatch.setattr(const_mod, "PROJECTS_FILE", str(projects_file))
         temp_db.add_project_label("goodlabel", "Good", str(tmp_path))
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
@@ -202,7 +205,7 @@ class TestRecover:
         assert result == []
 
     def test_recover_live_nodes_finds_running(self, temp_db):
-        nid = temp_db.create_node("runner", "#333")
+        temp_db.create_node("runner", "#333")
         result = temp_db.recover_live_nodes({"runner"})
         assert len(result) == 1
         assert result[0]["name"] == "runner"
@@ -274,7 +277,7 @@ class TestQueries:
         assert "n2" in names
 
     def test_existing_names_excludes_hidden(self, temp_db):
-        nid = temp_db.create_node("visible", "#111")
+        temp_db.create_node("visible", "#111")
         temp_db.create_node("hidden_one", "#222")
         nid_hidden = temp_db.get_node_by_name("hidden_one")["id"]
         temp_db.kill_node(nid_hidden)
@@ -318,7 +321,7 @@ class TestBuildTree:
         assert tree[0]["children"][0]["name"] == "child"
 
     def test_build_tree_excludes_dead(self, temp_db):
-        nid = temp_db.create_node("live", "#111")
+        temp_db.create_node("live", "#111")
         nid2 = temp_db.create_node("dead", "#222")
         temp_db.kill_node(nid2)
         tree = temp_db.build_tree(include_dead=False)
@@ -328,7 +331,7 @@ class TestBuildTree:
 
     def test_build_tree_dead_node_with_parent(self, temp_db):
         pid = temp_db.create_node("p", "#aaa")
-        cid = temp_db.create_node("c", "#bbb", parent_id=pid)
+        temp_db.create_node("c", "#bbb", parent_id=pid)
         temp_db.kill_node(pid)
         tree = temp_db.build_tree(include_dead=True)
         names = {n["name"] for n in tree}
@@ -366,12 +369,13 @@ class TestPruneReports:
 class TestSyncProjectsEdgeCases:
     def test_sync_updates_existing(self, temp_db, monkeypatch, tmp_path):
         import json
+        import armada_ai.constants as const_mod
         temp_db.add_project_label("up", "Old Name", str(tmp_path))
 
         projects_file = tmp_path / "projects.json"
         projects_data = [{"id": "up", "name": "New Name", "path": str(tmp_path)}]
         projects_file.write_text(json.dumps(projects_data))
-        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        monkeypatch.setattr(const_mod, "PROJECTS_FILE", str(projects_file))
 
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
@@ -380,6 +384,7 @@ class TestSyncProjectsEdgeCases:
 
     def test_sync_json_has_extra_ids(self, temp_db, monkeypatch, tmp_path):
         import json
+        import armada_ai.constants as const_mod
         db_path = tmp_path / "dbproj"
         db_path.mkdir()
         temp_db.add_project_label("indb", "In DB", str(db_path))
@@ -389,7 +394,7 @@ class TestSyncProjectsEdgeCases:
         projects_file = tmp_path / "projects.json"
         projects_data = [{"id": "injson", "name": "In JSON", "path": str(json_path)}]
         projects_file.write_text(json.dumps(projects_data))
-        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+        monkeypatch.setattr(const_mod, "PROJECTS_FILE", str(projects_file))
 
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
@@ -398,9 +403,10 @@ class TestSyncProjectsEdgeCases:
         assert "injson" in ids
 
     def test_sync_json_missing_file(self, temp_db, monkeypatch, tmp_path):
+        import armada_ai.constants as const_mod
         temp_db.add_project_label("persist", "X", str(tmp_path))
         nonexistent = tmp_path / "does_not_exist.json"
-        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(nonexistent))
+        monkeypatch.setattr(const_mod, "PROJECTS_FILE", str(nonexistent))
         temp_db._sync_projects_from_json()
         labels = temp_db.list_project_labels()
         assert any(lb["id"] == "persist" for lb in labels)
