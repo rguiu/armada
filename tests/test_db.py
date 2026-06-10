@@ -186,3 +186,221 @@ class TestWriteLock:
             t.join()
 
         assert len(errors) == 0
+
+
+class TestRecover:
+    def test_recover_nodes_marks_dead(self, temp_db):
+        temp_db.create_node("alive1", "#111")
+        temp_db.create_node("alive2", "#222")
+        running = {"alive1"}
+        temp_db.recover_nodes(running)
+        assert temp_db.get_node_by_name("alive1") is not None
+        assert temp_db.get_node_by_name("alive2") is None
+
+    def test_recover_live_nodes_empty(self, temp_db):
+        result = temp_db.recover_live_nodes(set())
+        assert result == []
+
+    def test_recover_live_nodes_finds_running(self, temp_db):
+        nid = temp_db.create_node("runner", "#333")
+        result = temp_db.recover_live_nodes({"runner"})
+        assert len(result) == 1
+        assert result[0]["name"] == "runner"
+
+    def test_recover_live_nodes_skips_dead(self, temp_db):
+        nid = temp_db.create_node("goner", "#444")
+        temp_db.kill_node(nid)
+        result = temp_db.recover_live_nodes({"goner"})
+        assert result == []
+
+
+class TestRenameNode:
+    def test_rename(self, temp_db):
+        nid = temp_db.create_node("oldname", "#555")
+        temp_db.rename_node(nid, "newname")
+        assert temp_db.get_node(nid)["name"] == "newname"
+
+
+class TestKilledNodes:
+    def test_get_killed_nodes(self, temp_db):
+        nid = temp_db.create_node("goner2", "#666")
+        temp_db.kill_node(nid)
+        killed = temp_db.get_killed_nodes(limit=10)
+        assert len(killed) >= 1
+        assert any(k["name"] == "goner2" for k in killed)
+
+
+class TestVacuumAndPrune:
+    def test_vacuum_db(self, temp_db):
+        temp_db.vacuum_db()
+
+    def test_prune_all_old_reports(self, temp_db):
+        nid = temp_db.create_node("pruner", "#777")
+        for i in range(10):
+            temp_db.add_status_report(nid, "active", f"msg {i}")
+        temp_db.prune_all_old_reports(keep=5)
+        reports = temp_db.get_node_reports(nid, limit=10)
+        assert len(reports) <= 5
+
+
+class TestLogCount:
+    def test_increment_log_count(self, temp_db):
+        nid = temp_db.create_node("logger", "#888")
+        temp_db.increment_log_count(nid, 5)
+        node = temp_db.get_node(nid)
+        assert node["log_count"] == 5
+        temp_db.increment_log_count(nid, 3)
+        node = temp_db.get_node(nid)
+        assert node["log_count"] == 8
+
+
+class TestRestartCount:
+    def test_restart_count_initial(self, temp_db):
+        assert temp_db.get_restart_count_for_name("new-node") == 0
+
+    def test_increment_restart_count(self, temp_db):
+        temp_db.increment_restart_count("restarter")
+        assert temp_db.get_restart_count_for_name("restarter") == 1
+        temp_db.increment_restart_count("restarter")
+        assert temp_db.get_restart_count_for_name("restarter") == 2
+
+
+class TestQueries:
+    def test_existing_names(self, temp_db):
+        temp_db.create_node("n1", "#111")
+        temp_db.create_node("n2", "#222")
+        names = temp_db.existing_names()
+        assert "n1" in names
+        assert "n2" in names
+
+    def test_existing_names_excludes_hidden(self, temp_db):
+        nid = temp_db.create_node("visible", "#111")
+        temp_db.create_node("hidden_one", "#222")
+        nid_hidden = temp_db.get_node_by_name("hidden_one")["id"]
+        temp_db.kill_node(nid_hidden)
+        temp_db.hide_node(nid_hidden)
+        names = temp_db.existing_names()
+        assert "visible" in names
+        assert "hidden_one" not in names
+
+    def test_active_colours(self, temp_db):
+        temp_db.create_node("c1", "#abc")
+        temp_db.create_node("c2", "#def")
+        colours = temp_db.active_colours()
+        assert "#abc" in colours
+        assert "#def" in colours
+
+
+class TestGetNodesByProject:
+    def test_get_nodes_by_project_label_id(self, temp_db):
+        temp_db.add_project_label("p", "Project", "/tmp/p")
+        temp_db.create_node("np1", "#111", project_label_id="p")
+        temp_db.create_node("np2", "#222", project_label_id="p")
+        nodes = temp_db.get_nodes_by_project_label_id("p")
+        names = {n["name"] for n in nodes}
+        assert "np1" in names
+        assert "np2" in names
+
+
+class TestBuildTree:
+    def test_build_tree_flat(self, temp_db):
+        temp_db.create_node("root1", "#111")
+        temp_db.create_node("root2", "#222")
+        tree = temp_db.build_tree(include_dead=True)
+        assert len(tree) == 2
+
+    def test_build_tree_nested(self, temp_db):
+        pid = temp_db.create_node("parent", "#111")
+        temp_db.create_node("child", "#222", parent_id=pid)
+        tree = temp_db.build_tree(include_dead=True)
+        assert len(tree) == 1
+        assert len(tree[0]["children"]) == 1
+        assert tree[0]["children"][0]["name"] == "child"
+
+    def test_build_tree_excludes_dead(self, temp_db):
+        nid = temp_db.create_node("live", "#111")
+        nid2 = temp_db.create_node("dead", "#222")
+        temp_db.kill_node(nid2)
+        tree = temp_db.build_tree(include_dead=False)
+        names = {n["name"] for n in tree}
+        assert "live" in names
+        assert "dead" not in names
+
+    def test_build_tree_dead_node_with_parent(self, temp_db):
+        pid = temp_db.create_node("p", "#aaa")
+        cid = temp_db.create_node("c", "#bbb", parent_id=pid)
+        temp_db.kill_node(pid)
+        tree = temp_db.build_tree(include_dead=True)
+        names = {n["name"] for n in tree}
+        assert "p" in names or "c" in names
+
+
+class TestCreateNodeReactivation:
+    def test_create_reactivates_dead(self, temp_db):
+        nid = temp_db.create_node("phoenix", "#111")
+        temp_db.kill_node(nid)
+        new_id = temp_db.create_node("phoenix", "#222")
+        node = temp_db.get_node(new_id)
+        assert node["status"] == "idle"
+        assert node["colour"] == "#222"
+
+    def test_create_reactivates_hidden(self, temp_db):
+        nid = temp_db.create_node("returner", "#111")
+        temp_db.kill_node(nid)
+        temp_db.hide_node(nid)
+        new_id = temp_db.create_node("returner", "#333")
+        node = temp_db.get_node(new_id)
+        assert node["status"] == "idle"
+        assert node["colour"] == "#333"
+
+
+class TestPruneReports:
+    def test_prune_reports_threshold(self, temp_db):
+        nid = temp_db.create_node("heavy", "#999")
+        for i in range(55):
+            temp_db.add_status_report(nid, "active", f"msg {i}")
+        reports = temp_db.get_node_reports(nid, limit=300)
+        assert len(reports) <= 200
+
+
+class TestSyncProjectsEdgeCases:
+    def test_sync_updates_existing(self, temp_db, monkeypatch, tmp_path):
+        import json
+        temp_db.add_project_label("up", "Old Name", str(tmp_path))
+
+        projects_file = tmp_path / "projects.json"
+        projects_data = [{"id": "up", "name": "New Name", "path": str(tmp_path)}]
+        projects_file.write_text(json.dumps(projects_data))
+        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+
+        temp_db._sync_projects_from_json()
+        labels = temp_db.list_project_labels()
+        label = next(lb for lb in labels if lb["id"] == "up")
+        assert label["name"] == "New Name"
+
+    def test_sync_json_has_extra_ids(self, temp_db, monkeypatch, tmp_path):
+        import json
+        db_path = tmp_path / "dbproj"
+        db_path.mkdir()
+        temp_db.add_project_label("indb", "In DB", str(db_path))
+
+        json_path = tmp_path / "jsonproj"
+        json_path.mkdir()
+        projects_file = tmp_path / "projects.json"
+        projects_data = [{"id": "injson", "name": "In JSON", "path": str(json_path)}]
+        projects_file.write_text(json.dumps(projects_data))
+        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(projects_file))
+
+        temp_db._sync_projects_from_json()
+        labels = temp_db.list_project_labels()
+        ids = {lb["id"] for lb in labels}
+        assert "indb" in ids
+        assert "injson" in ids
+
+    def test_sync_json_missing_file(self, temp_db, monkeypatch, tmp_path):
+        temp_db.add_project_label("persist", "X", str(tmp_path))
+        nonexistent = tmp_path / "does_not_exist.json"
+        monkeypatch.setattr(temp_db, "PROJECTS_FILE", str(nonexistent))
+        temp_db._sync_projects_from_json()
+        labels = temp_db.list_project_labels()
+        assert any(lb["id"] == "persist" for lb in labels)
