@@ -616,7 +616,10 @@ a { color: var(--accent); }
   <div id="extensions-section">
     <div class="section-header">
       <span class="section-title">Extensions</span>
-      <button class="section-add" onclick="toggleExtensions()" id="ext-toggle">&#9654;</button>
+      <div style="display:flex;gap:4px">
+        <button class="section-add" onclick="openModal('ext-modal')" title="Add extension">+ Add</button>
+        <button class="section-add" onclick="toggleExtensions()" id="ext-toggle">&#9654;</button>
+      </div>
     </div>
     <div id="extensions-content" style="display:none">
       <div id="extensions-list"></div>
@@ -699,6 +702,28 @@ a { color: var(--accent); }
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeModal('label-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="createLabel()">Create</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Extension Modal ── -->
+<div class="modal-overlay" id="ext-modal">
+  <div class="modal">
+    <h3>New Extension</h3>
+    <label>Type</label>
+    <select id="ext-type">
+      <option value="skill">Skill</option>
+      <option value="hook">Hook</option>
+      <option value="plugin">Plugin</option>
+    </select>
+    <label>Name</label>
+    <input type="text" id="ext-name" placeholder="e.g. my-custom-skill">
+    <label>Code</label>
+    <textarea id="ext-code" placeholder="# Paste or write your extension code here..." rows="10"
+      style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid var(--border-light);background:var(--bg-input);color:var(--text);font-size:12px;resize:vertical;font-family:Menlo,Monaco,monospace"></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('ext-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createExtension()">Create</button>
     </div>
   </div>
 </div>
@@ -1967,6 +1992,26 @@ async function installExtension(extId, projectId) {
     });
     selectExtension(extId);
     toast('Extension installed');
+  } catch(e) {
+    toast('Failed: ' + e.message, true);
+  }
+}
+
+async function createExtension() {
+  const type = document.getElementById('ext-type').value;
+  const name = document.getElementById('ext-name').value.trim();
+  const code = document.getElementById('ext-code').value.trim();
+  if (!name || !code) { toast('Name and code are required', true); return; }
+  try {
+    await api('/api/extensions/create', {
+      method: 'POST',
+      body: JSON.stringify({type: type, name: name, code: code}),
+    });
+    closeModal('ext-modal');
+    document.getElementById('ext-name').value = '';
+    document.getElementById('ext-code').value = '';
+    loadExtensions();
+    toast('Extension created');
   } catch(e) {
     toast('Failed: ' + e.message, true);
   }

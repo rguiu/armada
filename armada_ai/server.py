@@ -831,6 +831,34 @@ def list_extensions():  # pragma: no cover
             ext_id = f"plugin-{f.stem}"
             extensions.append({"id": ext_id, "type": "plugin", "name": f.name, "description": ""})
 
+    # Scan custom extensions from ~/.armada/extensions/
+    custom_dir = Path.home() / ".armada" / "extensions"
+    for sub in ("skills", "hooks", "plugins"):
+        sub_path = custom_dir / sub
+        if not sub_path.is_dir():
+            continue
+        for entry in sorted(sub_path.iterdir()):
+            if sub == "skills" and entry.is_dir():
+                md = entry / "SKILL.md"
+                if md.is_file():
+                    ext_id = f"custom-{entry.name}"
+                    desc = ""
+                    try:
+                        for line in md.read_text().split("\n"):
+                            s = line.strip()
+                            if s and not s.startswith("#") and not s.startswith(">") and len(s) > 5:
+                                desc = s[:200]
+                                break
+                    except Exception:
+                        pass
+                    extensions.append({"id": ext_id, "type": "skill", "name": entry.name, "description": desc, "source": "custom"})
+            elif sub == "hooks" and entry.is_file() and entry.name.endswith(".sh"):
+                ext_id = f"custom-hook-{entry.stem}"
+                extensions.append({"id": ext_id, "type": "hook", "name": entry.name, "description": "Custom hook", "source": "custom"})
+            elif sub == "plugins" and entry.is_file():
+                ext_id = f"custom-plugin-{entry.stem}"
+                extensions.append({"id": ext_id, "type": "plugin", "name": entry.name, "description": "Custom plugin", "source": "custom"})
+
     labels = db.list_project_labels()
     for ext in extensions:
         ext["projects"] = []
@@ -866,7 +894,13 @@ def extension_content(extension_id: str):
     from pathlib import Path
     repo_root = Path(__file__).parent.parent
     paths = []
-    if extension_id.startswith("hook-"):
+    if extension_id.startswith("custom-hook-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "hooks" / f"{extension_id[12:]}.sh")
+    elif extension_id.startswith("custom-plugin-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "plugins" / f"{extension_id[14:]}")
+    elif extension_id.startswith("custom-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "skills" / extension_id[7:] / "SKILL.md")
+    elif extension_id.startswith("hook-"):
         paths.append(repo_root / "armada_ai" / "hooks" / f"{extension_id[5:]}.sh")
     elif extension_id.startswith("plugin-"):
         for suffix in (".ts", ".js"):
@@ -906,8 +940,10 @@ async def install_extension_endpoint(request: Request):  # pragma: no cover
     copied = []
 
     if extension_id.startswith("hook-"):
-        hook_name = extension_id[5:]
+        hook_name = extension_id[5:].removeprefix("custom-")
         src = repo_root / "armada_ai" / "hooks" / f"{hook_name}.sh"
+        if not src.exists():
+            src = _Path.home() / ".armada" / "extensions" / "hooks" / f"{hook_name}.sh"
         if src.exists():
             dst_dir = target / ".claude" / "hooks"
             dst_dir.mkdir(parents=True, exist_ok=True)
@@ -917,21 +953,26 @@ async def install_extension_endpoint(request: Request):  # pragma: no cover
             copied.append(str(dst))
 
     elif extension_id.startswith("plugin-"):
-        plugin_name = extension_id[7:]
+        plugin_name = extension_id[7:].removeprefix("custom-")
         dst_dir = target / ".opencode" / "plugins"
         dst_dir.mkdir(parents=True, exist_ok=True)
         for suffix in (".ts", ".js"):
             src = repo_root / ".opencode" / "plugins" / f"{plugin_name}{suffix}"
+            if not src.exists():
+                src = _Path.home() / ".armada" / "extensions" / "plugins" / f"{plugin_name}{suffix}"
             if src.exists():
                 dst = dst_dir / f"{plugin_name}{suffix}"
                 shutil.copy2(src, dst)
                 copied.append(str(dst))
 
     else:
-        src = repo_root / "skills" / extension_id / "SKILL.md"
+        skill_name = extension_id.removeprefix("custom-")
+        src = repo_root / "skills" / skill_name / "SKILL.md"
+        if not src.exists():
+            src = _Path.home() / ".armada" / "extensions" / "skills" / skill_name / "SKILL.md"
         if src.exists():
             for agent_dir in (".opencode", ".claude"):
-                dst_dir = target / agent_dir / "skills" / extension_id
+                dst_dir = target / agent_dir / "skills" / skill_name
                 dst_dir.mkdir(parents=True, exist_ok=True)
                 dst = dst_dir / "SKILL.md"
                 shutil.copy2(src, dst)
@@ -941,6 +982,37 @@ async def install_extension_endpoint(request: Request):  # pragma: no cover
         raise HTTPException(status_code=404, detail="Extension source file not found")
 
     return JSONResponse({"ok": True, "copied": copied})
+
+
+@app.post("/api/extensions/create")
+async def create_extension_endpoint(request: Request):  # pragma: no cover
+    """Save a custom extension to ~/.armada/extensions/."""
+    from pathlib import Path as _Path
+
+    body = await request.json()
+    ext_type = body.get("type", "skill")
+    name = body.get("name", "").strip()
+    code = body.get("code", "").strip()
+
+    if not name or not code:
+        raise HTTPException(status_code=400, detail="name and code are required")
+    if ext_type not in ("skill", "hook", "plugin"):
+        raise HTTPException(status_code=400, detail="type must be skill, hook, or plugin")
+
+    ext_dir = _Path.home() / ".armada" / "extensions"
+    ext_dir.mkdir(parents=True, exist_ok=True)
+
+    if ext_type == "skill":
+        dst = ext_dir / "skills" / name / "SKILL.md"
+    elif ext_type == "hook":
+        dst = ext_dir / "hooks" / f"{name}.sh"
+    else:
+        dst = ext_dir / "plugins" / f"{name}.ts"
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(code)
+
+    return JSONResponse({"ok": True, "path": str(dst)})
 
 
 # --- Maintenance ---
