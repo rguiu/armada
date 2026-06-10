@@ -589,11 +589,13 @@ a { color: var(--accent); }
   <div id="extensions-section" style="border-top:1px solid var(--border);padding:8px">
     <div class="section-header">
       <span class="section-title">Extensions</span>
-      <button class="section-add" onclick="toggleExtensions()" id="ext-toggle" title="Show/hide extensions manager">Show</button>
+      <div style="display:flex;gap:4px">
+        <button class="section-add" onclick="toggleExtensions()" id="ext-toggle">&#9654;</button>
+      </div>
     </div>
     <div id="extensions-content" style="display:none">
       <div style="margin-bottom:6px;font-size:10px;color:var(--text-dim)">
-        Filter: <a href="#" onclick="loadExtensions('all')" style="color:var(--accent)">all</a> ·
+        <a href="#" onclick="loadExtensions('all')" style="color:var(--accent)">all</a> ·
         <a href="#" onclick="loadExtensions('skill')" style="color:var(--accent)">skills</a> ·
         <a href="#" onclick="loadExtensions('hook')" style="color:var(--accent)">hooks</a> ·
         <a href="#" onclick="loadExtensions('plugin')" style="color:var(--accent)">plugins</a>
@@ -1827,7 +1829,7 @@ let _extFilter = 'all';
 function toggleExtensions() {
   _extOpen = !_extOpen;
   document.getElementById('extensions-content').style.display = _extOpen ? 'block' : 'none';
-  document.getElementById('ext-toggle').textContent = _extOpen ? 'Hide' : 'Show';
+  document.getElementById('ext-toggle').innerHTML = _extOpen ? '&#9660;' : '&#9654;';
   if (_extOpen) loadExtensions(_extFilter);
 }
 
