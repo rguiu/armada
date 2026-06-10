@@ -1914,7 +1914,7 @@ async function selectExtension(extId) {
 
   const detail = document.getElementById('detail');
   detail.classList.add('proj-view');
-  document.getElementById('main-title').innerHTML = '<span style="color:var(--text-dim)">Extensions</span>';
+  document.getElementById('main-title').innerHTML = '<span style="color:var(--text-dim)">Extension</span>';
 
   try {
     const [exts, labels] = await Promise.all([
@@ -1924,39 +1924,59 @@ async function selectExtension(extId) {
     const ext = exts.find(e => e.id === extId);
     if (!ext) return;
 
-    const desc = ext.description || 'No description available.';
-    const installedIn = exts.filter(e => e.id === extId && e.assigned_project).map(e => e.assigned_project);
+    const installedIn = exts.filter(e => e.id === extId && e.assigned_project && e.enabled === 1).map(e => e.assigned_project);
     const isGlobal = exts.some(e => e.id === extId && e.assigned_project === null && e.enabled === 1);
 
-    let installHtml = labels.map(l => {
+    let installHtml = '<div style="margin-top:8px">';
+    
+    labels.forEach(l => {
       const installed = installedIn.includes(l.id);
-      return `<div class="label-item">
-        <span>${esc(l.name)}</span>
-        <span style="font-size:10px">${l.path ? esc(l.path) : ''}</span>
+      installHtml += `<div class="label-item">
+        <div><span>${esc(l.name)}</span><span style="font-size:10px;color:var(--text-dim);margin-left:8px">${esc(l.path)}</span></div>
         ${installed
-          ? `<button class="label-del" style="visibility:visible" onclick="removeExt('${ext.id}','${l.id}')">x</button>`
+          ? `<span style="font-size:11px;color:var(--green)">installed</span>`
           : `<button class="btn btn-outline-blue btn-sm" onclick="installExt('${ext.id}','${l.id}')">install</button>`
         }
       </div>`;
-    }).join('');
+    });
 
-    if (!isGlobal) {
-      installHtml += `<div class="label-item">
-        <span>Global</span><span style="font-size:10px;color:var(--text-dim)">~/.config</span>
-        <button class="btn btn-outline-blue btn-sm" onclick="installExt('${ext.id}','')">install</button>
-      </div>`;
-    }
+    installHtml += `<div class="label-item">
+      <div><span>Global</span><span style="font-size:10px;color:var(--text-dim);margin-left:8px">~/.config</span></div>
+      ${isGlobal
+        ? `<span style="font-size:11px;color:var(--green)">installed</span>`
+        : `<button class="btn btn-outline-blue btn-sm" onclick="installExt('${ext.id}','')">install</button>`
+      }
+    </div></div>`;
 
     detail.innerHTML = `
       <h2>${esc(ext.name)}</h2>
-      <div style="color:var(--text-dim);font-size:12px;text-transform:uppercase;margin-bottom:12px">${ext.type}</div>
-      <div style="color:var(--text);margin-bottom:16px;line-height:1.5">${esc(desc)}</div>
-      ${isGlobal ? '<div style="color:var(--green);font-size:11px;margin-bottom:8px">✓ Installed globally</div>' : ''}
-      <h3>Install to project</h3>
-      <div style="margin-top:8px">${installHtml}</div>
+      <div style="color:var(--accent);font-size:11px;text-transform:uppercase;margin-bottom:4px">${ext.type}</div>
+      <div style="color:var(--text-muted);margin-bottom:8px;font-size:12px;line-height:1.5">${esc(ext.description || 'No description available.')}</div>
+      <button class="btn btn-outline btn-sm" onclick="toggleExtContent('${ext.id}')" style="margin-bottom:16px">View source</button>
+      <div id="ext-content-${ext.id}" style="display:none;margin-bottom:16px">
+        <pre id="ext-content-text-${ext.id}" style="font-size:10px;background:var(--bg);color:var(--text-muted);padding:12px;border-radius:4px;border:1px solid var(--border);max-height:300px;overflow:auto;white-space:pre-wrap;font-family:Menlo,Monaco,monospace">Loading...</pre>
+      </div>
+      <h3>Installed in</h3>
+      ${installHtml}
     `;
   } catch(_) {
     detail.innerHTML = '<div style="color:var(--red);padding:12px">Failed to load extension details</div>';
+  }
+}
+
+let _extContentLoaded = {};
+async function toggleExtContent(extId) {
+  const el = document.getElementById('ext-content-' + extId);
+  if (!el) return;
+  if (el.style.display === 'block') { el.style.display = 'none'; return; }
+  el.style.display = 'block';
+  if (_extContentLoaded[extId]) return;
+  try {
+    const data = await api('/api/extensions/' + extId + '/content');
+    document.getElementById('ext-content-text-' + extId).textContent = data.content;
+    _extContentLoaded[extId] = true;
+  } catch(_) {
+    document.getElementById('ext-content-text-' + extId).textContent = 'Failed to load.';
   }
 }
 

@@ -836,6 +836,35 @@ def project_extensions(project_label_id: str):
     return JSONResponse(db.get_project_extensions(project_label_id))
 
 
+@app.get("/api/extensions/{extension_id}/content")
+def extension_content(extension_id: str):
+    """Read the raw content of an extension's source file."""
+    from pathlib import Path
+    repo_root = Path(__file__).parent.parent
+
+    paths = []
+    if extension_id.startswith("hook-"):
+        paths.append(repo_root / "armada_ai" / "hooks" / f"{extension_id[5:]}.sh")
+    elif extension_id.startswith("plugin-"):
+        plugin_name = extension_id[7:]
+        for suffix in (".ts", ".js"):
+            p = repo_root / ".opencode" / "plugins" / f"{plugin_name}{suffix}"
+            if p.exists():
+                paths.append(p)
+    else:
+        paths.append(repo_root / "skills" / extension_id / "SKILL.md")
+
+    for p in paths:
+        if p.exists():
+            try:
+                content = p.read_text()
+                return JSONResponse({"id": extension_id, "path": str(p), "content": content})
+            except Exception:
+                raise HTTPException(status_code=500, detail="Failed to read file")
+
+    raise HTTPException(status_code=404, detail="Extension file not found")
+
+
 # --- Maintenance ---
 
 @app.post("/api/refresh-hooks")
