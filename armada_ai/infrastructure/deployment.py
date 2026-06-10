@@ -203,26 +203,109 @@ def save_agent_hook(agent_name: str) -> str:
 
 
 def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
-    """Install skills and agent-specific hooks/plugins for a new node."""
+    """Install extensions assigned to the project, falling back to defaults if none."""
     from .. import logs
-    try:
-        install_skills_to_project(cwd)
-    except Exception as e:
-        logs.log_event("_server", "deploy_error",
-                       {"step": "install_skills", "cwd": cwd, "error": str(e)})
+    from ..infrastructure import database as db
 
-    if agent_type == "opencode":
+    labels = db.list_project_labels()
+    cwd_abs = os.path.abspath(cwd)
+    label = next((lb for lb in labels if lb.path == cwd_abs), None)
+    assigned = db.get_project_extensions(label.id) if label else []
+
+    if assigned:
+        for ext in assigned:
+            try:
+                deploy_extension(ext["id"], cwd, agent_type)
+            except Exception as e:
+                logs.log_event("_server", "deploy_error",
+                               {"step": ext["id"], "cwd": cwd, "error": str(e)})
+    else:
         try:
-            _deploy_pending_plugin(cwd)
+            install_skills_to_project(cwd)
         except Exception as e:
             logs.log_event("_server", "deploy_error",
-                           {"step": "pending_plugin", "cwd": cwd, "error": str(e)})
-
-    if agent_type == "claude":
-        try:
-            deploy_claude_hooks(cwd)
-        except Exception as e:
-            logs.log_event("_server", "deploy_error",
-                           {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
+                           {"step": "install_skills", "cwd": cwd, "error": str(e)})
+        if agent_type == "opencode":
+            try:
+                _deploy_pending_plugin(cwd)
+            except Exception as e:
+                logs.log_event("_server", "deploy_error",
+                               {"step": "pending_plugin", "cwd": cwd, "error": str(e)})
+        if agent_type == "claude":
+            try:
+                deploy_claude_hooks(cwd)
+            except Exception as e:
+                logs.log_event("_server", "deploy_error",
+                               {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
 
     save_agent_hook(agent_name)
+
+
+def deploy_extension(extension_id: str, target_dir: str, agent_type: str | None = None):  # pragma: no cover
+    """Deploy a specific extension to a target directory.
+    
+    extension_id examples: 'armada-node', 'hook-claude-pre-tool', 'plugin-armada-pending'
+    target_dir: project root or user home directory.
+    """
+    from pathlib import Path
+
+    target = Path(target_dir)
+
+    if extension_id.startswith("hook-"):
+        hook_name = extension_id[5:]
+        src = _HOOKS_SRC / f"{hook_name}.sh"
+        if src.exists():
+            hooks_dst = target / ".claude" / "hooks"
+            hooks_dst.mkdir(parents=True, exist_ok=True)
+            dst = hooks_dst / f"{hook_name}.sh"
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+            return str(dst)
+
+    elif extension_id.startswith("plugin-"):
+        plugin_name = extension_id[7:]
+        for suffix in (".ts", ".js"):
+            src = _PLUGIN_SRC_DIR / f"{plugin_name}{suffix}"
+            if src.exists():
+                plugins_dst = target / ".opencode" / "plugins"
+                plugins_dst.mkdir(parents=True, exist_ok=True)
+                dst = plugins_dst / f"{plugin_name}{suffix}"
+                shutil.copy2(src, dst)
+        return str(plugins_dst)
+
+    else:
+        src = _SKILLS_SRC / extension_id / "SKILL.md"
+        if src.exists():
+            skills_dst = None
+            for d in (".opencode", ".claude"):
+                sd = target / d / "skills" / extension_id
+                if (target / d).exists() or d == ".opencode":
+                    skills_dst = sd
+                    break
+            if skills_dst is None:
+                skills_dst = target / ".opencode" / "skills" / extension_id
+            skills_dst.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, skills_dst / "SKILL.md")
+            return str(skills_dst)
+
+    return None
+
+
+def deploy_extensions_for_project(project_dir: str):
+    """Install all extensions assigned to a project (uses the registry)."""
+    from ..infrastructure import database as db
+
+    labels = db.list_project_labels()
+    label = next((lb for lb in labels if lb.path == os.path.abspath(project_dir)), None)
+    if not label:
+        return
+
+    exts = db.get_project_extensions(label.id)
+    if not exts:
+        return
+
+    for ext in exts:
+        try:
+            deploy_extension(ext["id"], project_dir)
+        except Exception:
+            pass

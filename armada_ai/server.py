@@ -805,6 +805,16 @@ async def install_extension_endpoint(request: Request):
         raise HTTPException(status_code=400, detail="extension_id is required")
 
     db.install_extension(extension_id, project_label_id)
+
+    target_dir = os.path.expanduser("~")
+    if project_label_id:
+        path = db.get_project_label_path(project_label_id)
+        if path and os.path.isdir(path):
+            target_dir = path
+
+    from .infrastructure import deployment as deploy
+    deploy.deploy_extension(extension_id, target_dir)
+
     return JSONResponse({"ok": True})
 
 
