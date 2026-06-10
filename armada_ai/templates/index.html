@@ -595,14 +595,6 @@ a { color: var(--accent); }
   <svg id="chart-agents" width="256" height="48" style="display:block;border-radius:4px;background:var(--bg)"></svg>
 </div>
 <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
-  <div id="pending-section" style="border-bottom:1px solid rgba(251,191,36,0.25);padding:8px;background:rgba(251,191,36,0.05)">
-    <div class="section-header">
-      <span class="section-title" style="color:var(--yellow)">&#9679; Pending</span>
-    </div>
-    <div id="pending-list">
-      <div style="color:var(--text-dim);font-size:11px;padding:4px 0">No pending permissions.</div>
-    </div>
-  </div>
   <div id="tree"><div class="loading-tree"><div class="spinner"></div> Loading agents...</div></div>
   <div id="batch-bar">
     <span class="count" id="batch-count">0 selected</span>
@@ -660,7 +652,7 @@ a { color: var(--accent); }
   </div>
   <div id="pending-bar" style="display:none"></div>
   <div id="detail">
-    <div class="empty-detail">Select a node from the sidebar to view details and activity</div>
+    <div class="empty-detail" id="empty-detail">Select a node from the sidebar to view details and activity</div>
   </div>
   <div id="terminal-pane">
     <div id="terminal-bar">
@@ -2250,29 +2242,40 @@ function updateStats() {
   document.getElementById('stat-pending').innerHTML = '<span class="stat-dot pending"></span> ' + counts.pending;
   document.getElementById('stat-cost').textContent = '$' + totalCost.toFixed(2);
 
-  const list = document.getElementById('pending-list');
+  const empty = document.getElementById('empty-detail');
   if (!pendingNodes.length) {
-    list.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px 0">No pending permissions.</div>';
     document.getElementById('pending-dot').classList.remove('show');
+    if (!selectedNodeId) {
+      empty.style.display = '';
+      empty.innerHTML = 'Select a node from the sidebar to view details and activity';
+    }
     return;
   }
   document.getElementById('pending-dot').classList.add('show');
-  list.innerHTML = pendingNodes.map(n => `
-    <div class="perm-bar" style="margin:4px 0;padding:8px 10px;font-size:11px;flex-wrap:wrap">
-      <div style="flex:1;min-width:0">
-        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
-          <span class="dot" style="width:6px;height:6px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
-          <span style="font-weight:600;cursor:pointer;color:var(--text)" onclick="selectNodeById(${n.id})">${esc(n.name)}</span>
-        </div>
-        <div class="perm-msg" style="font-size:11px;margin:0">${esc(n.latest_message || 'Waiting for permission...')}</div>
-      </div>
-      <div class="perm-btns" style="flex-shrink:0;padding-top:4px">
-        <button class="btn btn-primary btn-sm" onclick="replyPermission(${n.id},'y')">Allow Once</button>
-        <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${n.id},'a')">Allow Always</button>
-        <button class="btn btn-danger btn-sm" onclick="replyPermission(${n.id},'n')">Deny</button>
-      </div>
-    </div>
-  `).join('');
+
+  if (!selectedNodeId) {
+    empty.style.display = '';
+    empty.innerHTML = `
+      <div style="text-align:left;max-width:600px;width:100%">
+        <h3 style="color:var(--yellow);margin-bottom:12px">&#9679; Pending Permissions (${pendingNodes.length})</h3>
+        ${pendingNodes.map(n => `
+          <div class="perm-bar" style="margin:8px 0;padding:12px 16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
+                <span style="font-weight:600;cursor:pointer;font-size:13px" onclick="selectNodeById(${n.id})">${esc(n.name)}</span>
+              </div>
+              <div style="color:var(--text-muted);font-size:12px">${esc(n.latest_message || 'Waiting for permission...')}</div>
+            </div>
+            <div class="perm-btns" style="flex-shrink:0;padding-top:8px">
+              <button class="btn btn-primary btn-sm" onclick="replyPermission(${n.id},'y')">Allow Once</button>
+              <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${n.id},'a')">Allow Always</button>
+              <button class="btn btn-danger btn-sm" onclick="replyPermission(${n.id},'n')">Deny</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>`;
+  }
 }
 
 function _hasPending(node) {
