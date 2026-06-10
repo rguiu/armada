@@ -1,14 +1,16 @@
 import os
 import re
 
-CONFIG_PATH = os.path.expanduser("~/.armada/config.yaml")
+from . import constants
+
+CONFIG_PATH = constants.CONFIG_PATH
 
 DEFAULTS = {
-    "port": 9100,
-    "host": "127.0.0.1",
+    "port": constants.DEFAULT_PORT,
+    "host": constants.DEFAULT_HOST,
     "default_agent": "opencode",
-    "health_interval": 15,
-    "max_restarts": 3,
+    "health_interval": constants.DEFAULT_HEALTH_INTERVAL,
+    "max_restarts": constants.MAX_RESTARTS,
     "projects": [],
 }
 

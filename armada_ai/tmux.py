@@ -1,5 +1,6 @@
 import subprocess
 import shutil
+import shlex
 import os
 import re
 import json
@@ -10,8 +11,9 @@ import platform
 from pathlib import Path
 
 from . import logs
+from . import constants
 
-HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
+HOOKS_DIR = constants.HOOKS_DIR
 ARMADA_SESSION = "armada"
 WORKSPACES_DIR = os.path.expanduser("~/.armada/workspaces")
 
@@ -189,7 +191,7 @@ def _deploy_pending_plugin(cwd: str):
         pass
 
 
-def _deploy_claude_hooks(cwd: str):
+def deploy_claude_hooks(cwd: str):
     """Install Claude Code hooks for status reporting."""
     hooks_dst = Path(cwd) / ".claude" / "hooks"
     hooks_dst.mkdir(parents=True, exist_ok=True)
@@ -247,7 +249,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
     ensure_armada_session()
 
     cwd = os.path.abspath(working_dir)
-    safe_dir = cwd.replace("'", "'\\''")
+    safe_dir = shlex.quote(cwd)
     safe_name = name.replace("'", "'\\''")
 
     # Install armada skills into the project so the agent loads them
@@ -266,7 +268,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
     # For claude nodes, install hooks for pending status detection
     if agent_type == "claude":
         try:
-            _deploy_claude_hooks(cwd)
+            deploy_claude_hooks(cwd)
         except Exception as e:
             logs.log_event("_server", "deploy_error", {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
 
@@ -361,12 +363,6 @@ def capture_pane_content(name: str, max_lines: int = 200) -> str:
     if result.returncode != 0:
         return ""
     return result.stdout
-    zdotdir = _zdotdirs.pop(name, None)
-    if zdotdir:
-        try:
-            shutil.rmtree(zdotdir, ignore_errors=True)
-        except Exception:
-            pass
 
 
 def window_exists(name: str) -> bool:

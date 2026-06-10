@@ -1005,7 +1005,7 @@ class TestCLI:
 
         token_file = tmp_path / "token"
         token_file.write_text("my-token-123")
-        monkeypatch.setattr(cli_mod.os.path, "expanduser", lambda p: str(token_file) if "token" in p else p)
+        monkeypatch.setattr(cli_mod.constants, "TOKEN_FILE", str(token_file))
 
         import io
         import sys
@@ -1020,7 +1020,7 @@ class TestCLI:
 
         token_file = tmp_path / "token"
         token_file.write_text("my-token-123")
-        monkeypatch.setattr(cli_mod.os.path, "expanduser", lambda p: str(token_file) if "token" in p else p)
+        monkeypatch.setattr(cli_mod.constants, "TOKEN_FILE", str(token_file))
 
         import io
         import sys
@@ -1035,7 +1035,7 @@ class TestCLI:
         """_print_token exits 1 when no token file exists."""
         import armada_ai.cli as cli_mod
 
-        monkeypatch.setattr(cli_mod.os.path, "expanduser", lambda p: str(tmp_path / "nonexistent"))
+        monkeypatch.setattr(cli_mod.constants, "TOKEN_FILE", str(tmp_path / "nonexistent"))
 
         with pytest.raises(SystemExit) as exc:
             cli_mod._print_token()

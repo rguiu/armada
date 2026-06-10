@@ -4,14 +4,16 @@ import json
 import threading
 import time
 
-DB_DIR = os.path.expanduser("~/.armada")
-DB_PATH = os.path.join(DB_DIR, "armada.db")
-PROJECTS_FILE = os.path.join(DB_DIR, "projects.json")
+from . import constants
+
+DB_DIR = constants.DATA_DIR
+DB_PATH = constants.DB_PATH
+PROJECTS_FILE = constants.PROJECTS_FILE
 _write_lock = threading.Lock()
 _conn: sqlite3.Connection | None = None
 _conn_lock = threading.Lock()
-_MAX_RETRIES = 5
-_RETRY_BASE_DELAY = 0.05
+_MAX_RETRIES = constants.MAX_RETRIES
+_RETRY_BASE_DELAY = constants.RETRY_BASE_DELAY
 
 
 def _ensure_dir():
@@ -47,24 +49,13 @@ def close_connection():
             _conn = None
 
 
-def _execute(fn):
-    last_error = None
-    for attempt in range(_MAX_RETRIES):
-        with _write_lock:
-            try:
-                return fn()
-            except sqlite3.OperationalError as e:
-                last_error = e
-                if "locked" not in str(e).lower():
-                    raise
-                time.sleep(_RETRY_BASE_DELAY * (attempt + 1))
-    raise last_error
-
-
-def _execute_read(fn):
+def _retry(fn, *, write: bool = False):
     last_error = None
     for attempt in range(_MAX_RETRIES):
         try:
+            if write:
+                with _write_lock:
+                    return fn()
             return fn()
         except sqlite3.OperationalError as e:
             last_error = e
@@ -183,7 +174,7 @@ def add_project_label(id: str, name: str, path: str):
                     f"Remove it first."
                 ) from e
             raise
-    _execute(_do)
+    _retry(_do, write=True)
     _save_projects_to_json()
 
 
@@ -192,7 +183,7 @@ def delete_project_label(id: str):
         conn = _get_conn()
         conn.execute("DELETE FROM project_labels WHERE id = ?", (id,))
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
     _save_projects_to_json()
 
 
@@ -234,7 +225,7 @@ def create_node(name: str, colour: str, parent_id: int | None = None,
             conn.commit()
             row = conn.execute("SELECT id FROM nodes WHERE name = ?", (name,)).fetchone()
             return row[0]
-    return _execute(_do)
+    return _retry(_do, write=True)
 
 
 def kill_node(node_id: int) -> list[dict]:
@@ -256,7 +247,7 @@ def kill_node(node_id: int) -> list[dict]:
                 (current,),
             )
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
     return killed
 
 
@@ -271,7 +262,7 @@ def update_node_status(node_id: int, status: str, tmux_pane_id: str | None = Non
         params.append(node_id)
         conn.execute(f"UPDATE nodes SET {', '.join(parts)} WHERE id = ?", params)
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def add_status_report(node_id: int, status: str, message: str | None = None):
@@ -283,7 +274,7 @@ def add_status_report(node_id: int, status: str, message: str | None = None):
         )
         conn.execute("UPDATE nodes SET status = ? WHERE id = ?", (status, node_id))
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
     _prune_reports_if_needed(node_id)
 
 
@@ -310,7 +301,7 @@ def _prune_old_reports(node_id: int, keep: int = 200):
             )
         """, (node_id, keep))
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def prune_all_old_reports(keep: int = 200):
@@ -323,7 +314,7 @@ def prune_all_old_reports(keep: int = 200):
             )
         """, (keep,))
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def vacuum_db():
@@ -331,7 +322,7 @@ def vacuum_db():
         conn = _get_conn()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.execute("PRAGMA optimize")
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def accumulate_cost(node_id: int, tokens_in: int = 0, tokens_out: int = 0, cost: float = 0.0):
@@ -345,7 +336,7 @@ def accumulate_cost(node_id: int, tokens_in: int = 0, tokens_out: int = 0, cost:
             (tokens_in, tokens_out, cost, node_id),
         )
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def increment_log_count(node_id: int, count: int = 1):
@@ -356,7 +347,7 @@ def increment_log_count(node_id: int, count: int = 1):
             (count, node_id),
         )
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def get_node(node_id: int):
@@ -508,7 +499,7 @@ def hide_node(node_id: int) -> list[dict]:
                 (current,),
             )
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
     return hidden
 
 
@@ -520,7 +511,7 @@ def reparent_node(node_id: int, parent_id: int | None):
             (parent_id, node_id),
         )
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def rename_node(node_id: int, new_name: str):
@@ -531,7 +522,7 @@ def rename_node(node_id: int, new_name: str):
             (new_name, node_id),
         )
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def recover_nodes(running_names: set[str]):
@@ -549,7 +540,7 @@ def recover_nodes(running_names: set[str]):
                 (row["id"],),
             )
         conn.commit()
-    _execute(_do)
+    _retry(_do, write=True)
 
 
 def recover_live_nodes(running_names: set[str]) -> list[dict]:

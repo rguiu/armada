@@ -22,6 +22,7 @@ from . import health
 from . import logs
 from . import metrics
 from . import config
+from . import constants
 
 _ANSI_RE = re.compile(
     r'\x1b\[[0-9;]*[a-zA-Z]'
@@ -34,8 +35,8 @@ app = FastAPI(title="Armada")
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
-PID_FILE = os.path.expanduser("~/.armada/server.pid")
-TOKEN_FILE = os.path.expanduser("~/.armada/token")
+PID_FILE = constants.PID_FILE
+TOKEN_FILE = constants.TOKEN_FILE
 HOST = config.get("host")
 PORT = config.get("port")
 
@@ -707,7 +708,7 @@ def refresh_hooks():
             continue
         try:
             tmux.install_skills(path)
-            tmux._deploy_claude_hooks(path)
+            tmux.deploy_claude_hooks(path)
             updated.append(label["id"])
         except Exception:
             pass
@@ -803,7 +804,7 @@ def server_info():
         "lan_ip": _lan_ip(),
         "port": PORT,
         "uptime": round(uptime_seconds, 1),
-        "version": "0.2.0",
+        "version": constants.VERSION,
         "started_at": SERVER_START_TS,
     })
 
@@ -826,7 +827,7 @@ def health_check():
         "pending": pending,
         "idle": idle,
         "uptime": round(uptime_seconds, 1),
-        "version": "0.2.0",
+        "version": constants.VERSION,
     })
 
 
