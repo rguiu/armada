@@ -171,11 +171,11 @@ async def startup():
         def _notify_recovery():
             _time.sleep(2)
             try:
-                for name in names:
-                    rid = next((n["id"] for n in recovered if n["name"] == name), 0)
-                    if rid:
-                        db.add_status_report(rid, "idle",
-                                             "server restarted — reconnected to agent")
+                for n in recovered:
+                    node = db.get_node(n["id"])
+                    status = node.status if node else "idle"
+                    db.add_status_report(n["id"], status,
+                                         "server restarted — reconnected to agent")
             except Exception:
                 pass
         threading.Thread(target=_notify_recovery, daemon=True).start()
@@ -196,7 +196,8 @@ def _recover_on_startup():
         if name not in running:
             continue
         logs.log_recover(name)
-        db.add_status_report(node.id, "idle", "server restarted — reconnected to tmux window")
+        db.add_status_report(node.id, node.status,
+            "server restarted — reconnected to tmux window")
         recovered.append(node.as_summary())
     db.recover_nodes(running)
     return recovered
