@@ -586,6 +586,21 @@ a { color: var(--accent); }
     </div>
     <div id="labels-list"></div>
   </div>
+  <div id="extensions-section" style="border-top:1px solid var(--border);padding:8px">
+    <div class="section-header">
+      <span class="section-title">Extensions</span>
+      <button class="section-add" onclick="toggleExtensions()" id="ext-toggle" title="Show/hide extensions manager">Show</button>
+    </div>
+    <div id="extensions-content" style="display:none">
+      <div style="margin-bottom:6px;font-size:10px;color:var(--text-dim)">
+        Filter: <a href="#" onclick="loadExtensions('all')" style="color:var(--accent)">all</a> ·
+        <a href="#" onclick="loadExtensions('skill')" style="color:var(--accent)">skills</a> ·
+        <a href="#" onclick="loadExtensions('hook')" style="color:var(--accent)">hooks</a> ·
+        <a href="#" onclick="loadExtensions('plugin')" style="color:var(--accent)">plugins</a>
+      </div>
+      <div id="extensions-list" style="max-height:200px;overflow-y:auto"></div>
+    </div>
+  </div>
   <div id="qr-section">
     <div class="section-header">
       <span class="section-title">Connect Phone</span>
@@ -1803,6 +1818,54 @@ function fetchQR(url) {
     .then(blob => {
       document.getElementById('qr-image').src = URL.createObjectURL(blob);
     });
+}
+
+/* ── Extensions Manager ── */
+let _extOpen = false;
+let _extFilter = 'all';
+
+function toggleExtensions() {
+  _extOpen = !_extOpen;
+  document.getElementById('extensions-content').style.display = _extOpen ? 'block' : 'none';
+  document.getElementById('ext-toggle').textContent = _extOpen ? 'Hide' : 'Show';
+  if (_extOpen) loadExtensions(_extFilter);
+}
+
+async function loadExtensions(filter) {
+  _extFilter = filter || _extFilter;
+  try {
+    const r = await api('/api/extensions');
+    let exts = await r.json();
+    if (_extFilter !== 'all') exts = exts.filter(e => e.type === _extFilter);
+    const container = document.getElementById('extensions-list');
+    if (!exts.length) {
+      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px">No extensions found</div>';
+      return;
+    }
+    container.innerHTML = exts.map(ext => `
+      <div style="padding:3px 4px;font-size:11px;display:flex;align-items:center;gap:6px;border-radius:3px" onmouseenter="this.style.background='var(--hover)'" onmouseleave="this.style.background='none'">
+        <span style="color:var(--text-dim);font-size:10px;min-width:30px">${ext.type}</span>
+        <span style="flex:1;color:var(--text)">${esc(ext.name)}</span>
+        ${ext.assigned_project
+          ? `<span style="font-size:10px;color:var(--green)">installed${ext.assigned_project !== 'global' ? ': ' + ext.assigned_project : ''}</span>`
+          : `<button onclick="installExt('${ext.id}')" style="font-size:10px;background:none;border:1px solid var(--border-light);color:var(--accent);cursor:pointer;border-radius:3px;padding:1px 6px">install</button>`
+        }
+      </div>
+    `).join('');
+  } catch(_) {}
+}
+
+async function installExt(id) {
+  try {
+    await api('/api/extensions/install', {
+      method: 'POST',
+      body: JSON.stringify({extension_id: id}),
+    });
+    loadExtensions(_extFilter);
+    toast('Extension installed globally');
+  } catch(e) {
+    toast('Failed: ' + e.message, true);
+  }
 }
 
 /* ── Init ── */

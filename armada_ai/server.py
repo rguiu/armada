@@ -777,6 +777,44 @@ def global_skills():
     return JSONResponse(list_project_skills(os.path.expanduser("~")))
 
 
+# --- Extensions Manager ---
+
+@app.get("/api/extensions")
+def list_extensions(project: str | None = None):
+    return JSONResponse(db.list_extensions(project_label_id=project))
+
+
+@app.post("/api/extensions/install")
+async def install_extension_endpoint(request: Request):
+    body = await request.json()
+    extension_id = body.get("extension_id")
+    project_label_id = body.get("project_label_id") or None
+
+    if not extension_id:
+        raise HTTPException(status_code=400, detail="extension_id is required")
+
+    db.install_extension(extension_id, project_label_id)
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/extensions/remove")
+async def remove_extension_endpoint(request: Request):
+    body = await request.json()
+    extension_id = body.get("extension_id")
+    project_label_id = body.get("project_label_id") or None
+
+    if not extension_id:
+        raise HTTPException(status_code=400, detail="extension_id is required")
+
+    db.remove_extension_assignment(extension_id, project_label_id)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/extensions/project/{project_label_id}")
+def project_extensions(project_label_id: str):
+    return JSONResponse(db.get_project_extensions(project_label_id))
+
+
 # --- Maintenance ---
 
 @app.post("/api/refresh-hooks")

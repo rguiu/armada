@@ -38,6 +38,11 @@ increment_restart_count = _db.increment_restart_count
 snapshot_stats = _db.snapshot_stats
 get_hourly_stats = _db.get_hourly_stats
 get_stats_summary = _db.get_stats_summary
+scan_builtin_extensions = _db.scan_builtin_extensions
+list_extensions = _db.list_extensions
+install_extension = _db.install_extension
+remove_extension_assignment = _db.remove_extension_assignment
+get_project_extensions = _db.get_project_extensions
 _sync_projects_from_json = _db._sync_projects_from_json
 
 

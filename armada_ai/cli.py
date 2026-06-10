@@ -109,8 +109,11 @@ def main():
     elif args[0] == "service":
         _service_cmd(args[1:])
 
+    elif args[0] == "extensions":
+        _extensions_cmd(args[1:])
+
     else:
-        print("Usage: armada [start|stop|attach|setup|token|doctor|status|config|service] [--lan] [--qr] [--keep-token]")
+        print("Usage: armada [start|stop|attach|setup|token|doctor|status|config|service|extensions] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
         print("  attach       Start server in foreground (for debugging)")
@@ -120,6 +123,7 @@ def main():
         print("  status       Show server and node status")
         print("  config       Show or manage configuration (~/.armada/config.yaml)")
         print("  service      Install as system service (launchd/systemd)")
+        print("  extensions   List, install, or remove skills/hooks/plugins")
         print("  --lan        Bind to / use LAN IP (for other devices on network)")
         print("  --qr         Show QR code (with token command)")
         print("  --keep-token Reuse existing token (don't regenerate on restart)")
@@ -310,6 +314,61 @@ def _status():
         print(f"Agents: {data.get('agents',0)} (active={data.get('active',0)} pending={data.get('pending',0)} idle={data.get('idle',0)})")
     except Exception:
         print("Armada server: not reachable")
+
+
+def _extensions_cmd(subargs: list[str]):
+    from . import db as _db_mod
+
+    if not subargs or subargs[0] == "list":
+        _db_mod.init_db()
+        _db_mod.scan_builtin_extensions()
+        extensions = _db_mod.list_extensions()
+        by_type = {}
+        for ext in extensions:
+            by_type.setdefault(ext["type"], []).append(ext)
+        for etype in ("skill", "hook", "plugin"):
+            items = by_type.get(etype, [])
+            if not items:
+                continue
+            print(f"\n{etype.upper()}S ({len(items)})")
+            for ext in items:
+                installed = "global" if ext["assigned_project"] is None else ext["assigned_project"] if ext["assigned_project"] else "-"
+                status = "✓" if ext["assigned_project"] is not None else " "
+                print(f"  [{status}] {ext['name']:<30} {installed:<10} {ext.get('description', '')[:60]}")
+        return
+
+    if subargs[0] == "install":
+        if len(subargs) < 2:
+            print("Usage: armada extensions install <id> [--project <label>]")
+            return
+        ext_id = subargs[1]
+        project = None
+        if "--project" in subargs:
+            idx = subargs.index("--project")
+            if idx + 1 < len(subargs):
+                project = subargs[idx + 1]
+        _db_mod.init_db()
+        _db_mod.install_extension(ext_id, project)
+        target = f"project {project}" if project else "globally"
+        print(f"Installed {ext_id} to {target}")
+
+    elif subargs[0] == "remove":
+        if len(subargs) < 2:
+            print("Usage: armada extensions remove <id> [--project <label>]")
+            return
+        ext_id = subargs[1]
+        project = None
+        if "--project" in subargs:
+            idx = subargs.index("--project")
+            if idx + 1 < len(subargs):
+                project = subargs[idx + 1]
+        _db_mod.init_db()
+        _db_mod.remove_extension_assignment(ext_id, project)
+        target = f"project {project}" if project else "globally"
+        print(f"Removed {ext_id} from {target}")
+
+    else:
+        print("Usage: armada extensions [list|install <id>|remove <id>] [--project <label>]")
 
 
 def _doctor(nuke: bool = False):
