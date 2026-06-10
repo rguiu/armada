@@ -595,11 +595,13 @@ a { color: var(--accent); }
   <svg id="chart-agents" width="256" height="48" style="display:block;border-radius:4px;background:var(--bg)"></svg>
 </div>
 <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
-  <div id="pending-section" style="display:none;border-bottom:1px solid rgba(251,191,36,0.25);padding:8px;background:rgba(251,191,36,0.05)">
+  <div id="pending-section" style="border-bottom:1px solid rgba(251,191,36,0.25);padding:8px;background:rgba(251,191,36,0.05)">
     <div class="section-header">
-      <span class="section-title" style="color:var(--yellow)">&#9679; Pending Permissions</span>
+      <span class="section-title" style="color:var(--yellow)">&#9679; Pending</span>
     </div>
-    <div id="pending-list"></div>
+    <div id="pending-list">
+      <div style="color:var(--text-dim);font-size:11px;padding:4px 0">No pending permissions.</div>
+    </div>
   </div>
   <div id="tree"><div class="loading-tree"><div class="spinner"></div> Loading agents...</div></div>
   <div id="batch-bar">
@@ -2248,14 +2250,12 @@ function updateStats() {
   document.getElementById('stat-pending').innerHTML = '<span class="stat-dot pending"></span> ' + counts.pending;
   document.getElementById('stat-cost').textContent = '$' + totalCost.toFixed(2);
 
-  const section = document.getElementById('pending-section');
   const list = document.getElementById('pending-list');
   if (!pendingNodes.length) {
-    section.style.display = 'none';
+    list.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px 0">No pending permissions.</div>';
     document.getElementById('pending-dot').classList.remove('show');
     return;
   }
-  section.style.display = 'block';
   document.getElementById('pending-dot').classList.add('show');
   list.innerHTML = pendingNodes.map(n => `
     <div class="perm-bar" style="margin:4px 0;padding:8px 10px;font-size:11px;flex-wrap:wrap">
