@@ -205,7 +205,7 @@ class TestRecover:
         assert result == []
 
     def test_recover_live_nodes_finds_running(self, temp_db):
-        nid = temp_db.create_node("runner", "#333")
+        temp_db.create_node("runner", "#333")
         result = temp_db.recover_live_nodes({"runner"})
         assert len(result) == 1
         assert result[0]["name"] == "runner"
@@ -277,7 +277,7 @@ class TestQueries:
         assert "n2" in names
 
     def test_existing_names_excludes_hidden(self, temp_db):
-        nid = temp_db.create_node("visible", "#111")
+        temp_db.create_node("visible", "#111")
         temp_db.create_node("hidden_one", "#222")
         nid_hidden = temp_db.get_node_by_name("hidden_one")["id"]
         temp_db.kill_node(nid_hidden)
@@ -321,7 +321,7 @@ class TestBuildTree:
         assert tree[0]["children"][0]["name"] == "child"
 
     def test_build_tree_excludes_dead(self, temp_db):
-        nid = temp_db.create_node("live", "#111")
+        temp_db.create_node("live", "#111")
         nid2 = temp_db.create_node("dead", "#222")
         temp_db.kill_node(nid2)
         tree = temp_db.build_tree(include_dead=False)
@@ -331,7 +331,7 @@ class TestBuildTree:
 
     def test_build_tree_dead_node_with_parent(self, temp_db):
         pid = temp_db.create_node("p", "#aaa")
-        cid = temp_db.create_node("c", "#bbb", parent_id=pid)
+        temp_db.create_node("c", "#bbb", parent_id=pid)
         temp_db.kill_node(pid)
         tree = temp_db.build_tree(include_dead=True)
         names = {n["name"] for n in tree}

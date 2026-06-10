@@ -27,12 +27,13 @@ from .infrastructure import database as db
 from . import tmux as tmux
 from .infrastructure.auth_manager import TokenManager, AuthExemptPaths
 from .infrastructure import deployment
-from .infrastructure import terminal_attach
 from .project_explorer import (
     list_project_skills, list_project_plugins, list_project_hooks,
     get_project_config, get_project_git_info,
 )
 from .domain.models import AgentStatus, CreateNodeRequest, AgentReportRequest
+from .transport.middleware import _CSP_HEADER
+from .transport.static_assets import manifest_route, service_worker_route, app_icon_route
 
 
 _ANSI_RE = re.compile(
@@ -119,8 +120,6 @@ def _check_token(request: Request) -> bool:
 
 
 # --- Middleware ---
-
-from .transport.middleware import _CSP_HEADER
 
 
 @app.middleware("http")
@@ -301,19 +300,16 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 
 @app.get("/manifest.json")
 def manifest():
-    from .transport.static_assets import manifest_route
     return manifest_route()
 
 
 @app.get("/sw.js")
 def service_worker():
-    from .transport.static_assets import service_worker_route
     return service_worker_route()
 
 
 @app.get("/icon.svg")
 def app_icon():
-    from .transport.static_assets import app_icon_route
     return app_icon_route()
 
 

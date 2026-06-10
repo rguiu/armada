@@ -5,7 +5,6 @@ Deployment (skills, hooks, plugins) moved to deployment.py.
 Terminal attach logic moved to terminal_attach.py.
 """
 import os
-import re
 import shlex
 import shutil
 import subprocess

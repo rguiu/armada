@@ -1,6 +1,4 @@
 """Tests for armada_ai.config."""
-import os
-import pytest
 from armada_ai import config
 
 
