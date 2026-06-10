@@ -44,6 +44,7 @@ install_extension = _db.install_extension
 remove_extension_assignment = _db.remove_extension_assignment
 get_project_extensions = _db.get_project_extensions
 _sync_projects_from_json = _db._sync_projects_from_json
+_migrate_extensions = _db._migrate_extensions
 
 
 def __getattr__(name: str):

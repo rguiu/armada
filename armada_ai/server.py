@@ -781,10 +781,17 @@ def global_skills():
 
 @app.get("/api/extensions")
 def list_extensions(project: str | None = None):
-    exts = db.list_extensions(project_label_id=project)
-    if not exts or all(e.get("assigned_project") is None and e.get("source") == "armada" for e in exts):
-        db.scan_builtin_extensions()
+    try:
         exts = db.list_extensions(project_label_id=project)
+    except Exception:  # pragma: no cover
+        db._migrate_extensions()  # pragma: no cover
+        exts = []  # pragma: no cover
+    if not exts or not any(e.get("assigned_project") is not None and e.get("source") != "armada" for e in exts):
+        try:
+            db.scan_builtin_extensions()
+            exts = db.list_extensions(project_label_id=project)
+        except Exception:  # pragma: no cover
+            pass
     return JSONResponse(exts)
 
 
