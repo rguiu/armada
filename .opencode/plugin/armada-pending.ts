@@ -45,7 +45,9 @@ export const ArmadaPending = async () => {
     } else if (event.type === "tool.execute.after") {
       post("idle", event.properties.tool + " completed");
     } else if (event.type === "permission.asked") {
-      post("pending", event.properties.permission + " permission: " + (event.properties.patterns || []).join(", "));
+      const perm = event.properties.permission || "unknown";
+      const patterns = (event.properties.patterns || []).join(", ") || "any file";
+      post("pending", perm + " permission for: " + patterns);
     } else if (event.type === "message.part.updated") {
       const part = event.properties?.part;
       if (part?.type === "step-finish" && part.id && !seenCosts.has(part.id)) {

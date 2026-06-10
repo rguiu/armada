@@ -1555,11 +1555,15 @@ async function hideNode(id) {
 }
 
 async function replyPermission(id, key) {
+  let command;
+  if (key === 'y') command = '\n';
+  else if (key === 'a') command = '\t\n';
+  else if (key === 'n') command = '\t\t\n';
   try {
     await api('/api/nodes/' + id + '/send', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({command: key + '\n', raw: true})
+      body: JSON.stringify({command: command, raw: true})
     });
     if (!selectedNodeId) {
       const bar = document.getElementById('pending-bar');
