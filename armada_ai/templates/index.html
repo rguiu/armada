@@ -647,6 +647,7 @@ a { color: var(--accent); }
     <div style="display:flex;align-items:center;gap:8px">
       <button id="menu-toggle" onclick="toggleSidebar()" title="Menu">☰</button>
       <h1 id="main-title">Select a node</h1>
+      <button onclick="deselectNode()" id="deselect-btn" title="Close detail view" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px">&times;</button>
     </div>
     <div class="header-btns" id="header-actions"></div>
   </div>
@@ -1059,8 +1060,22 @@ function selectNode(n) {
   selectedSet.clear();
   refreshBatchBar();
   loadNodeDetail(n.id);
+  document.getElementById('deselect-btn').style.display = '';
   if (window.innerWidth <= 768) closeSidebar();
   if (activeTermNodeId && activeTermNodeId !== n.id) closeTerminal();
+}
+
+function deselectNode() {
+  selectedNodeId = null;
+  _selectedFingerprint = '';
+  document.querySelectorAll('#tree .node-item.selected').forEach(r => r.classList.remove('selected'));
+  document.getElementById('deselect-btn').style.display = 'none';
+  document.getElementById('main-title').textContent = 'Select a node';
+  document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('detail').innerHTML = '<div class="empty-detail" id="empty-detail"></div>';
+  document.getElementById('detail').classList.remove('proj-view');
+  closeTerminal();
+  updateStats();
 }
 
 /* ── Project Overview ── */
