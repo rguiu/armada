@@ -1891,22 +1891,22 @@ async function loadExtensions() {
   try {
     const exts = await api('/api/extensions');
     if (!exts || !exts.length) {
-      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px 8px">No extensions found.</div>';
+      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px 8px">No extensions found</div>';
       return;
     }
-    container.innerHTML = exts.map(ext => `
+    container.innerHTML = exts.map(ext => {
+      const count = ext.projects ? ext.projects.length : 0;
+      return `
       <div class="label-item" onclick="selectExtension('${ext.id}')" id="ext-item-${ext.id}">
         <div style="flex:1;min-width:0">
           <span style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-right:6px">${ext.type}</span>
           <span style="font-size:12px">${esc(ext.name)}</span>
         </div>
-        <span style="font-size:10px;color:${ext.assigned_project ? 'var(--green)' : 'var(--text-dim)'}">
-          ${ext.assigned_project ? '&#10003;' : ''}
-        </span>
-      </div>
-    `).join('');
+        <span style="font-size:10px;color:${count > 0 ? 'var(--green)' : 'var(--text-dim)'}">${count > 0 ? count + ' projects' : ''}</span>
+      </div>`;
+    }).join('');
   } catch(_) {
-    container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px 8px">Failed to load. Restart the server and try again.</div>';
+    container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px 8px">Failed to load. Restart the server.</div>';
   }
 }
 
@@ -1920,36 +1920,21 @@ async function selectExtension(extId) {
   document.getElementById('main-title').innerHTML = '<span style="color:var(--text-dim)">Extension</span>';
 
   try {
-    const [exts, labels] = await Promise.all([
-      api('/api/extensions'),
-      api('/api/project-labels'),
-    ]);
+    const exts = await api('/api/extensions');
     const ext = exts.find(e => e.id === extId);
     if (!ext) return;
 
-    const installedIn = exts.filter(e => e.id === extId && e.assigned_project && e.enabled === 1).map(e => e.assigned_project);
-    const isGlobal = exts.some(e => e.id === extId && e.assigned_project === null && e.enabled === 1);
+    const projects = ext.projects || [];
+    let projHtml = projects.map(p => `
+      <div class="label-item">
+        <div><span>${esc(p.name)}</span><span style="font-size:10px;color:var(--text-dim);margin-left:8px">${esc(p.path)}</span></div>
+        <span style="font-size:11px;color:var(--green)">installed</span>
+      </div>
+    `).join('');
 
-    let installHtml = '<div style="margin-top:8px">';
-    
-    labels.forEach(l => {
-      const installed = installedIn.includes(l.id);
-      installHtml += `<div class="label-item">
-        <div><span>${esc(l.name)}</span><span style="font-size:10px;color:var(--text-dim);margin-left:8px">${esc(l.path)}</span></div>
-        ${installed
-          ? `<span style="font-size:11px;color:var(--green)">installed</span>`
-          : `<button class="btn btn-outline-blue btn-sm" onclick="installExt('${ext.id}','${l.id}')">install</button>`
-        }
-      </div>`;
-    });
-
-    installHtml += `<div class="label-item">
-      <div><span>Global</span><span style="font-size:10px;color:var(--text-dim);margin-left:8px">~/.config</span></div>
-      ${isGlobal
-        ? `<span style="font-size:11px;color:var(--green)">installed</span>`
-        : `<button class="btn btn-outline-blue btn-sm" onclick="installExt('${ext.id}','')">install</button>`
-      }
-    </div></div>`;
+    if (!projHtml) {
+      projHtml = '<div style="color:var(--text-dim);font-size:11px;padding:4px 0">Not installed in any project.</div>';
+    }
 
     detail.innerHTML = `
       <h2>${esc(ext.name)}</h2>
@@ -1959,55 +1944,14 @@ async function selectExtension(extId) {
       <div id="ext-content-${ext.id}" style="display:none;margin-bottom:16px">
         <pre id="ext-content-text-${ext.id}" style="font-size:10px;background:var(--bg);color:var(--text-muted);padding:12px;border-radius:4px;border:1px solid var(--border);max-height:300px;overflow:auto;white-space:pre-wrap;font-family:Menlo,Monaco,monospace">Loading...</pre>
       </div>
-      <h3>Installed in</h3>
-      ${installHtml}
+      <h3>Installed in (${projects.length})</h3>
+      ${projHtml}
     `;
   } catch(_) {
     detail.innerHTML = '<div style="color:var(--red);padding:12px">Failed to load extension details</div>';
   }
 }
 
-let _extContentLoaded = {};
-async function toggleExtContent(extId) {
-  const el = document.getElementById('ext-content-' + extId);
-  if (!el) return;
-  if (el.style.display === 'block') { el.style.display = 'none'; return; }
-  el.style.display = 'block';
-  if (_extContentLoaded[extId]) return;
-  try {
-    const data = await api('/api/extensions/' + extId + '/content');
-    document.getElementById('ext-content-text-' + extId).textContent = data.content;
-    _extContentLoaded[extId] = true;
-  } catch(_) {
-    document.getElementById('ext-content-text-' + extId).textContent = 'Failed to load.';
-  }
-}
-
-async function installExt(id, projectId) {
-  try {
-    await api('/api/extensions/install', {
-      method: 'POST',
-      body: JSON.stringify({extension_id: id, project_label_id: projectId || null}),
-    });
-    selectExtension(id);
-    toast('Extension installed' + (projectId ? ' to project' : ' globally'));
-  } catch(e) {
-    toast('Failed: ' + e.message, true);
-  }
-}
-
-async function removeExt(id, projectId) {
-  try {
-    await api('/api/extensions/remove', {
-      method: 'POST',
-      body: JSON.stringify({extension_id: id, project_label_id: projectId || null}),
-    });
-    selectExtension(id);
-    toast('Extension removed');
-  } catch(e) {
-    toast('Failed: ' + e.message, true);
-  }
-}
 
 /* ── Init ── */
 refreshAll();

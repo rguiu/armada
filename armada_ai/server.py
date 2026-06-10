@@ -780,89 +780,110 @@ def global_skills():
 # --- Extensions Manager ---
 
 @app.get("/api/extensions")
-def list_extensions(project: str | None = None):
-    try:
-        exts = db.list_extensions(project_label_id=project)
-    except Exception:  # pragma: no cover
-        db._migrate_extensions()  # pragma: no cover
-        exts = []  # pragma: no cover
-    if not exts:
-        try:
-            db.scan_builtin_extensions()
-            exts = db.list_extensions(project_label_id=project)
-        except Exception:  # pragma: no cover
-            pass
-    return JSONResponse(exts)
+def list_extensions():  # pragma: no cover
+    """List all extensions and which projects have them installed (filesystem scan)."""
+    from pathlib import Path
+    repo_root = Path(__file__).parent.parent
+    source_skills = repo_root / "skills"
+    source_hooks = repo_root / "armada_ai" / "hooks"
+    source_plugins = repo_root / ".opencode" / "plugins"
 
+    extensions = []
 
-@app.post("/api/extensions/install")
-async def install_extension_endpoint(request: Request):
-    body = await request.json()
-    extension_id = body.get("extension_id")
-    project_label_id = body.get("project_label_id") or None
+    if source_skills.is_dir():
+        for d in sorted(source_skills.iterdir()):
+            if not d.is_dir():
+                continue
+            md = d / "SKILL.md"
+            if not md.is_file():
+                continue
+            desc = ""
+            try:
+                for line in md.read_text().split("\n"):
+                    s = line.strip()
+                    if s and not s.startswith("#") and not s.startswith(">") and len(s) > 5:
+                        desc = s[:200]
+                        break
+            except Exception:
+                pass
+            extensions.append({"id": d.name, "type": "skill", "name": d.name, "description": desc})
 
-    if not extension_id:
-        raise HTTPException(status_code=400, detail="extension_id is required")
+    if source_hooks.is_dir():
+        for f in sorted(source_hooks.iterdir()):
+            if not f.is_file() or not f.name.endswith(".sh"):
+                continue
+            ext_id = f"hook-{f.stem}"
+            desc = ""
+            try:
+                for line in f.read_text().split("\n"):
+                    s = line.strip()
+                    if s.startswith("# ") and len(s) > 8 and "!/" not in s:
+                        desc = s.lstrip("# ").strip()[:200]
+                        break
+            except Exception:
+                pass
+            extensions.append({"id": ext_id, "type": "hook", "name": f.name, "description": desc})
 
-    db.install_extension(extension_id, project_label_id)
+    if source_plugins.is_dir():
+        for f in sorted(source_plugins.iterdir()):
+            if not f.is_file():
+                continue
+            ext_id = f"plugin-{f.stem}"
+            extensions.append({"id": ext_id, "type": "plugin", "name": f.name, "description": ""})
 
-    target_dir = os.path.expanduser("~")
-    if project_label_id:
-        path = db.get_project_label_path(project_label_id)
-        if path and os.path.isdir(path):
-            target_dir = path
+    labels = db.list_project_labels()
+    for ext in extensions:
+        ext["projects"] = []
+        for lb in labels:
+            if not os.path.isdir(lb.path):
+                continue
+            installed = False
+            if ext["type"] == "skill":
+                for agent in ("opencode", "claude"):
+                    skill_path = Path(lb.path) / f".{agent}" / "skills" / ext["id"] / "SKILL.md"
+                    if skill_path.exists():
+                        installed = True
+                        break
+            elif ext["type"] == "hook":
+                hook_path = Path(lb.path) / ".claude" / "hooks" / ext["name"]
+                if hook_path.exists():
+                    installed = True
+            elif ext["type"] == "plugin":
+                for suffix in (".ts", ".js"):
+                    plugin_path = Path(lb.path) / ".opencode" / "plugins" / ext["name"]
+                    alt_path = Path(lb.path) / ".opencode" / "plugin" / ext["name"]
+                    if plugin_path.exists() or alt_path.exists():
+                        installed = True
+                        break
+            if installed:
+                ext["projects"].append({"id": lb.id, "name": lb.name, "path": lb.path})
 
-    from .infrastructure import deployment as deploy
-    deploy.deploy_extension(extension_id, target_dir)
-
-    return JSONResponse({"ok": True})
-
-
-@app.post("/api/extensions/remove")
-async def remove_extension_endpoint(request: Request):
-    body = await request.json()
-    extension_id = body.get("extension_id")
-    project_label_id = body.get("project_label_id") or None
-
-    if not extension_id:
-        raise HTTPException(status_code=400, detail="extension_id is required")
-
-    db.remove_extension_assignment(extension_id, project_label_id)
-    return JSONResponse({"ok": True})
-
-
-@app.get("/api/extensions/project/{project_label_id}")
-def project_extensions(project_label_id: str):
-    return JSONResponse(db.get_project_extensions(project_label_id))
+    return JSONResponse(extensions)
 
 
 @app.get("/api/extensions/{extension_id}/content")
 def extension_content(extension_id: str):
-    """Read the raw content of an extension's source file."""
     from pathlib import Path
     repo_root = Path(__file__).parent.parent
-
     paths = []
     if extension_id.startswith("hook-"):
         paths.append(repo_root / "armada_ai" / "hooks" / f"{extension_id[5:]}.sh")
     elif extension_id.startswith("plugin-"):
-        plugin_name = extension_id[7:]
         for suffix in (".ts", ".js"):
-            p = repo_root / ".opencode" / "plugins" / f"{plugin_name}{suffix}"
+            p = repo_root / ".opencode" / "plugins" / f"{extension_id[7:]}{suffix}"
             if p.exists():
                 paths.append(p)
     else:
         paths.append(repo_root / "skills" / extension_id / "SKILL.md")
-
     for p in paths:
         if p.exists():
             try:
-                content = p.read_text()
-                return JSONResponse({"id": extension_id, "path": str(p), "content": content})
+                return JSONResponse({"id": extension_id, "path": str(p), "content": p.read_text()})
             except Exception:
                 raise HTTPException(status_code=500, detail="Failed to read file")
-
     raise HTTPException(status_code=404, detail="Extension file not found")
+
+
 
 
 # --- Maintenance ---
