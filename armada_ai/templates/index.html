@@ -66,8 +66,17 @@ a { color: var(--accent); }
 
 /* ── Sidebar ── */
 #sidebar {
-  width: 280px; min-width: 280px; background: var(--bg-card); border-right: 1px solid var(--border);
-  display: flex; flex-direction: column; overflow: hidden;
+  width: 280px; min-width: 200px; max-width: 600px;
+  background: var(--bg-card); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow-y: auto; overflow-x: hidden;
+  position: relative; flex-shrink: 0;
+}
+#sidebar-resize {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 4px;
+  cursor: col-resize; z-index: 10;
+}
+#sidebar-resize:hover, #sidebar-resize.dragging {
+  background: var(--accent); width: 3px; right: 1px;
 }
 #sidebar-header {
   padding: 16px; border-bottom: 1px solid var(--border);
@@ -207,6 +216,7 @@ a { color: var(--accent); }
   cursor: pointer; padding: 0 4px;
 }
 #labels-section .section-add:hover { color: var(--text); }
+#labels-list { max-height: 200px; overflow-y: auto; }
 .label-item {
   padding: 4px 8px; font-size: 12px; color: var(--text-muted);
   display: flex; justify-content: space-between; align-items: center;
@@ -234,6 +244,7 @@ a { color: var(--accent); }
   cursor: pointer; padding: 0 4px;
 }
 #extensions-section .section-add:hover { color: var(--text); }
+#extensions-list { max-height: 200px; overflow-y: auto; }
 
 /* ── QR Section ── */
 #qr-section { border-top: 1px solid var(--border); padding: 8px; }
@@ -552,6 +563,7 @@ a { color: var(--accent); }
 
 <!-- ── Sidebar ── -->
 <div id="sidebar">
+  <div id="sidebar-resize"></div>
   <div id="sidebar-header">
     <div style="display:flex;align-items:center;gap:6px">
       <span id="pending-dot" title="Pending permission" onclick="selectPendingNode()"></span>
@@ -736,6 +748,30 @@ let xterm = null;
 let termWs = null;
 let termResizeObs = null;
 applyTheme(getTheme());
+
+/* ── Sidebar resize ── */
+(function() {
+  const sidebar = document.getElementById('sidebar');
+  const saved = localStorage.getItem('armada-sidebar-width');
+  if (saved) sidebar.style.width = saved;
+  let dragging = false, startX, startW;
+  const handle = document.getElementById('sidebar-resize');
+  handle.addEventListener('mousedown', e => {
+    dragging = true; startX = e.clientX; startW = sidebar.offsetWidth;
+    handle.classList.add('dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const w = Math.max(200, Math.min(600, startW + e.clientX - startX));
+    sidebar.style.width = w + 'px';
+    localStorage.setItem('armada-sidebar-width', w + 'px');
+  });
+  document.addEventListener('mouseup', () => {
+    dragging = false;
+    handle.classList.remove('dragging');
+  });
+})();
 
 /* ── Connection state ── */
 let connState = 'connected'; // connected | reconnecting | disconnected
