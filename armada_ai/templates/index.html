@@ -672,38 +672,12 @@ function applyTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
   document.getElementById('theme-toggle').innerHTML = theme === 'light' ? '&#9789;' : '&#9788;';
   localStorage.setItem('armada-theme', theme);
-  updateXtermTheme(theme);
 }
 function toggleTheme() {
   const current = document.documentElement.getAttribute('data-theme') || getTheme();
   applyTheme(current === 'light' ? 'dark' : 'light');
 }
-function getXtermTheme(theme) {
-  if (theme === 'light') {
-    return {
-      background: '#ffffff',
-      foreground: '#24292f',
-      cursor: '#0969da',
-      selectionForeground: '#ffffff',
-      selectionBackground: '#0969da',
-      black: '#f6f8fa',
-      red: '#cf222e',
-      green: '#1a7f37',
-      yellow: '#9a6700',
-      blue: '#0969da',
-      magenta: '#8250df',
-      cyan: '#1b7c83',
-      white: '#6e7781',
-      brightBlack: '#57606a',
-      brightRed: '#a40e26',
-      brightGreen: '#116329',
-      brightYellow: '#7c5100',
-      brightBlue: '#0550ae',
-      brightMagenta: '#6b36c7',
-      brightCyan: '#157881',
-      brightWhite: '#24292f',
-    };
-  }
+function getXtermTheme() {
   return {
     background: '#0d1117',
     foreground: '#c9d1d9',
@@ -711,11 +685,6 @@ function getXtermTheme(theme) {
     selectionForeground: '#0d1117',
     selectionBackground: '#c9d1d9',
   };
-}
-function updateXtermTheme(theme) {
-  if (xterm) {
-    xterm.options.theme = getXtermTheme(theme);
-  }
 }
 let _selectedFingerprint = '';
 let selectedSet = new Set();
@@ -1264,8 +1233,7 @@ function ensureXterm(cols) {
     disableStdin: false,
     fontSize: 12,
     fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-    allowTransparency: true,
-    theme: getXtermTheme(getTheme()),
+    theme: getXtermTheme(),
     cols: cols || 80,
     rows: 24,
     scrollback: 1000,
