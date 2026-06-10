@@ -502,12 +502,22 @@ def _migrate_extensions():
 
 
 def _scan_skill_description(md_path: str) -> str:
+    """Extract description from SKILL.md or hook script.
+    For .md: first non-heading, non-empty line after # Title.
+    For .sh: first descriptive comment line."""
     try:
         with open(md_path) as f:
-            for line in f:
+            content = f.read()
+        if md_path.endswith(".md"):
+            for line in content.split("\n"):
                 s = line.strip()
                 if s and not s.startswith("#") and not s.startswith(">") and len(s) > 5:
                     return s[:200]
+        else:
+            for line in content.split("\n"):
+                s = line.strip()
+                if s.startswith("# ") and len(s) > 8 and "!/" not in s:
+                    return s.lstrip("# ").strip()[:200]
     except Exception:
         pass
     return ""
