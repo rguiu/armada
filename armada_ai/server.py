@@ -509,9 +509,9 @@ def delete_node(node_id: int):
 @app.post("/api/nodes/{node_id}/send")
 async def send_to_node(node_id: int, request: Request):
     body = await request.json()
-    command = body.get("command", "").strip()
     raw = body.get("raw", False)
-    if not command:
+    command = body.get("command", "") if raw else body.get("command", "").strip()
+    if not command and not raw:
         raise HTTPException(status_code=400, detail="command is required")
 
     node = db.get_node(node_id)
