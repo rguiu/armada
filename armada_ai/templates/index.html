@@ -635,7 +635,7 @@ a { color: var(--accent); }
         <div id="qr-url-local" style="margin-bottom:6px;font-size:12px;word-break:break-all"></div>
         <div id="qr-url-lan" style="font-size:12px;word-break:break-all"></div>
       </div>
-      <img id="qr-image" style="max-width:180px;border-radius:4px;background:#fff;padding:4px" alt="QR Code">
+      <div id="qr-svg" style="max-width:180px;margin:0 auto;border-radius:4px;background:#fff;padding:4px"></div>
     </div>
   </div>
 </div>
@@ -1875,7 +1875,6 @@ function toggleProjects() {
 function initQR() {
   const localUrl = 'http://127.0.0.1:9100?token=' + AUTH_TOKEN;
   document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff" target="_blank">127.0.0.1:9100</a>';
-  document.getElementById('qr-image').style.display = 'inline-block';
   fetchQR(localUrl);
 
   api('/api/info')
@@ -1891,12 +1890,14 @@ function initQR() {
 
 function fetchQR(url) {
   fetch('/api/qr?url=' + encodeURIComponent(url))
-    .then(r => { if (!r.ok) throw new Error('status ' + r.status); return r.blob(); })
-    .then(blob => {
-      document.getElementById('qr-image').src = URL.createObjectURL(blob);
+    .then(r => { if (!r.ok) throw new Error('status ' + r.status); return r.text(); })
+    .then(svg => {
+      const container = document.getElementById('qr-svg');
+      container.innerHTML = svg;
+      container.style.display = 'block';
     })
     .catch(() => {
-      document.getElementById('qr-image').style.display = 'none';
+      document.getElementById('qr-svg').innerHTML = '<span style="color:var(--text-dim);font-size:11px">QR unavailable</span>';
     });
 }
 
