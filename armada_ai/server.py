@@ -831,9 +831,30 @@ def list_extensions():  # pragma: no cover
             ext_id = f"plugin-{f.stem}"
             extensions.append({"id": ext_id, "type": "plugin", "name": f.name, "description": ""})
 
+    # Scan MCP configs from project root and global
+    mcp_seen = set()
+    for candidate in (
+        repo_root / ".opencode" / "mcp.json",
+        repo_root / ".claude" / "mcp.json",
+        repo_root / ".opencode" / "mcp.jsonc",
+        Path.home() / ".config" / "opencode" / "mcp.json",
+        Path.home() / ".claude" / "mcp.json",
+    ):
+        if candidate.is_file() and candidate.name not in mcp_seen:
+            mcp_seen.add(candidate.name)
+            desc = ""
+            try:
+                data = json.loads(candidate.read_text())
+                servers = data.get("mcpServers", {})
+                desc = ", ".join(list(servers.keys())[:3]) or "MCP config"
+            except Exception:
+                desc = "MCP config"
+            ext_id = f"mcp-{candidate.stem}"
+            extensions.append({"id": ext_id, "type": "mcp", "name": str(candidate.relative_to(candidate.parent.parent)) if candidate.parent.parent else candidate.name, "description": desc})
+
     # Scan custom extensions from ~/.armada/extensions/
     custom_dir = Path.home() / ".armada" / "extensions"
-    for sub in ("skills", "hooks", "plugins"):
+    for sub in ("skills", "hooks", "plugins", "mcp"):
         sub_path = custom_dir / sub
         if not sub_path.is_dir():
             continue
@@ -858,6 +879,9 @@ def list_extensions():  # pragma: no cover
             elif sub == "plugins" and entry.is_file():
                 ext_id = f"custom-plugin-{entry.stem}"
                 extensions.append({"id": ext_id, "type": "plugin", "name": entry.name, "description": "Custom plugin", "source": "custom"})
+            elif sub == "mcp" and entry.is_file() and entry.name.endswith(".json"):
+                ext_id = f"custom-mcp-{entry.stem}"
+                extensions.append({"id": ext_id, "type": "mcp", "name": entry.name, "description": "Custom MCP", "source": "custom"})
 
     labels = db.list_project_labels()
     for ext in extensions:
@@ -883,6 +907,12 @@ def list_extensions():  # pragma: no cover
                     if plugin_path.exists() or alt_path.exists():
                         installed = True
                         break
+            elif ext["type"] == "mcp":
+                for agent in ("opencode", "claude"):
+                    mcp_path = Path(lb.path) / f".{agent}" / "mcp.json"
+                    if mcp_path.exists():
+                        installed = True
+                        break
             if installed:
                 ext["projects"].append({"id": lb.id, "name": lb.name, "path": lb.path})
 
@@ -894,7 +924,9 @@ def extension_content(extension_id: str):
     from pathlib import Path
     repo_root = Path(__file__).parent.parent
     paths = []
-    if extension_id.startswith("custom-hook-"):
+    if extension_id.startswith("custom-mcp-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "mcp" / f"{extension_id[11:]}.json")
+    elif extension_id.startswith("custom-hook-"):
         paths.append(Path.home() / ".armada" / "extensions" / "hooks" / f"{extension_id[12:]}.sh")
     elif extension_id.startswith("custom-plugin-"):
         paths.append(Path.home() / ".armada" / "extensions" / "plugins" / f"{extension_id[14:]}")
@@ -965,6 +997,21 @@ async def install_extension_endpoint(request: Request):  # pragma: no cover
                 shutil.copy2(src, dst)
                 copied.append(str(dst))
 
+    elif extension_id.startswith("mcp-"):
+        mcp_name = extension_id.removeprefix("mcp-").removeprefix("custom-")
+        src = repo_root / ".opencode" / f"{mcp_name}.json"
+        alt = repo_root / ".claude" / f"{mcp_name}.json"
+        if not src.exists() and not alt.exists():
+            src = _Path.home() / ".armada" / "extensions" / "mcp" / f"{mcp_name}.json"
+        for s in (src, alt):
+            if s.exists():
+                for agent_dir in (".opencode", ".claude"):
+                    dst_dir = target / agent_dir
+                    dst_dir.mkdir(parents=True, exist_ok=True)
+                    dst = dst_dir / "mcp.json"
+                    shutil.copy2(s, dst)
+                    copied.append(str(dst))
+
     else:
         skill_name = extension_id.removeprefix("custom-")
         src = repo_root / "skills" / skill_name / "SKILL.md"
@@ -996,8 +1043,8 @@ async def create_extension_endpoint(request: Request):  # pragma: no cover
 
     if not name or not code:
         raise HTTPException(status_code=400, detail="name and code are required")
-    if ext_type not in ("skill", "hook", "plugin"):
-        raise HTTPException(status_code=400, detail="type must be skill, hook, or plugin")
+    if ext_type not in ("skill", "hook", "plugin", "mcp"):
+        raise HTTPException(status_code=400, detail="type must be skill, hook, plugin, or mcp")
 
     ext_dir = _Path.home() / ".armada" / "extensions"
     ext_dir.mkdir(parents=True, exist_ok=True)
@@ -1006,6 +1053,8 @@ async def create_extension_endpoint(request: Request):  # pragma: no cover
         dst = ext_dir / "skills" / name / "SKILL.md"
     elif ext_type == "hook":
         dst = ext_dir / "hooks" / f"{name}.sh"
+    elif ext_type == "mcp":
+        dst = ext_dir / "mcp" / f"{name}.json"
     else:
         dst = ext_dir / "plugins" / f"{name}.ts"
 

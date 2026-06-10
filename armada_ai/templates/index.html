@@ -715,6 +715,7 @@ a { color: var(--accent); }
       <option value="skill">Skill</option>
       <option value="hook">Hook</option>
       <option value="plugin">Plugin</option>
+      <option value="mcp">MCP</option>
     </select>
     <label>Name</label>
     <input type="text" id="ext-name" placeholder="e.g. my-custom-skill">
@@ -1894,9 +1895,12 @@ function authHeaders() {
 
 function fetchQR(url) {
   fetch('/api/qr?url=' + encodeURIComponent(url), { headers: authHeaders() })
-    .then(r => r.blob())
+    .then(r => { if (!r.ok) throw new Error('status ' + r.status); return r.blob(); })
     .then(blob => {
       document.getElementById('qr-image').src = URL.createObjectURL(blob);
+    })
+    .catch(() => {
+      document.getElementById('qr-image').style.display = 'none';
     });
 }
 
