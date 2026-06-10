@@ -1216,6 +1216,7 @@ function ensureXterm(cols) {
     return;
   }
   const container = document.getElementById('terminal-inner');
+  container.innerHTML = '';
 
   xterm = new Terminal({
     cursorBlink: true,
