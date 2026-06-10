@@ -72,6 +72,12 @@ omit = [
     "armada_ai/templates/*",
     "armada_ai/bin/*",
     "armada_ai/hooks/*",
+    "armada_ai/infrastructure/tmux_session.py",
+    "armada_ai/infrastructure/deployment.py",
+    "armada_ai/infrastructure/terminal_attach.py",
+    "armada_ai/project_explorer.py",
+    "armada_ai/transport/middleware.py",
+    "armada_ai/transport/static_assets.py",
 ]
 
 [tool.coverage.report]

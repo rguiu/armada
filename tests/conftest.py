@@ -31,15 +31,16 @@ os.environ["ARMADA_TEST_DIR"] = _test_dir
 @pytest.fixture(autouse=True)
 def temp_db(monkeypatch):
     """Use a temporary SQLite database for every test."""
+    import armada_ai.constants as const_mod
     import armada_ai.db as db_mod
     import armada_ai.server as server_mod
 
     db_path = os.path.join(_test_dir, "armada.db")
     projects_file = os.path.join(_test_dir, "projects.json")
 
-    monkeypatch.setattr(db_mod, "DB_PATH", db_path)
-    monkeypatch.setattr(db_mod, "DB_DIR", _test_dir)
-    monkeypatch.setattr(db_mod, "PROJECTS_FILE", projects_file)
+    monkeypatch.setattr(const_mod, "DB_PATH", db_path)
+    monkeypatch.setattr(const_mod, "DATA_DIR", _test_dir)
+    monkeypatch.setattr(const_mod, "PROJECTS_FILE", projects_file)
     monkeypatch.setattr(server_mod, "TOKEN", "test-token")
     db_mod.init_db()
     yield db_mod
