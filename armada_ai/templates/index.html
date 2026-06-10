@@ -219,6 +219,22 @@ a { color: var(--accent); }
 }
 .label-item:hover .label-del { visibility: visible; }
 
+/* ── Extensions Section ── */
+#extensions-section { border-top: 1px solid var(--border); padding: 8px; }
+#extensions-section .section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; margin-bottom: 4px;
+}
+#extensions-section .section-title {
+  font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#extensions-section .section-add {
+  font-size: 10px; color: var(--text-muted); background: none; border: none;
+  cursor: pointer; padding: 0 4px;
+}
+#extensions-section .section-add:hover { color: var(--text); }
+
 /* ── QR Section ── */
 #qr-section { border-top: 1px solid var(--border); padding: 8px; }
 #qr-section .section-header {
@@ -586,21 +602,13 @@ a { color: var(--accent); }
     </div>
     <div id="labels-list"></div>
   </div>
-  <div id="extensions-section" style="border-top:1px solid var(--border);padding:8px">
+  <div id="extensions-section">
     <div class="section-header">
       <span class="section-title">Extensions</span>
-      <div style="display:flex;gap:4px">
-        <button class="section-add" onclick="toggleExtensions()" id="ext-toggle">&#9654;</button>
-      </div>
+      <button class="section-add" onclick="toggleExtensions()" id="ext-toggle">&#9654;</button>
     </div>
     <div id="extensions-content" style="display:none">
-      <div style="margin-bottom:6px;font-size:10px;color:var(--text-dim)">
-        <a href="#" onclick="loadExtensions('all')" style="color:var(--accent)">all</a> ·
-        <a href="#" onclick="loadExtensions('skill')" style="color:var(--accent)">skills</a> ·
-        <a href="#" onclick="loadExtensions('hook')" style="color:var(--accent)">hooks</a> ·
-        <a href="#" onclick="loadExtensions('plugin')" style="color:var(--accent)">plugins</a>
-      </div>
-      <div id="extensions-list" style="max-height:200px;overflow-y:auto"></div>
+      <div id="extensions-list"></div>
     </div>
   </div>
   <div id="qr-section">
@@ -1824,53 +1832,37 @@ function fetchQR(url) {
 
 /* ── Extensions Manager ── */
 let _extOpen = false;
-let _extFilter = 'all';
 
 function toggleExtensions() {
   _extOpen = !_extOpen;
   document.getElementById('extensions-content').style.display = _extOpen ? 'block' : 'none';
   document.getElementById('ext-toggle').innerHTML = _extOpen ? '&#9660;' : '&#9654;';
-  if (_extOpen) loadExtensions(_extFilter);
+  if (_extOpen) loadExtensions();
 }
 
-async function loadExtensions(filter) {
-  _extFilter = filter || _extFilter;
+async function loadExtensions() {
   const container = document.getElementById('extensions-list');
-  container.innerHTML = '<div class="spinner" style="width:12px;height:12px;border-width:2px;margin:4px auto"></div>';
+  container.innerHTML = '<div class="loading-tree"><div class="spinner" style="width:12px;height:12px;border-width:2px"></div></div>';
   try {
     const r = await api('/api/extensions');
-    if (!r.ok) throw new Error('status ' + r.status);
-    let exts = await r.json();
-    if (_extFilter !== 'all') exts = exts.filter(e => e.type === _extFilter);
-    if (!exts.length) {
-      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px">No extensions found</div>';
+    const exts = await r;
+    if (!exts || !exts.length) {
+      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px 8px">No extensions found. Run <code>armada extensions list</code> to scan.</div>';
       return;
     }
     container.innerHTML = exts.map(ext => `
-      <div style="padding:3px 4px;font-size:11px;display:flex;align-items:center;gap:6px;border-radius:3px" onmouseenter="this.style.background='var(--hover)'" onmouseleave="this.style.background='none'">
-        <span style="color:var(--text-dim);font-size:10px;min-width:30px">${ext.type}</span>
-        <span style="flex:1;color:var(--text)">${esc(ext.name)}</span>
-        ${ext.assigned_project
-          ? `<span style="font-size:10px;color:var(--green)">installed${ext.assigned_project !== 'global' ? ': ' + ext.assigned_project : ''}</span>`
-          : `<button onclick="installExt('${ext.id}')" style="font-size:10px;background:none;border:1px solid var(--border-light);color:var(--accent);cursor:pointer;border-radius:3px;padding:1px 6px">install</button>`
-        }
+      <div class="label-item">
+        <div>
+          <span style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-right:6px">${ext.type}</span>
+          <span>${esc(ext.name)}</span>
+        </div>
+        <span style="font-size:10px;color:${ext.assigned_project ? 'var(--green)' : 'var(--text-dim)'}">
+          ${ext.assigned_project ? 'installed' : ''}
+        </span>
       </div>
     `).join('');
-  } catch(e) {
-    container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px">Failed to load extensions</div>';
-  }
-}
-
-async function installExt(id) {
-  try {
-    await api('/api/extensions/install', {
-      method: 'POST',
-      body: JSON.stringify({extension_id: id}),
-    });
-    loadExtensions(_extFilter);
-    toast('Extension installed globally');
-  } catch(e) {
-    toast('Failed: ' + e.message, true);
+  } catch(_) {
+    container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px 8px">Failed to load. Restart the server and try again.</div>';
   }
 }
 
