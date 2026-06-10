@@ -115,10 +115,21 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_nodes_killed ON nodes(killed_at);
             CREATE INDEX IF NOT EXISTS idx_nodes_hidden ON nodes(hidden_at);
             CREATE INDEX IF NOT EXISTS idx_nodes_project ON nodes(project_label_id);
+
+            CREATE TABLE IF NOT EXISTS hourly_stats (
+                hour TEXT PRIMARY KEY,
+                active_agents INTEGER NOT NULL DEFAULT 0,
+                total_agents INTEGER NOT NULL DEFAULT 0,
+                total_cost REAL NOT NULL DEFAULT 0.0,
+                total_tokens_in INTEGER NOT NULL DEFAULT 0,
+                total_tokens_out INTEGER NOT NULL DEFAULT 0,
+                snapshot_ts TEXT NOT NULL DEFAULT (datetime('now'))
+            );
         """)
         conn.commit()
     _migrate()
     _sync_projects_from_json()
+    _migrate_hourly_stats()
 
 
 def _migrate():
@@ -362,6 +373,85 @@ def vacuum_db():
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.execute("PRAGMA optimize")
     _retry(_do, write=True)
+
+
+# --- Hourly Stats ---
+
+def _migrate_hourly_stats():
+    conn = _get_conn()
+    with _write_lock:
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS hourly_stats (
+                    hour TEXT PRIMARY KEY,
+                    active_agents INTEGER NOT NULL DEFAULT 0,
+                    total_agents INTEGER NOT NULL DEFAULT 0,
+                    total_cost REAL NOT NULL DEFAULT 0.0,
+                    total_tokens_in INTEGER NOT NULL DEFAULT 0,
+                    total_tokens_out INTEGER NOT NULL DEFAULT 0,
+                    snapshot_ts TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
+
+
+def snapshot_stats():
+    """Capture current fleet stats into hourly_stats (idempotent per hour)."""
+    nodes = get_all_nodes(include_dead=False)
+    active = sum(1 for n in nodes if n.status == "active")
+    total = len(nodes)
+    cost = sum(n.total_cost for n in nodes)
+    tokens_in = sum(n.total_tokens_in for n in nodes)
+    tokens_out = sum(n.total_tokens_out for n in nodes)
+
+    import datetime
+    hour_key = datetime.datetime.now().strftime("%Y-%m-%dT%H")
+
+    def _do():
+        conn = _get_conn()
+        conn.execute(
+            "INSERT OR REPLACE INTO hourly_stats (hour, active_agents, total_agents, "
+            "total_cost, total_tokens_in, total_tokens_out, snapshot_ts) "
+            "VALUES (?, ?, ?, ?, ?, ?, datetime('now'))",
+            (hour_key, active, total, cost, tokens_in, tokens_out),
+        )
+        conn.commit()
+    _retry(_do, write=True)
+
+
+def get_hourly_stats(hours: int = 24) -> list[dict]:
+    """Return up to N most recent hourly stat snapshots."""
+    conn = _get_conn()
+    rows = conn.execute(
+        "SELECT * FROM hourly_stats ORDER BY hour DESC LIMIT ?", (hours,)
+    ).fetchall()
+    return [dict(r) for r in reversed(rows)]
+
+
+def get_stats_summary() -> dict:
+    """Current fleet summary for dashboard stats."""
+    nodes = get_all_nodes(include_dead=False)
+    total = len(nodes)
+    active = sum(1 for n in nodes if n.status == "active")
+    pending = sum(1 for n in nodes if n.status == "pending")
+    idle = sum(1 for n in nodes if n.status == "idle")
+    cost = sum(n.total_cost for n in nodes)
+    tokens_in = sum(n.total_tokens_in for n in nodes)
+    tokens_out = sum(n.total_tokens_out for n in nodes)
+
+    history = get_hourly_stats(24)
+    return {
+        "total_agents": total,
+        "active": active,
+        "pending": pending,
+        "idle": idle,
+        "total_cost": cost,
+        "total_tokens_in": tokens_in,
+        "total_tokens_out": tokens_out,
+        "history": history,
+    }
 
 
 # --- Cost & Count accumulation ---

@@ -222,6 +222,11 @@ def _start_health_loop(interval: int = 15):
                     logs.cleanup_old_rotated_logs()
                 except Exception:
                     pass
+            if _tick % 4 == 0:
+                try:
+                    db.snapshot_stats()
+                except Exception:
+                    pass
 
     threading.Thread(target=check, daemon=True).start()
 
@@ -388,6 +393,24 @@ def get_node(node_id: int):
 @app.get("/api/nodes/{node_id}/reports")
 def get_reports(node_id: int, limit: int = 30):
     return JSONResponse(db.get_node_reports(node_id, limit))
+
+
+@app.get("/api/nodes/{node_id}/children-output")
+def get_children_output(node_id: int):
+    """Capture pane content from all live children of a node."""
+    children = db.get_node_children(node_id)
+    outputs = []
+    for child in children:
+        if tmux.window_exists(child.name):
+            content = tmux.capture_pane_content(child.name, max_lines=50)
+            outputs.append({
+                "id": child.id,
+                "name": child.name,
+                "colour": child.colour,
+                "status": child.status,
+                "content": content.strip() if content else "",
+            })
+    return JSONResponse(outputs)
 
 
 @app.post("/api/nodes")
@@ -913,6 +936,16 @@ def prometheus_metrics():
     total_cost = sum(n.total_cost for n in nodes)
     metrics.gauge_set("armada_cost_total", total_cost)
     return Response(content=metrics.generate_latest(), media_type="text/plain; charset=utf-8")
+
+
+@app.get("/api/stats/summary")
+def stats_summary():
+    return JSONResponse(db.get_stats_summary())
+
+
+@app.get("/api/stats/history")
+def stats_history(hours: int = 24):
+    return JSONResponse(db.get_hourly_stats(hours))
 
 
 @app.get("/api/qr")

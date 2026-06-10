@@ -555,9 +555,20 @@ a { color: var(--accent); }
     <span class="stat" id="stat-active" onclick="toggleStatusFilter('active')" title="Active"><span class="stat-dot active"></span> -</span>
     <span class="stat" id="stat-idle" onclick="toggleStatusFilter('idle')" title="Idle"><span class="stat-dot idle-dot"></span> -</span>
     <span class="stat pending" id="stat-pending" onclick="toggleStatusFilter('pending')" title="Pending"><span class="stat-dot pending"></span> -</span>
-    <span class="stat" id="stat-cost">$0.00</span>
+  <span class="stat" id="stat-cost">$0.00</span>
+  <span style="margin-left:auto;font-size:10px;color:var(--text-dim);cursor:pointer" onclick="toggleStats()" id="stats-toggle">&#9654; Stats</span>
+</div>
+<div id="stats-panel" style="display:none;padding:8px;border-bottom:1px solid var(--border);font-size:11px">
+  <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap">
+    <span style="color:var(--text-dim)">Cost</span><b id="stat-val-cost" style="color:var(--text)">$0</b>
+    <span style="color:var(--text-dim)">Tokens</span><b id="stat-val-tokens" style="color:var(--text)">0</b>
   </div>
-  <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
+  <div style="color:var(--text-dim);margin-bottom:4px">Cost ($) last 24h</div>
+  <svg id="chart-cost" width="256" height="64" style="display:block;margin-bottom:8px;border-radius:4px;background:var(--bg)"></svg>
+  <div style="color:var(--text-dim);margin-bottom:4px">Agents last 24h</div>
+  <svg id="chart-agents" width="256" height="48" style="display:block;border-radius:4px;background:var(--bg)"></svg>
+</div>
+<input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
   <div id="tree"><div class="loading-tree"><div class="spinner"></div> Loading agents...</div></div>
   <div id="batch-bar">
     <span class="count" id="batch-count">0 selected</span>
@@ -1166,6 +1177,10 @@ async function loadNodeDetail(nodeId) {
       <h3>Activity Log</h3>
       ${reportsHtml}
     </div>
+    <div id="children-output" style="display:none;margin-top:12px">
+      <h3>Children Output</h3>
+      <div id="children-content"></div>
+    </div>
     ${n.status !== 'dead' ? `
     <div class="cmd-bar" style="flex-wrap:wrap">
       <div class="preset-chips">
@@ -1200,6 +1215,29 @@ async function loadNodeDetail(nodeId) {
     }
     pane.classList.add('show');
   }
+
+  loadChildrenOutput(nodeId);
+}
+
+async function loadChildrenOutput(nodeId) {
+  try {
+    const data = await api('/api/nodes/' + nodeId + '/children-output');
+    if (!data || !data.length) return;
+    const section = document.getElementById('children-output');
+    if (!section) return;
+    section.style.display = 'block';
+    const container = document.getElementById('children-content');
+    container.innerHTML = data.map(child => `
+      <div style="margin:4px 0;padding:8px;background:var(--bg);border-radius:4px;border:1px solid var(--border)">
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+          <span class="dot" style="width:6px;height:6px;border-radius:50%;background:${child.colour};flex-shrink:0"></span>
+          <span style="font-size:11px;font-weight:600;color:var(--text);cursor:pointer" onclick="selectNodeById(${child.id})">${esc(child.name)}</span>
+          <span class="badge ${child.status === 'active' ? 'active' : ''}">${child.status}</span>
+        </div>
+        <pre style="font-size:10px;color:var(--text-muted);margin:0;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;font-family:Menlo,Monaco,monospace">${esc(child.content || '(no output)')}</pre>
+      </div>
+    `).join('');
+  } catch(_) {}
 }
 
 async function attachNode(id) {
@@ -2099,6 +2137,61 @@ function toast(msg, isError = false) {
   el.style.display = 'block';
   clearTimeout(_toastTimer);
   _toastTimer = setTimeout(() => { el.style.display = 'none'; }, 5000);
+}
+
+/* ── Stats panel ── */
+let _statsOpen = false;
+function toggleStats() {
+  _statsOpen = !_statsOpen;
+  document.getElementById('stats-panel').style.display = _statsOpen ? 'block' : 'none';
+  document.getElementById('stats-toggle').innerHTML = _statsOpen ? '&#9660; Stats' : '&#9654; Stats';
+  if (_statsOpen) fetchStats();
+}
+
+async function fetchStats() {
+  try {
+    const r = await fetch('/api/stats/summary', {headers:{'Authorization':'Bearer '+AUTH_TOKEN}});
+    const data = await r.json();
+    document.getElementById('stat-val-cost').textContent = '$' + data.total_cost.toFixed(2);
+    document.getElementById('stat-val-tokens').textContent = (data.total_tokens_in + data.total_tokens_out).toLocaleString();
+    renderChartCost(data.history);
+    renderChartAgents(data.history);
+  } catch(_) {}
+}
+
+function renderChartCost(history) {
+  const svg = document.getElementById('chart-cost');
+  const w = 256, h = 64, pad = 8, gw = w - pad * 2, gh = h - pad * 2;
+  const costs = history.map(d => d.total_cost);
+  const max = Math.max(...costs, 0.01);
+  const points = costs.map((c, i) => {
+    const x = pad + (history.length > 1 ? i / (history.length - 1) : 0) * gw;
+    const y = pad + gh - (c / max) * gh;
+    return `${x},${y}`;
+  });
+  svg.innerHTML = `
+    <line x1="${pad}" y1="${pad+gh}" x2="${pad+gw}" y2="${pad+gh}" stroke="var(--border)" stroke-width="1"/>
+    <polyline points="${points.join(' ')}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round"/>
+    <text x="${w/2}" y="${h-2}" fill="var(--text-dim)" font-size="8" text-anchor="middle">$${max.toFixed(2)} max</text>
+  `;
+}
+
+function renderChartAgents(history) {
+  const svg = document.getElementById('chart-agents');
+  const w = 256, h = 48, pad = 8, gw = w - pad * 2, gh = h - pad * 2;
+  const counts = history.map(d => d.total_agents);
+  const max = Math.max(...counts, 1);
+  const barW = Math.max(2, gw / history.length - 1);
+  let html = `<line x1="${pad}" y1="${pad+gh}" x2="${pad+gw}" y2="${pad+gh}" stroke="var(--border)" stroke-width="1"/>`;
+  history.forEach((d, i) => {
+    const bx = pad + i * (gw / history.length);
+    const bh = (d.total_agents / max) * gh;
+    const activeH = d.total_agents ? (d.active_agents / d.total_agents) * bh : 0;
+    html += `<rect x="${bx}" y="${pad + gh - bh}" width="${barW}" height="${bh}" fill="var(--btn-bg)" rx="1"/>`;
+    html += `<rect x="${bx}" y="${pad + gh - activeH}" width="${barW}" height="${activeH}" fill="var(--green)" rx="1"/>`;
+  });
+  html += `<text x="${w/2}" y="${h-2}" fill="var(--text-dim)" font-size="8" text-anchor="middle">${max} agents max</text>`;
+  svg.innerHTML = html;
 }
 
 /* ── Client-side logging to server ── */
