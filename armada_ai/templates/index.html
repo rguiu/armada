@@ -717,7 +717,6 @@ function updateXtermTheme(theme) {
     xterm.options.theme = getXtermTheme(theme);
   }
 }
-applyTheme(getTheme());
 let _selectedFingerprint = '';
 let selectedSet = new Set();
 
@@ -730,6 +729,7 @@ let activeTermNodeId = null;
 let xterm = null;
 let termWs = null;
 let termResizeObs = null;
+applyTheme(getTheme());
 
 /* ── Connection state ── */
 let connState = 'connected'; // connected | reconnecting | disconnected
