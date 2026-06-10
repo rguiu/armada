@@ -423,14 +423,14 @@ a { color: var(--accent); }
 @keyframes fadeIn { from { opacity:0; transform:translateY(8px) } to { opacity:1; transform:translateY(0) } }
 
 /* ── Terminal pane ── */
-#terminal-pane { display: none; flex-direction: column; overflow: hidden; min-height: 0; }
+#terminal-pane { display: none; flex-direction: column; overflow: hidden; min-height: 0; max-height: 100%; }
 #terminal-pane.show { display: flex; }
-#terminal-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: var(--bg-input); border-bottom: 1px solid var(--border); }
+#terminal-bar { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; background: var(--bg-input); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 #terminal-bar span { font-size: 12px; color: var(--text-muted); }
 #terminal-bar .term-close { background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; }
 #terminal-bar .term-close:hover { color: #f85149; }
-#terminal-container { flex: 1; overflow-x: auto; overflow-y: hidden; }
-#terminal-inner { display: inline-block; min-width: 100%; min-height: 100%; }
+#terminal-container { flex: 1; overflow-x: auto; overflow-y: hidden; min-height: 0; }
+#terminal-inner { display: inline-block; min-width: 100%; }
 
 /* ── Toggle ── */
 .toggle-row { display: flex; align-items: center; gap: 8px; padding: 6px 0; font-size: 12px; color: var(--text-muted); }
