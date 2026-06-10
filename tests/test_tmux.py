@@ -47,7 +47,7 @@ class TestSendKeys:
              patch.object(tmux, "_tmux") as mock_tmux:
             mock_tmux.return_value = _make_completed()
 
-            target = f"{tmux.ARMADA_SESSION}:test_node"
+            target = tmux._agent_target("test_node")
             result = tmux.send_keys("test_node", "hello world")
 
             assert result is True
@@ -61,7 +61,7 @@ class TestSendKeys:
              patch.object(tmux, "_tmux") as mock_tmux:
             mock_tmux.return_value = _make_completed()
 
-            target = f"{tmux.ARMADA_SESSION}:test_node"
+            target = tmux._agent_target("test_node")
             result = tmux.send_keys("test_node", "line1\nline2\nline3")
 
             assert result is True
@@ -79,7 +79,7 @@ class TestSendKeys:
              patch.object(tmux, "_tmux") as mock_tmux:
             mock_tmux.return_value = _make_completed()
 
-            target = f"{tmux.ARMADA_SESSION}:test_node"
+            target = tmux._agent_target("test_node")
             result = tmux.send_keys("test_node", "a\n\nb")
 
             assert result is True

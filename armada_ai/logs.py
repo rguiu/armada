@@ -7,17 +7,21 @@ import threading
 LOGS_DIR = os.path.expanduser("~/.armada/logs")
 _write_lock = threading.Lock()
 
+LOG_LEVELS = ("debug", "info", "warn", "error")
+
 
 def _ensure_dir():
     os.makedirs(LOGS_DIR, exist_ok=True)
 
 
-def log_event(node_name: str, event_type: str, data: dict | None = None):
+def log_event(node_name: str, event_type: str, data: dict | None = None,
+              level: str = "info"):
     _ensure_dir()
     entry = {
         "ts": time.time(),
         "type": event_type,
         "name": node_name,
+        "level": level,
     }
     if data:
         entry["data"] = data
@@ -109,44 +113,60 @@ def rotate_logs(max_size_mb: int = 50):
             pass
 
 
+def cleanup_old_rotated_logs(max_age_days: int = 30):
+    _ensure_dir()
+    now = time.time()
+    cutoff = now - (max_age_days * 86400)
+    for filename in os.listdir(LOGS_DIR):
+        if not filename.endswith(".jsonl.gz"):
+            continue
+        filepath = os.path.join(LOGS_DIR, filename)
+        try:
+            if os.path.getmtime(filepath) < cutoff:
+                os.remove(filepath)
+        except (IOError, OSError):
+            pass
+
+
 def log_report(node_name: str, status: str, message: str | None):
-    log_event(node_name, "report", {"status": status, "message": message})
+    log_event(node_name, "report", {"status": status, "message": message}, level="info")
 
 
 def log_create(node_name: str, agent_type: str, project: str | None):
-    log_event(node_name, "create", {"agent_type": agent_type, "project": project})
+    log_event(node_name, "create", {"agent_type": agent_type, "project": project}, level="info")
 
 
 def log_kill(node_name: str):
-    log_event(node_name, "kill", {})
+    log_event(node_name, "kill", {}, level="warn")
 
 
 def log_send(node_name: str, command: str):
-    log_event(node_name, "send", {"command": command[:200]})
+    log_event(node_name, "send", {"command": command[:200]}, level="debug")
 
 
 def log_attach(node_name: str):
-    log_event(node_name, "attach", {})
+    log_event(node_name, "attach", {}, level="info")
 
 
 def log_health(node_name: str, dead: bool):
-    log_event(node_name, "health", {"dead": dead})
+    log_event(node_name, "health", {"dead": dead}, level="warn")
 
 
 def log_recover(node_name: str):
-    log_event(node_name, "recover", {})
+    log_event(node_name, "recover", {}, level="info")
 
 
 def log_ws_connect(client_id: str, path: str):
-    log_event("_server", "ws_connect", {"client": client_id, "path": path})
+    log_event("_server", "ws_connect", {"client": client_id, "path": path}, level="debug")
 
 
 def log_ws_disconnect(client_id: str, path: str, reason: str = ""):
-    log_event("_server", "ws_disconnect", {"client": client_id, "path": path, "reason": reason})
+    log_event("_server", "ws_disconnect", {"client": client_id, "path": path, "reason": reason}, level="info")
 
 
 def log_http_error(method: str, path: str, status: int, detail: str = ""):
-    log_event("_server", "http_error", {"method": method, "path": path, "status": status, "detail": detail[:200]})
+    level = "error" if status >= 500 else "warn"
+    log_event("_server", "http_error", {"method": method, "path": path, "status": status, "detail": detail[:200]}, level=level)
 
 
 def log_server_start():
@@ -154,7 +174,7 @@ def log_server_start():
     log_path = os.path.join(LOGS_DIR, "_server.jsonl")
     with _write_lock:
         with open(log_path, "a") as f:
-            json.dump({"ts": time.time(), "type": "server_start"}, f, ensure_ascii=False)
+            json.dump({"ts": time.time(), "type": "server_start", "level": "info"}, f, ensure_ascii=False)
             f.write("\n")
 
 
@@ -163,5 +183,9 @@ def log_server_stop():
     log_path = os.path.join(LOGS_DIR, "_server.jsonl")
     with _write_lock:
         with open(log_path, "a") as f:
-            json.dump({"ts": time.time(), "type": "server_stop"}, f, ensure_ascii=False)
+            json.dump({"ts": time.time(), "type": "server_stop", "level": "info"}, f, ensure_ascii=False)
             f.write("\n")
+
+
+def log_agent_output(node_name: str, content: str):
+    log_event(node_name, "output", {"content": content[:2000]}, level="debug")

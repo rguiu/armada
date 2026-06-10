@@ -13,14 +13,22 @@ from . import logs
 
 HOOKS_DIR = os.path.expanduser("~/.armada/hooks")
 ARMADA_SESSION = "armada"
-_attach_counter = 0
+WORKSPACES_DIR = os.path.expanduser("~/.armada/workspaces")
+
+
+def _agent_session(name: str) -> str:
+    return f"armada-{name}"
+
+
+def _agent_target(name: str) -> str:
+    return _agent_session(name)
+
+
+def _agent_workspace(name: str) -> str:
+    return os.path.join(WORKSPACES_DIR, name)
+
+
 _zdotdirs: dict[str, str] = {}
-
-
-def _next_attach_id():
-    global _attach_counter
-    _attach_counter += 1
-    return _attach_counter
 
 SKILL_DIRS = ["armada-node", "armada-worker", "armada-orchestrator"]
 _SKILLS_SRC = Path(__file__).parent.parent / "skills"
@@ -57,6 +65,8 @@ def _tmux(*args: str) -> subprocess.CompletedProcess:
 
 def ensure_armada_session():
     if not _has_tmux():
+        if platform.system() == "Linux":
+            raise RuntimeError("tmux is not installed. Install with: sudo apt install tmux")
         raise RuntimeError("tmux is not installed. Install with: brew install tmux")
     result = _tmux("has-session", "-t", ARMADA_SESSION)
     if result.returncode != 0:
@@ -261,20 +271,29 @@ def create_node_window(name: str, colour: str, working_dir: str,
             logs.log_event("_server", "deploy_error", {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
 
     # Determine what to run in the tmux window
+    sanitize_prefix = _sanitize_env_prefix()
+    workspace = _agent_workspace(name)
+    os.makedirs(workspace, exist_ok=True)
+    safe_workspace = workspace.replace("'", "'\\''")
+
     if agent_type in ("opencode", "claude"):
         agent_bin = shutil.which(agent_type)
         if agent_bin:
             shell_cmd = (
+                f"{sanitize_prefix}"
                 f"cd '{safe_dir}' && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
+                f"export ARMADA_WORKSPACE='{safe_workspace}' && "
                 f"exec {agent_bin}"
             )
         else:
             shell_cmd = (
+                f"{sanitize_prefix}"
                 f"cd '{safe_dir}' && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
+                f"export ARMADA_WORKSPACE='{safe_workspace}' && "
                 f"exec {os.environ.get('SHELL', '/bin/zsh')}"
             )
     else:
@@ -284,16 +303,18 @@ def create_node_window(name: str, colour: str, working_dir: str,
         _zdotdirs[name] = zdotdir
         _write_zsh_startup(zdotdir, tools_dir)
         shell_cmd = (
+            f"{sanitize_prefix}"
             f"cd '{safe_dir}' && "
             f"printf '\\033]2;{name}\\033\\\\' && "
             f"export ARMADA_NODE_NAME='{safe_name}' && "
+            f"export ARMADA_WORKSPACE='{safe_workspace}' && "
             f"export ZDOTDIR='{zdotdir}' && "
             f"echo '[armada] {safe_name} - tools ready' && "
             f"exec zsh"
         )
 
     result = _tmux(
-        "new-window", "-t", ARMADA_SESSION, "-n", name,
+        "new-session", "-d", "-s", _agent_session(name),
         shell_cmd,
     )
 
@@ -301,26 +322,26 @@ def create_node_window(name: str, colour: str, working_dir: str,
         return None
 
     pane_id = None
+    session = _agent_session(name)
     for attempt in range(5):
         time.sleep(0.3)
-        pane_result = _tmux("display-message", "-p", "-t", f"{ARMADA_SESSION}:{name}", "#{pane_id}")
+        pane_result = _tmux("display-message", "-p", "-t", session, "#{pane_id}")
         if pane_result.returncode == 0:
             pane_id = pane_result.stdout.strip()
             if pane_id:
                 break
 
     if pane_id:
-        _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
+        _tmux("set-option", "-t", session,
               "pane-active-border-style", f"fg={colour}")
-        _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
+        _tmux("set-option", "-t", session,
               "pane-border-style", f"fg={colour}")
-        _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
+        _tmux("set-option", "-t", session,
               "automatic-rename", "off")
-        _tmux("set-window-option", "-t", f"{ARMADA_SESSION}:{name}",
+        _tmux("set-option", "-t", session,
               "allow-rename", "off")
     else:
-        # Window created but pane_id unreachable — kill it so it doesn't orphan
-        _tmux("kill-window", "-t", f"{ARMADA_SESSION}:{name}")
+        _tmux("kill-session", "-t", session)
         _zdotdirs.pop(name, None)
 
     return pane_id
@@ -329,7 +350,17 @@ def create_node_window(name: str, colour: str, working_dir: str,
 def kill_node_window(name: str):
     if not _has_tmux():
         return
-    _tmux("kill-window", "-t", f"{ARMADA_SESSION}:{name}")
+    _tmux("kill-session", "-t", _agent_session(name))
+
+
+def capture_pane_content(name: str, max_lines: int = 200) -> str:
+    if not _has_tmux():
+        return ""
+    target = _agent_session(name)
+    result = _tmux("capture-pane", "-p", "-t", target, "-S", f"-{max_lines}")
+    if result.returncode != 0:
+        return ""
+    return result.stdout
     zdotdir = _zdotdirs.pop(name, None)
     if zdotdir:
         try:
@@ -341,14 +372,12 @@ def kill_node_window(name: str):
 def window_exists(name: str) -> bool:
     if not _has_tmux():
         return False
-    result = _tmux("list-windows", "-t", ARMADA_SESSION, "-F", "#{window_name}")
-    if result.returncode != 0:
-        return False
-    return name in result.stdout.strip().split("\n")
+    result = _tmux("has-session", "-t", _agent_session(name))
+    return result.returncode == 0
 
 
 def has_attached_clients() -> bool:
-    result = _tmux("list-clients", "-t", ARMADA_SESSION)
+    result = _tmux("list-clients")
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
@@ -392,19 +421,18 @@ def _cleanup_stale_view_sessions():
 
 
 def attach_node(name: str, colour: str = "#8b949e") -> str | None:
-    """Open a terminal attached to the named tmux window.
+    """Open a terminal attached to the named tmux session.
     Returns None on success, or an error message string."""
     if not _has_tmux():
         return "tmux is not installed"
 
     _cleanup_stale_view_sessions()
 
-    _tmux("set-option", "-t", ARMADA_SESSION, "set-titles", "on")
-    _tmux("set-option", "-t", ARMADA_SESSION, "set-titles-string", "#{window_name}")
+    session = _agent_session(name)
 
-    # Already inside tmux: switch client to the window
+    # Already inside tmux: switch client to the session
     if os.environ.get("TMUX"):
-        subprocess.run(["tmux", "switch-client", "-t", f"{ARMADA_SESSION}:{name}"])
+        subprocess.run(["tmux", "switch-client", "-t", session])
         return None
 
     system = platform.system()
@@ -433,7 +461,7 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
-        f.write(f"exec tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}\n")
+        f.write(f"exec tmux attach-session -t {_agent_session(name)}\n")
 
     try:
         applescript = (
@@ -487,7 +515,7 @@ def _hex_to_rgb(hex_colour: str) -> tuple[int, int, int]:
 def _try_terminal_attach(name: str) -> str | None:
     """Try opening a Terminal.app window attached to the node."""
     try:
-        tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
+        tmux_cmd = f"tmux attach-session -t {_agent_session(name)}"
         attach_file = os.path.join(tempfile.gettempdir(), f"_armada_term_attach_{os.getpid()}.sh")
         with open(attach_file, "w") as f:
             f.write(f"exec {tmux_cmd}\n")
@@ -521,7 +549,7 @@ def _try_terminal_attach(name: str) -> str | None:
 
 def _try_linux_attach(name: str, colour: str = "#8b949e") -> str | None:
     """Try opening a terminal on Linux to attach to the node."""
-    tmux_cmd = f"tmux new-session -t {ARMADA_SESSION} -s _view_{name}_{os.getpid()}_{_next_attach_id()} \\; select-window -t {name}"
+    tmux_cmd = f"tmux attach-session -t {_agent_session(name)}"
     tmpdir = tempfile.gettempdir()
     attach_file = os.path.join(tmpdir, f"_armada_attach_{os.getpid()}.sh")
     r, g, b = _hex_to_rgb(colour)
@@ -576,7 +604,7 @@ def send_keys(name: str, command: str):
     Multi-line commands are joined with Enter between lines."""
     if not _has_tmux():
         return False
-    target = f"{ARMADA_SESSION}:{name}"
+    target = _agent_target(name)
     lines = command.split("\n")
     for i, line in enumerate(lines):
         if i > 0:
@@ -593,7 +621,7 @@ def send_raw_keys(name: str, keys: str):
     """Send raw keystrokes without trailing Enter. Used by interactive terminal."""
     if not _has_tmux():
         return False
-    target = f"{ARMADA_SESSION}:{name}"
+    target = _agent_target(name)
     if '\n' in keys or '\r' in keys:
         lines = keys.replace('\r\n', '\n').replace('\r', '\n').split('\n')
         for i, line in enumerate(lines):
@@ -621,7 +649,7 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
             send_keys(name, prompt)
             return
         try:
-            target = f"{ARMADA_SESSION}:{name}"
+            target = _agent_target(name)
             for _ in range(60):
                 time.sleep(1)
                 result = _tmux("display-message", "-t", target, "-p", "#{pane_current_command}")
@@ -660,13 +688,19 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
 def running_window_names() -> set[str]:
     if not _has_tmux():
         return set()
-    result = _tmux("list-windows", "-t", ARMADA_SESSION, "-F", "#{window_name}")
+    result = _tmux("list-sessions", "-F", "#{session_name}")
     if result.returncode != 0:
         return set()
-    return set(result.stdout.strip().split("\n"))
+    names = set()
+    prefix = "armada-"
+    for s in result.stdout.strip().split("\n"):
+        if s.startswith(prefix):
+            names.add(s[len(prefix):])
+    return names
 
 
 def agent_hook_instructions(agent_name: str) -> str:
+    workspace = _agent_workspace(agent_name)
     return f"""You are node "{agent_name}". You are being monitored by Armada.
 
 REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
@@ -676,6 +710,10 @@ REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
 - After completing work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"idle","message":"<what you just did>"}}'`
 
 Keep messages under 10 words. Be specific: "spawning 3 workers", "polling children", "reading results", "summing apples", not generic "working".
+
+PERSISTENT WORKSPACE: {workspace}
+Save important output to your workspace — it survives node restarts.
+export ARMADA_WORKSPACE="{workspace}"
 
 Your activity is visible at http://127.0.0.1:9100
 """
@@ -805,6 +843,39 @@ def list_project_hooks(project_path: str) -> dict:
 
 
 _SENSITIVE_KEY_RE = re.compile(r"(token|key|secret|auth|password)", re.IGNORECASE)
+
+
+SENSITIVE_ENV_VARS = [
+    "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+    "AWS_SECURITY_TOKEN", "AWS_DEFAULT_REGION", "AWS_REGION",
+    "AWS_PROFILE", "AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+    "GITHUB_TOKEN", "GH_TOKEN", "GITHUB_ACCESS_TOKEN",
+    "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "CO_API_KEY",
+    "GOOGLE_API_KEY", "GEMINI_API_KEY",
+    "DOCKER_PASSWORD", "DOCKER_USERNAME",
+    "NPM_TOKEN", "NPM_AUTH_TOKEN",
+    "PYPI_TOKEN", "PYPI_PASSWORD",
+    "SLACK_TOKEN", "DISCORD_TOKEN", "DISCORD_WEBHOOK",
+    "TELEGRAM_TOKEN", "TELEGRAM_BOT_TOKEN",
+    "HOMEBREW_GITHUB_API_TOKEN",
+    "GITLAB_TOKEN", "GITLAB_PRIVATE_TOKEN",
+    "DIGITALOCEAN_ACCESS_TOKEN",
+    "HEROKU_API_KEY",
+    "NETLIFY_AUTH_TOKEN",
+    "VERCEL_TOKEN",
+    "CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY",
+    "SENTRY_AUTH_TOKEN", "SENTRY_DSN",
+    "STRIPE_SECRET_KEY", "STRIPE_PUBLISHABLE_KEY",
+    "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN",
+]
+
+
+def _sanitize_env_prefix() -> str:
+    """Generate shell code to clear known sensitive environment variables."""
+    vars_to_unset = [v for v in SENSITIVE_ENV_VARS if v in os.environ]
+    if not vars_to_unset:
+        return ""
+    return "unset " + " ".join(vars_to_unset) + " 2>/dev/null; "
 
 
 def _redact_config(obj):

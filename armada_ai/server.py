@@ -12,6 +12,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.staticfiles import StaticFiles
 import uvicorn
 
 from . import db
@@ -19,6 +20,8 @@ from . import naming
 from . import tmux
 from . import health
 from . import logs
+from . import metrics
+from . import config
 
 _ANSI_RE = re.compile(
     r'\x1b\[[0-9;]*[a-zA-Z]'
@@ -28,11 +31,13 @@ _ANSI_RE = re.compile(
 )
 
 app = FastAPI(title="Armada")
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 TEMPLATE_DIR = Path(__file__).parent / "templates"
 PID_FILE = os.path.expanduser("~/.armada/server.pid")
 TOKEN_FILE = os.path.expanduser("~/.armada/token")
-HOST = "127.0.0.1"
-PORT = 9100
+HOST = config.get("host")
+PORT = config.get("port")
 
 TOKEN = ""
 SERVER_START_TS = 0.0
@@ -110,8 +115,8 @@ def _check_token(request: Request) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json")
-    if path.startswith("/api/logs") or path.startswith("/static/"):
+    exempt = ("/api/report", "/api/auth/status", "/favicon.ico", "/manifest.json", "/health", "/metrics", "/icon.svg")
+    if path.startswith("/api/logs"):
         if not _check_token(request) and path not in exempt:
             logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -123,10 +128,30 @@ async def auth_middleware(request: Request, call_next):
     return await call_next(request)
 
 
+_CSP_HEADER = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "connect-src 'self' ws: wss:; "
+    "img-src 'self' data: https:; "
+    "font-src 'self' data:; "
+    "base-uri 'self'; "
+    "form-action 'self'"
+)
+
+
+@app.middleware("http")
+async def csp_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = _CSP_HEADER
+    return response
+
+
 @app.on_event("startup")
 async def startup():
     global SERVER_START_TS
     SERVER_START_TS = _time.time()
+    metrics.init()
     db.init_db()
     try:
         tmux.ensure_armada_session()
@@ -137,7 +162,18 @@ async def startup():
     if recovered:
         names = [n["name"] for n in recovered]
         logs.log_event("_server", "recovery", {"recovered_nodes": names})
-    health.start_health_loop()
+        # Broadcast recovery notification to WebSocket clients once connected
+        def _notify_recovery():
+            _time.sleep(2)
+            try:
+                for name in names:
+                    db.add_status_report(
+                        next((n["id"] for n in recovered if n["name"] == name), 0),
+                        "idle", "server restarted — reconnected to agent")
+            except Exception:
+                pass
+        threading.Thread(target=_notify_recovery, daemon=True).start()
+    health.start_health_loop(interval=config.get("health_interval"))
     asyncio.create_task(_ws_cleanup_loop())
     logs.log_event("_server", "ready", {"port": PORT, "recovered": len(recovered)})
 
@@ -167,29 +203,46 @@ def manifest():
         "orientation": "any",
         "background_color": "#0f1117",
         "theme_color": "#0f1117",
-        "icons": []
+        "icons": [
+            {"src": "/icon.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any"},
+            {"src": "/icon.svg", "sizes": "512x512", "type": "image/svg+xml", "purpose": "any maskable"},
+        ]
     })
 
 
 @app.get("/sw.js")
 def service_worker():
     sw = """\
-const CACHE = 'armada-v1';
-self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(['/'])));
-});
-self.addEventListener('fetch', e => {
-  e.respondWith(
-    caches.match(e.request).then(r => r || fetch(e.request).then(resp => {
-      if (resp.ok && e.request.method === 'GET') {
-        const clone = resp.clone();
-        caches.open(CACHE).then(c => c.put(e.request, clone));
-      }
-      return resp;
-    }))
-  );
+self.addEventListener('install', e => self.skipWaiting());
+self.addEventListener('activate', e => {
+  caches.keys().then(keys => Promise.all(keys.map(k => caches.delete(k))));
+  e.waitUntil(clients.claim());
 });"""
     return Response(content=sw, media_type="application/javascript")
+
+
+@app.get("/icon.svg")
+def app_icon():
+    icon = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0f1117"/>
+      <stop offset="100%" stop-color="#161b22"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="92" fill="url(#bg)"/>
+  <g transform="translate(256,256)" fill="none" stroke="#58a6ff" stroke-width="28" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="-40" cy="-60" r="32"/>
+    <circle cx="40" cy="-60" r="32"/>
+    <circle cx="0" cy="20" r="32"/>
+    <line x1="-40" y1="-28" x2="0" y2="-12"/>
+    <line x1="40" y1="-28" x2="0" y2="-12"/>
+    <line x1="0" y1="52" x2="0" y2="160"/>
+    <line x1="-80" y1="160" x2="80" y2="160"/>
+    <path d="M-160,200 Q0,260 160,200" stroke-width="22"/>
+  </g>
+</svg>"""
+    return Response(content=icon, media_type="image/svg+xml")
 
 
 # --- Dashboard ---
@@ -198,7 +251,10 @@ self.addEventListener('fetch', e => {
 def dashboard_page():
     html_path = TEMPLATE_DIR / "index.html"
     if html_path.exists():
-        return html_path.read_text()
+        html = html_path.read_text()
+        meta = f'<meta name="armada-token" content="{TOKEN}">'
+        html = html.replace("<head>", "<head>\n" + meta, 1)
+        return html
     return HTMLResponse("<h1>Dashboard not found</h1>")
 
 
@@ -325,6 +381,7 @@ async def create_node(request: Request):
     db.add_status_report(node_id, "idle",
         f"node created (agent={agent_type}, project={project_label_id or 'cwd'})")
     logs.log_create(agent_name, agent_type, project_label_id)
+    metrics.counter_inc("armada_nodes_created_total")
     tmux.save_agent_hook(agent_name)
 
     if initial_prompt:
@@ -344,6 +401,12 @@ def delete_node(node_id: int):
 
     killed = db.kill_node(node_id)
     for entry in killed:
+        try:
+            content = tmux.capture_pane_content(entry["name"])
+            if content:
+                logs.log_agent_output(entry["name"], content)
+        except Exception:
+            pass
         try:
             tmux.kill_node_window(entry["name"])
         except Exception:
@@ -437,7 +500,7 @@ def terminal_view(node_id: int):
     if not tmux.window_exists(node["name"]):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    target = f"armada:{node['name']}"
+    target = f"armada-{node['name']}"
 
     dims = subprocess.run(
         ["tmux", "display-message", "-p", "-t", target,
@@ -488,7 +551,7 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
         await websocket.close(code=4004)
         return
 
-    target = f"armada:{node['name']}"
+    target = f"armada-{node['name']}"
     await websocket.accept()
     logs.log_ws_connect(client, f"/api/nodes/{node_id}/ws")
 
@@ -673,6 +736,12 @@ async def agent_report(request: Request):
 
     db.add_status_report(node["id"], status, message)
     logs.log_report(name, status, message)
+    metrics.counter_inc("armada_reports_total")
+    report_latency = _time.time() - (body.get("_client_ts") or 0)
+    if report_latency > 0 and report_latency < 3600:
+        metrics.histogram_observe("armada_report_latency_seconds", report_latency)
+    if status == "error":
+        metrics.counter_inc("armada_errors_total")
     if tokens or cost:
         db.accumulate_cost(
             node["id"],
@@ -680,6 +749,9 @@ async def agent_report(request: Request):
             tokens_out=tokens.get("output", 0) if tokens else 0,
             cost=cost or 0.0,
         )
+        if tokens:
+            metrics.counter_inc("armada_tokens_total", tokens.get("input", 0), ("input",))
+            metrics.counter_inc("armada_tokens_total", tokens.get("output", 0), ("output",))
     await _broadcast_tree()
     return JSONResponse({"ok": True})
 
@@ -734,6 +806,45 @@ def server_info():
         "version": "0.2.0",
         "started_at": SERVER_START_TS,
     })
+
+
+@app.get("/health")
+def health_check():
+    uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
+    metrics.gauge_set("armada_uptime_seconds", uptime_seconds)
+    nodes = db.get_all_nodes(include_dead=False)
+    active = sum(1 for n in nodes if n["status"] == "active")
+    pending = sum(1 for n in nodes if n["status"] == "pending")
+    idle = sum(1 for n in nodes if n["status"] == "idle")
+    metrics.gauge_set("armada_agents", active, ("active",))
+    metrics.gauge_set("armada_agents", pending, ("pending",))
+    metrics.gauge_set("armada_agents", idle, ("idle",))
+    return JSONResponse({
+        "status": "ok",
+        "agents": len(nodes),
+        "active": active,
+        "pending": pending,
+        "idle": idle,
+        "uptime": round(uptime_seconds, 1),
+        "version": "0.2.0",
+    })
+
+
+@app.get("/metrics")
+def prometheus_metrics():
+    uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
+    metrics.gauge_set("armada_uptime_seconds", uptime_seconds)
+    nodes = db.get_all_nodes(include_dead=False)
+    statuses = {"active": 0, "pending": 0, "idle": 0}
+    for n in nodes:
+        s = n["status"]
+        if s in statuses:
+            statuses[s] += 1
+    for s, count in statuses.items():
+        metrics.gauge_set("armada_agents", count, (s,))
+    total_cost = sum(n.get("total_cost", 0) or 0 for n in nodes)
+    metrics.gauge_set("armada_cost_total", total_cost)
+    return Response(content=metrics.generate_latest(), media_type="text/plain; charset=utf-8")
 
 
 @app.get("/api/qr")
@@ -798,7 +909,7 @@ def _daemonize():
 
 def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = False, keep_token: bool = True):
     host = "0.0.0.0" if lan else HOST
-    token = _ensure_token(keep=keep_token)
+    _ensure_token(keep=keep_token)
 
     if daemon:
         _daemonize()
@@ -807,7 +918,7 @@ def start_server(daemon: bool = True, open_browser: bool = True, lan: bool = Fal
 
     if open_browser and not lan:
         import webbrowser
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}?token={token}")).start()
+        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}")).start()
 
     try:
         uvicorn.run(app, host=host, port=PORT, log_level="warning")
