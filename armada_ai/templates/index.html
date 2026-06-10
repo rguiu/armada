@@ -28,6 +28,7 @@
   --yellow: #fbbf24;
   --red: #ff7b72;
   --hover: #1c2128;
+  --selected: #1f2937;
   --btn-bg: #21262d;
   --btn-hover: #30363d;
   --overlay: rgba(0,0,0,0.6);
@@ -48,9 +49,10 @@
   --green: #1a7f37;
   --yellow: #9a6700;
   --red: #cf222e;
-  --hover: #f3f4f6;
+  --hover: #eaeef2;
+  --selected: #ddf4ff;
   --btn-bg: #f6f8fa;
-  --btn-hover: #eaeef2;
+  --btn-hover: #d0d7de;
   --overlay: rgba(255,255,255,0.5);
   --shadow: rgba(0,0,0,0.1);
 }
@@ -119,7 +121,7 @@ a { color: var(--accent); }
   display: flex; align-items: center; gap: 6px; margin: 1px 0;
 }
 #tree .node-item:hover { background: var(--hover); }
-#tree .node-item.selected { background: var(--hover); border: 1px solid var(--border-light); }
+#tree .node-item.selected { background: var(--selected); border: 1px solid var(--border-light); }
 #tree .node-item .dot {
   width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
 }
