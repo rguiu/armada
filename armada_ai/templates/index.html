@@ -800,9 +800,12 @@ let AUTH_TOKEN = '';
 })();
 
 async function api(url, opts = {}) {
+  opts.headers = opts.headers || {};
   if (AUTH_TOKEN) {
-    opts.headers = opts.headers || {};
     opts.headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+  }
+  if (opts.body && typeof opts.body === 'string') {
+    opts.headers['Content-Type'] = 'application/json';
   }
   const res = await fetch(url, opts);
   if (!res.ok) {
