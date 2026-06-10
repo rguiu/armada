@@ -1874,27 +1874,23 @@ function toggleProjects() {
 
 function initQR() {
   const localUrl = 'http://127.0.0.1:9100?token=' + AUTH_TOKEN;
-  document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff">127.0.0.1:9100</a>';
+  document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff" target="_blank">127.0.0.1:9100</a>';
+  document.getElementById('qr-image').style.display = 'inline-block';
   fetchQR(localUrl);
 
-  fetch('/api/info', { headers: authHeaders() })
-    .then(r => r.ok ? r.json() : Promise.reject())
+  api('/api/info')
     .then(info => {
       const lanUrl = 'http://' + info.lan_ip + ':' + info.port + '?token=' + AUTH_TOKEN;
-      document.getElementById('qr-url-lan').innerHTML = '&#128279; <a href="' + lanUrl + '" style="color:#58a6ff">' + info.lan_ip + ':' + info.port + '</a>';
+      document.getElementById('qr-url-lan').innerHTML = '&#128279; <a href="' + lanUrl + '" style="color:#58a6ff" target="_blank">' + info.lan_ip + ':' + info.port + '</a>';
       fetchQR(lanUrl);
     })
     .catch(() => {
-      document.getElementById('qr-url-lan').innerHTML = '<span style="color:#8b949e">LAN info unavailable</span>';
+      document.getElementById('qr-url-lan').innerHTML = '<span style="color:var(--text-dim)">LAN info unavailable</span>';
     });
 }
 
-function authHeaders() {
-  return AUTH_TOKEN ? { 'Authorization': 'Bearer ' + AUTH_TOKEN } : {};
-}
-
 function fetchQR(url) {
-  fetch('/api/qr?url=' + encodeURIComponent(url), { headers: authHeaders() })
+  fetch('/api/qr?url=' + encodeURIComponent(url))
     .then(r => { if (!r.ok) throw new Error('status ' + r.status); return r.blob(); })
     .then(blob => {
       document.getElementById('qr-image').src = URL.createObjectURL(blob);

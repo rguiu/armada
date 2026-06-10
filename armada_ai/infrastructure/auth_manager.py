@@ -80,6 +80,7 @@ class AuthExemptPaths:
         "/health",
         "/metrics",
         "/icon.svg",
+        "/api/qr",
     })
 
     @classmethod
