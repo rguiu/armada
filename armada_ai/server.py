@@ -781,7 +781,11 @@ def global_skills():
 
 @app.get("/api/extensions")
 def list_extensions(project: str | None = None):
-    return JSONResponse(db.list_extensions(project_label_id=project))
+    exts = db.list_extensions(project_label_id=project)
+    if not exts or all(e.get("assigned_project") is None and e.get("source") == "armada" for e in exts):
+        db.scan_builtin_extensions()
+        exts = db.list_extensions(project_label_id=project)
+    return JSONResponse(exts)
 
 
 @app.post("/api/extensions/install")

@@ -1833,11 +1833,13 @@ function toggleExtensions() {
 
 async function loadExtensions(filter) {
   _extFilter = filter || _extFilter;
+  const container = document.getElementById('extensions-list');
+  container.innerHTML = '<div class="spinner" style="width:12px;height:12px;border-width:2px;margin:4px auto"></div>';
   try {
     const r = await api('/api/extensions');
+    if (!r.ok) throw new Error('status ' + r.status);
     let exts = await r.json();
     if (_extFilter !== 'all') exts = exts.filter(e => e.type === _extFilter);
-    const container = document.getElementById('extensions-list');
     if (!exts.length) {
       container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px">No extensions found</div>';
       return;
@@ -1852,7 +1854,9 @@ async function loadExtensions(filter) {
         }
       </div>
     `).join('');
-  } catch(_) {}
+  } catch(e) {
+    container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px">Failed to load extensions</div>';
+  }
 }
 
 async function installExt(id) {
