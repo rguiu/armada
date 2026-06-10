@@ -595,6 +595,12 @@ a { color: var(--accent); }
   <svg id="chart-agents" width="256" height="48" style="display:block;border-radius:4px;background:var(--bg)"></svg>
 </div>
 <input type="text" id="tree-search" placeholder="Filter nodes..." oninput="filterTree()">
+  <div id="pending-section" style="display:none;border-bottom:1px solid rgba(251,191,36,0.25);padding:8px;background:rgba(251,191,36,0.05)">
+    <div class="section-header">
+      <span class="section-title" style="color:var(--yellow)">&#9679; Pending Permissions</span>
+    </div>
+    <div id="pending-list"></div>
+  </div>
   <div id="tree"><div class="loading-tree"><div class="spinner"></div> Loading agents...</div></div>
   <div id="batch-bar">
     <span class="count" id="batch-count">0 selected</span>
@@ -2224,12 +2230,13 @@ function applyStatusFilter() {
 
 function updateStats() {
   const counts = { active: 0, idle: 0, pending: 0 };
+  const pendingNodes = [];
   let totalCost = 0;
   function walk(nodes) {
     for (const n of nodes) {
       if (n.status === 'dead') continue;
       if (n.status === 'active') counts.active++;
-      else if (n.status === 'pending') counts.pending++;
+      else if (n.status === 'pending') { counts.pending++; pendingNodes.push(n); }
       else if (n.status === 'idle') counts.idle++;
       totalCost += n.total_cost || 0;
       if (n.children) walk(n.children);
@@ -2240,6 +2247,32 @@ function updateStats() {
   document.getElementById('stat-idle').innerHTML = '<span class="stat-dot idle-dot"></span> ' + counts.idle;
   document.getElementById('stat-pending').innerHTML = '<span class="stat-dot pending"></span> ' + counts.pending;
   document.getElementById('stat-cost').textContent = '$' + totalCost.toFixed(2);
+
+  const section = document.getElementById('pending-section');
+  const list = document.getElementById('pending-list');
+  if (!pendingNodes.length) {
+    section.style.display = 'none';
+    document.getElementById('pending-dot').classList.remove('show');
+    return;
+  }
+  section.style.display = 'block';
+  document.getElementById('pending-dot').classList.add('show');
+  list.innerHTML = pendingNodes.map(n => `
+    <div class="perm-bar" style="margin:4px 0;padding:8px 10px;font-size:11px;flex-wrap:wrap">
+      <div style="flex:1;min-width:0">
+        <div style="display:flex;align-items:center;gap:4px;margin-bottom:2px">
+          <span class="dot" style="width:6px;height:6px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
+          <span style="font-weight:600;cursor:pointer;color:var(--text)" onclick="selectNodeById(${n.id})">${esc(n.name)}</span>
+        </div>
+        <div class="perm-msg" style="font-size:11px;margin:0">${esc(n.latest_message || 'Waiting for permission...')}</div>
+      </div>
+      <div class="perm-btns" style="flex-shrink:0;padding-top:4px">
+        <button class="btn btn-primary btn-sm" onclick="replyPermission(${n.id},'y')">Allow Once</button>
+        <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${n.id},'a')">Allow Always</button>
+        <button class="btn btn-danger btn-sm" onclick="replyPermission(${n.id},'n')">Deny</button>
+      </div>
+    </div>
+  `).join('');
 }
 
 function _hasPending(node) {
