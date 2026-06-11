@@ -47,7 +47,13 @@ export const ArmadaPending = async () => {
     } else if (event.type === "permission.asked") {
       const perm = event.properties.permission || "unknown";
       const patterns = (event.properties.patterns || []).join(", ") || "any file";
-      post("pending", perm + " permission for: " + patterns);
+      post("pending", perm + " permission for: " + patterns, {
+        options: [
+          { label: "Allow once", key: "&#9166;" },
+          { label: "Allow always", key: "Tab+&#9166;" },
+          { label: "Reject", key: "Tab+Tab+&#9166;" },
+        ]
+      });
     } else if (event.type === "message.part.updated") {
       const part = event.properties?.part;
       if (part?.type === "step-finish" && part.id && !seenCosts.has(part.id)) {

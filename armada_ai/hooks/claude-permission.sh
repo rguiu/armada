@@ -1,10 +1,10 @@
 #!/bin/bash
-# Claude Code PermissionRequest hook — reports "pending" with context
+# Claude Code PermissionRequest hook — reports "pending" with question and options
 N="${ARMADA_NODE_NAME:-}"
 [ -z "$N" ] && exit 0
 INPUT=$(cat 2>/dev/null)
-# Extract tool name, permission type, and first line of input for context
-CTX=$(echo "$INPUT" | python3 -c "
+# Extract context and available options from the permission request
+DATA=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -17,10 +17,20 @@ try:
     ctx = tool
     if perm: ctx += ' / ' + perm
     if inp_line: ctx += ' — ' + inp_line
-    print(ctx)
-except: print('waiting for approval')
-" 2>/dev/null || echo "waiting for approval")
+    
+    options = d.get('options', [])
+    if not options:
+        options = [{'label': 'Allow once', 'key': 'y'}, {'label': 'Allow always', 'key': 'a'}, {'label': 'Deny', 'key': 'n'}]
+    
+    print(json.dumps({'message': ctx, 'options': options}))
+except:
+    print(json.dumps({'message': 'waiting for approval', 'options': [{'label': 'Allow once', 'key': 'y'}, {'label': 'Allow always', 'key': 'a'}, {'label': 'Deny', 'key': 'n'}]}))
+" 2>/dev/null || echo '{"message":"waiting for approval","options":[{"label":"Allow once","key":"y"},{"label":"Allow always","key":"a"},{"label":"Deny","key":"n"}]}')
+
+MSG=$(echo "$DATA" | python3 -c "import sys,json; print(json.load(sys.stdin)['message'])" 2>/dev/null)
+OPTS=$(echo "$DATA" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['options']))" 2>/dev/null)
+
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"$N\",\"status\":\"pending\",\"message\":\"$CTX\"}" > /dev/null 2>&1
+  -d "{\"name\":\"$N\",\"status\":\"pending\",\"message\":\"$MSG\",\"options\":$OPTS}" > /dev/null 2>&1
 exit 0

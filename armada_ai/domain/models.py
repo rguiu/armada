@@ -67,6 +67,7 @@ class Node:
     children: list[Node] = field(default_factory=list)
     latest_message: str | None = None
     latest_report_time: str | None = None
+    latest_options: str | None = None
 
     @classmethod
     def from_row(cls, row: dict[str, Any]) -> Node:
@@ -90,6 +91,7 @@ class Node:
             log_count=row.get("log_count", 0),
             latest_message=row.get("latest_message"),
             latest_report_time=row.get("latest_report_time"),
+            latest_options=row.get("latest_options"),
         )
 
     def is_dead(self) -> bool:
@@ -122,6 +124,7 @@ class Node:
             "log_count": self.log_count,
             "latest_message": self.latest_message,
             "latest_report_time": self.latest_report_time,
+            "latest_options": self.latest_options,
         }
 
 

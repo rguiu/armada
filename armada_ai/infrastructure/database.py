@@ -147,6 +147,11 @@ def _migrate():
                 conn.commit()
             except sqlite3.OperationalError:
                 pass
+    try:
+        conn.execute("ALTER TABLE status_reports ADD COLUMN options TEXT DEFAULT ''")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
 
 
 # --- Project Labels ---
@@ -320,12 +325,13 @@ _MAX_REPORTS_PER_NODE = 200
 _last_prune: dict[int, int] = {}
 
 
-def add_status_report(node_id: int, status: str, message: str | None = None):
+def add_status_report(node_id: int, status: str, message: str | None = None,
+                      options: str = ""):
     def _do():
         conn = _get_conn()
         conn.execute(
-            "INSERT INTO status_reports (node_id, status, message) VALUES (?, ?, ?)",
-            (node_id, status, message),
+            "INSERT INTO status_reports (node_id, status, message, options) VALUES (?, ?, ?, ?)",
+            (node_id, status, message, options),
         )
         conn.execute("UPDATE nodes SET status = ? WHERE id = ?", (status, node_id))
         conn.commit()
@@ -521,6 +527,8 @@ def get_all_nodes(include_dead: bool = True) -> list[Node]:
                p.name as project_label_name,
                (SELECT message FROM status_reports WHERE node_id = n.id
                 ORDER BY timestamp DESC LIMIT 1) as latest_message,
+               (SELECT options FROM status_reports WHERE node_id = n.id
+                ORDER BY timestamp DESC LIMIT 1) as latest_options,
                (SELECT timestamp FROM status_reports WHERE node_id = n.id
                 ORDER BY timestamp DESC LIMIT 1) as latest_report_time
         FROM nodes n
@@ -580,7 +588,7 @@ def get_killed_nodes(limit: int = 50) -> list[Node]:
 def get_node_reports(node_id: int, limit: int = 30) -> list[dict]:
     conn = _get_conn()
     rows = conn.execute(
-        "SELECT id, node_id, status, message, timestamp FROM status_reports "
+        "SELECT id, node_id, status, message, options, timestamp FROM status_reports "
         "WHERE node_id = ? ORDER BY timestamp DESC LIMIT ?",
         (node_id, limit),
     ).fetchall()

@@ -1575,6 +1575,24 @@ async function replyPermission(id, key) {
   }
 }
 
+async function doPendingReply(id, optionIndex) {
+  try {
+    const data = await api('/api/nodes/' + id + '/reports?limit=1');
+    const report = data && data.length ? data[0] : null;
+    if (!report) return;
+    const options = JSON.parse(report.options || '[]');
+    const opt = options[optionIndex];
+    if (!opt || !opt.key) return;
+    await api('/api/nodes/' + id + '/send', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({command: opt.key, raw: true})
+    });
+  } catch(e) {
+    toast('Failed: ' + e.message, true);
+  }
+}
+
 /* ── Batch operations ── */
 function refreshBatchBar() {
   const bar = document.getElementById('batch-bar');
@@ -2317,7 +2335,11 @@ function updateStats() {
     empty.innerHTML = `
       <div style="text-align:left;max-width:600px;width:100%">
         <h3 style="color:var(--yellow);margin-bottom:12px">&#9679; Pending Permissions (${pendingNodes.length})</h3>
-        ${pendingNodes.map(n => `
+        ${pendingNodes.map(n => {
+          let options = [];
+          try { options = JSON.parse(n.latest_options || '[]'); } catch(_) {}
+          if (!options.length) options = [{label:'Allow', key:'\n'}, {label:'Always', key:'\t\n'}, {label:'Deny', key:'\t\t\n'}];
+          return `
           <div class="perm-bar" style="margin:8px 0;padding:12px 16px;flex-wrap:wrap">
             <div style="flex:1;min-width:0">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
@@ -2327,12 +2349,13 @@ function updateStats() {
               <div style="color:var(--text-muted);font-size:12px">${esc(n.latest_message || 'Waiting for permission...')}</div>
             </div>
             <div class="perm-btns" style="flex-shrink:0;padding-top:8px">
-              <button class="btn btn-primary btn-sm" onclick="replyPermission(${n.id},'y')">Allow Once</button>
-              <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${n.id},'a')">Allow Always</button>
-              <button class="btn btn-danger btn-sm" onclick="replyPermission(${n.id},'n')">Deny</button>
+              ${options.map((o, i) => {
+                const cls = i === options.length - 1 ? 'btn-danger' : i === 0 ? 'btn-primary' : 'btn-outline-blue';
+                return `<button class="btn ${cls} btn-sm" onclick="doPendingReply(${n.id},${i})">${esc(o.label)}</button>`;
+              }).join('')}
             </div>
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
       </div>`;
   }
 }

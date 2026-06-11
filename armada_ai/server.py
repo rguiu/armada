@@ -1115,7 +1115,8 @@ async def agent_report(request: Request):
     if not node:
         raise HTTPException(status_code=404, detail=f"Unknown node: {report.name}")
 
-    db.add_status_report(node.id, report.status, report.message)
+    options_json = json.dumps(body.get("options", [])) if body.get("options") else ""
+    db.add_status_report(node.id, report.status, report.message, options=options_json)
     logs.log_report(report.name, report.status, report.message)
     metrics.counter_inc("armada_reports_total")
 
