@@ -20,12 +20,12 @@ try:
     
     options = d.get('options', [])
     if not options:
-        options = [{'label': 'Allow once', 'key': 'y'}, {'label': 'Allow always', 'key': 'a'}, {'label': 'Deny', 'key': 'n'}]
+        options = [{'label': 'Allow once', 'key': chr(10)}, {'label': 'Allow always', 'key': chr(9)+chr(10)}, {'label': 'Deny', 'key': chr(9)+chr(9)+chr(10)}]
     
     print(json.dumps({'message': ctx, 'options': options}))
 except:
-    print(json.dumps({'message': 'waiting for approval', 'options': [{'label': 'Allow once', 'key': 'y'}, {'label': 'Allow always', 'key': 'a'}, {'label': 'Deny', 'key': 'n'}]}))
-" 2>/dev/null || echo '{"message":"waiting for approval","options":[{"label":"Allow once","key":"y"},{"label":"Allow always","key":"a"},{"label":"Deny","key":"n"}]}')
+    print(json.dumps({'message': 'waiting for approval', 'options': [{'label': 'Allow once', 'key': chr(10)}, {'label': 'Allow always', 'key': chr(9)+chr(10)}, {'label': 'Deny', 'key': chr(9)+chr(9)+chr(10)}]}))
+" 2>/dev/null || echo '{"message":"waiting for approval","options":[{"label":"Allow once","key":"\n"},{"label":"Allow always","key":"\t\n"},{"label":"Deny","key":"\t\t\n"}]}')
 
 MSG=$(echo "$DATA" | python3 -c "import sys,json; print(json.load(sys.stdin)['message'])" 2>/dev/null)
 OPTS=$(echo "$DATA" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['options']))" 2>/dev/null)
