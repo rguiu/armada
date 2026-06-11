@@ -488,7 +488,16 @@ def delete_node(node_id: int):
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
 
-    killed = db.kill_node(node_id)
+    import sqlite3 as _sqlite3
+    for _attempt in range(10):
+        try:
+            killed = db.kill_node(node_id)
+            break
+        except _sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and _attempt < 9:
+                _time.sleep(0.1 * (_attempt + 1))
+                continue
+            raise
     for entry in killed:
         try:
             content = tmux.capture_pane_content(entry["name"])
@@ -807,7 +816,7 @@ def list_extensions():  # pragma: no cover
                         break
             except Exception:
                 pass
-            extensions.append({"id": d.name, "type": "skill", "name": d.name, "description": desc})
+            extensions.append({"id": d.name, "type": "skill", "name": d.name, "description": desc, "agent": "both"})
 
     if source_hooks.is_dir():
         for f in sorted(source_hooks.iterdir()):
@@ -823,14 +832,14 @@ def list_extensions():  # pragma: no cover
                         break
             except Exception:
                 pass
-            extensions.append({"id": ext_id, "type": "hook", "name": f.name, "description": desc})
+            extensions.append({"id": ext_id, "type": "hook", "name": f.name, "description": desc, "agent": "claude"})
 
     if source_plugins.is_dir():
         for f in sorted(source_plugins.iterdir()):
             if not f.is_file():
                 continue
             ext_id = f"plugin-{f.stem}"
-            extensions.append({"id": ext_id, "type": "plugin", "name": f.name, "description": ""})
+            extensions.append({"id": ext_id, "type": "plugin", "name": f.name, "description": "", "agent": "opencode"})
 
     # Scan MCP configs from project root and global
     mcp_seen = set()
@@ -851,7 +860,8 @@ def list_extensions():  # pragma: no cover
             except Exception:
                 desc = "MCP config"
             ext_id = f"mcp-{candidate.stem}"
-            extensions.append({"id": ext_id, "type": "mcp", "name": str(candidate.relative_to(candidate.parent.parent)) if candidate.parent.parent else candidate.name, "description": desc})
+            mcp_agent = "opencode" if "opencode" in str(candidate) else "claude" if ".claude" in str(candidate) else "both"
+            extensions.append({"id": ext_id, "type": "mcp", "name": str(candidate.relative_to(candidate.parent.parent)) if candidate.parent.parent else candidate.name, "description": desc, "agent": mcp_agent})
 
     # Scan custom extensions from ~/.armada/extensions/
     custom_dir = Path.home() / ".armada" / "extensions"
@@ -873,16 +883,16 @@ def list_extensions():  # pragma: no cover
                                 break
                     except Exception:
                         pass
-                    extensions.append({"id": ext_id, "type": "skill", "name": entry.name, "description": desc, "source": "custom"})
+                    extensions.append({"id": ext_id, "type": "skill", "name": entry.name, "description": desc, "source": "custom", "agent": "both"})
             elif sub == "hooks" and entry.is_file() and entry.name.endswith(".sh"):
                 ext_id = f"custom-hook-{entry.stem}"
-                extensions.append({"id": ext_id, "type": "hook", "name": entry.name, "description": "Custom hook", "source": "custom"})
+                extensions.append({"id": ext_id, "type": "hook", "name": entry.name, "description": "Custom hook", "source": "custom", "agent": "claude"})
             elif sub == "plugins" and entry.is_file():
                 ext_id = f"custom-plugin-{entry.stem}"
-                extensions.append({"id": ext_id, "type": "plugin", "name": entry.name, "description": "Custom plugin", "source": "custom"})
+                extensions.append({"id": ext_id, "type": "plugin", "name": entry.name, "description": "Custom plugin", "source": "custom", "agent": "opencode"})
             elif sub == "mcp" and entry.is_file() and entry.name.endswith(".json"):
                 ext_id = f"custom-mcp-{entry.stem}"
-                extensions.append({"id": ext_id, "type": "mcp", "name": entry.name, "description": "Custom MCP", "source": "custom"})
+                extensions.append({"id": ext_id, "type": "mcp", "name": entry.name, "description": "Custom MCP", "source": "custom", "agent": "both"})
 
     labels = db.list_project_labels()
     for ext in extensions:

@@ -370,7 +370,7 @@ def prune_all_old_reports(keep: int = 200):
 def vacuum_db():
     def _do():
         conn = _get_conn()
-        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
         conn.execute("PRAGMA optimize")
     _retry(_do, write=True)
 

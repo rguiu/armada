@@ -1939,17 +1939,31 @@ async function loadExtensions() {
       container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px 8px">No extensions found</div>';
       return;
     }
-    container.innerHTML = exts.map(ext => {
-      const count = ext.projects ? ext.projects.length : 0;
-      return `
-      <div class="label-item" onclick="selectExtension('${ext.id}')" id="ext-item-${ext.id}">
-        <div style="flex:1;min-width:0">
-          <span style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-right:6px">${ext.type}</span>
-          <span style="font-size:12px">${esc(ext.name)}</span>
-        </div>
-        <span style="font-size:10px;color:${count > 0 ? 'var(--green)' : 'var(--text-dim)'}">${count > 0 ? count + ' projects' : ''}</span>
-      </div>`;
-    }).join('');
+    const groups = {claude: [], opencode: [], both: []};
+    for (const ext of exts) {
+      const ag = ext.agent || 'both';
+      (groups[ag] || groups.both).push(ext);
+    }
+    const labels = {claude: 'Claude Code', opencode: 'OpenCode', both: 'Shared'};
+    const colors = {claude: '#c9a0ff', opencode: '#58a6ff', both: 'var(--text-dim)'};
+    let html = '';
+    for (const [ag, items] of Object.entries(groups)) {
+      if (!items.length) continue;
+      html += `<div style="margin-top:6px"><div style="font-size:10px;text-transform:uppercase;color:${colors[ag]};padding:2px 8px;letter-spacing:0.5px">${labels[ag]}</div>`;
+      for (const ext of items) {
+        const count = ext.projects ? ext.projects.length : 0;
+        html += `
+        <div class="label-item" onclick="selectExtension('${ext.id}')" id="ext-item-${ext.id}">
+          <div style="flex:1;min-width:0">
+            <span style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-right:6px">${ext.type}</span>
+            <span style="font-size:12px">${esc(ext.name)}</span>
+          </div>
+          <span style="font-size:10px;color:${count > 0 ? 'var(--green)' : 'var(--text-dim)'}">${count > 0 ? count + ' projects' : ''}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+    container.innerHTML = html;
   } catch(_) {
     container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px 8px">Failed to load. Restart the server.</div>';
   }
@@ -1988,9 +2002,15 @@ async function selectExtension(extId) {
       projHtml = '<div style="color:var(--text-dim);font-size:11px;padding:4px 0;margin-bottom:8px">Not installed in any project.</div>' + projHtml;
     }
 
+    const agentLabels = {claude: 'Claude Code', opencode: 'OpenCode', both: 'Both'};
+    const agentColors = {claude: '#c9a0ff', opencode: '#58a6ff', both: 'var(--text-muted)'};
+    const ag = ext.agent || 'both';
     detail.innerHTML = `
       <h2>${esc(ext.name)}</h2>
-      <div style="color:var(--accent);font-size:11px;text-transform:uppercase;margin-bottom:4px">${ext.type}</div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+        <span style="color:var(--accent);font-size:11px;text-transform:uppercase">${ext.type}</span>
+        <span style="font-size:10px;color:${agentColors[ag]};border:1px solid ${agentColors[ag]};border-radius:3px;padding:1px 5px">${agentLabels[ag]}</span>
+      </div>
       <div style="color:var(--text-muted);margin-bottom:8px;font-size:12px;line-height:1.5">${esc(ext.description || 'No description available.')}</div>
       <button class="btn btn-outline btn-sm" onclick="toggleExtContent('${ext.id}')" style="margin-bottom:16px">View source</button>
       <div id="ext-content-${ext.id}" style="display:none;margin-bottom:16px">
