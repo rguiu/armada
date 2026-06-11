@@ -526,11 +526,11 @@ def get_all_nodes(include_dead: bool = True) -> list[Node]:
                n.total_cost, n.log_count,
                p.name as project_label_name,
                (SELECT message FROM status_reports WHERE node_id = n.id
-                ORDER BY timestamp DESC LIMIT 1) as latest_message,
-               (SELECT options FROM status_reports WHERE node_id = n.id
-                ORDER BY timestamp DESC LIMIT 1) as latest_options,
-               (SELECT timestamp FROM status_reports WHERE node_id = n.id
-                ORDER BY timestamp DESC LIMIT 1) as latest_report_time
+                 ORDER BY id DESC LIMIT 1) as latest_message,
+                (SELECT options FROM status_reports WHERE node_id = n.id
+                 ORDER BY id DESC LIMIT 1) as latest_options,
+                (SELECT timestamp FROM status_reports WHERE node_id = n.id
+                 ORDER BY id DESC LIMIT 1) as latest_report_time
         FROM nodes n
         LEFT JOIN project_labels p ON n.project_label_id = p.id
         WHERE {} n.hidden_at IS NULL
@@ -560,7 +560,7 @@ def get_nodes_by_project_label_id(label_id: str) -> list[Node]:
         "SELECT n.id, n.name, n.colour, n.status, n.agent_type, n.created_at, "
         "n.total_tokens_in, n.total_tokens_out, n.total_cost, "
         "(SELECT message FROM status_reports WHERE node_id = n.id "
-        " ORDER BY timestamp DESC LIMIT 1) as latest_message "
+        " ORDER BY id DESC LIMIT 1) as latest_message "
         "FROM nodes n "
         "WHERE n.project_label_id = ? AND n.killed_at IS NULL AND n.hidden_at IS NULL "
         "ORDER BY n.created_at DESC",
@@ -576,7 +576,7 @@ def get_killed_nodes(limit: int = 50) -> list[Node]:
                n.created_at, n.killed_at, n.project_label_id,
                p.name as project_label_name,
                (SELECT message FROM status_reports WHERE node_id = n.id
-                ORDER BY timestamp DESC LIMIT 1) as latest_message
+                 ORDER BY id DESC LIMIT 1) as latest_message
         FROM nodes n
         LEFT JOIN project_labels p ON n.project_label_id = p.id
         WHERE n.killed_at IS NOT NULL AND n.hidden_at IS NULL
@@ -589,7 +589,7 @@ def get_node_reports(node_id: int, limit: int = 30) -> list[dict]:
     conn = _get_conn()
     rows = conn.execute(
         "SELECT id, node_id, status, message, options, timestamp FROM status_reports "
-        "WHERE node_id = ? ORDER BY timestamp DESC LIMIT ?",
+        "WHERE node_id = ? ORDER BY id DESC LIMIT ?",
         (node_id, limit),
     ).fetchall()
     return [dict(r) for r in rows]

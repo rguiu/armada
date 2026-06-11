@@ -6,24 +6,31 @@ const NODE = process.env.ARMADA_NODE_NAME;
 function post(status, message, extra = {}) {
   if (!NODE) return;
   const body = JSON.stringify({ name: NODE, status, message, ...extra });
+  const payload = Buffer.byteLength(body, 'utf8');
+
+  let sent = false;
+
   try {
-    fetch(`${API}/api/report`, {
+    const http = require("http");
+    const u = new (require("url").URL)(`${API}/api/report`);
+    const req = http.request({
+      hostname: u.hostname, port: u.port, path: u.pathname,
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    }).catch(() => {});
-  } catch (_) {
+      headers: { "Content-Type": "application/json", "Content-Length": payload },
+    }, (res) => { res.resume(); });
+    req.on("error", () => {});
+    req.write(body);
+    req.end();
+    sent = true;
+  } catch (_) {}
+
+  if (!sent) {
     try {
-      const http = require("http");
-      const url = new (require("url").URL)(`${API}/api/report`);
-      const req = http.request({
-        hostname: url.hostname, port: url.port, path: url.pathname,
+      fetch(`${API}/api/report`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(body) },
-      }, () => {});
-      req.on("error", () => {});
-      req.write(body);
-      req.end();
+        headers: { "Content-Type": "application/json" },
+        body,
+      }).then(r => r.text()).catch(() => {});
     } catch (_) {}
   }
 }
@@ -57,8 +64,8 @@ export const ArmadaPending = async () => {
         post("pending", tool + " needs " + perm + " permission: " + patterns, {
           options: [
             { label: "Allow once", key: "\n" },
-            { label: "Allow always", key: "\t\n" },
-            { label: "Reject", key: "\t\t\n" },
+            { label: "Allow always", key: "\x1b[C\n" },
+            { label: "Reject", key: "\x1b[C\x1b[C\n" },
           ]
         });
       }, 200);

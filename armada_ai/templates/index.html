@@ -1553,8 +1553,8 @@ async function hideNode(id) {
 async function replyPermission(id, key) {
   let command;
   if (key === 'y') command = '\n';
-  else if (key === 'a') command = '\t\n';
-  else if (key === 'n') command = '\t\t\n';
+  else if (key === 'a') command = '\x1b[C\n';
+  else if (key === 'n') command = '\x1b[C\x1b[C\n';
   else command = key;
   try {
     await api('/api/nodes/' + id + '/send', {
@@ -1865,7 +1865,18 @@ function uptimeDiff(start, end) {
 async function refreshHooks() {
   try {
     const res = await api('/api/refresh-hooks', {method:'POST'});
-    toast('Hooks synced to ' + res.updated.length + ' project(s).');
+    const parts = [];
+    if (res.updated && res.updated.length) parts.push('Updated ' + res.updated.length + ' project(s)');
+    if (res.skipped && res.skipped.length) {
+      parts.push('Skipped ' + res.skipped.length + ' (missing dirs)');
+      res.skipped.forEach(s => clientLog('warn', 'Sync skipped ' + s.name + ': ' + s.reason));
+    }
+    if (res.failed && res.failed.length) {
+      parts.push('Failed ' + res.failed.length + ' project(s)');
+      res.failed.forEach(f => clientLog('warn', 'Sync failed ' + f.name + ': ' + f.reason));
+    }
+    if (!parts.length) parts.push('No projects to sync');
+    toast(parts.join('; '), !!(res.failed && res.failed.length));
   } catch(e) {
     toast('Sync failed: ' + e.message, true);
   }
