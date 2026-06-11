@@ -197,19 +197,14 @@ def send_raw_keys(name: str, keys: str) -> bool:
     if not has_tmux():
         return False
     target = agent_target(name)
-    if '\n' in keys or '\r' in keys:
-        lines = keys.replace('\r\n', '\n').replace('\r', '\n').split('\n')
-        for i, line in enumerate(lines):
-            if i > 0:
-                tmux("send-keys", "-t", target, "Enter")
-            if line:
-                result = tmux("send-keys", "-l", "-t", target, line)
-                if result.returncode != 0:
-                    return False
-    else:
-        result = tmux("send-keys", "-l", "-t", target, keys)
-        if result.returncode != 0:
-            return False
+    parts = keys.replace('\r\n', '\n').replace('\r', '\n')
+    for ch in parts:
+        if ch == '\n':
+            tmux("send-keys", "-t", target, "Enter")
+        elif ch == '\t':
+            tmux("send-keys", "-t", target, "Tab")
+        elif ch:
+            tmux("send-keys", "-l", "-t", target, ch)
     return True
 
 

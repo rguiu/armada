@@ -21,6 +21,8 @@ try {
   evtLog = require("fs").appendFileSync.bind(null, "/tmp/armada-events.log");
 } catch (_) {}
 
+var _pendingTool = null;
+
 export async function ArmadaPending() {
   return {
     event: async function (input) {
@@ -31,14 +33,26 @@ export async function ArmadaPending() {
       }
       if (event.type === "tool.execute.before") {
         var props = event.properties || {};
+        _pendingTool = props.tool;
         if (props.tool) post("active", "running " + props.tool);
       } else if (event.type === "tool.execute.after") {
+        _pendingTool = null;
         var props2 = event.properties || {};
         if (props2.tool) post("idle", props2.tool + " completed");
       } else if (event.type === "permission.asked") {
         var props3 = event.properties || {};
         var patterns = (props3.patterns || []).join(", ") || "any file";
-        post("pending", (props3.permission || "?") + " permission for: " + patterns);
-      } else if (event.type === "message.part.updated") {
+        var tool = _pendingTool || "unknown";
+        setTimeout(function () {
+          post("pending", tool + " needs " + (props3.permission || "?") + " permission: " + patterns, {
+            options: [
+              { label: "Allow once", key: "\n" },
+              { label: "Allow always", key: "\t\n" },
+              { label: "Reject", key: "\t\t\n" }
+            ]
+          });
+        }, 200);
+      }
+    },
   };
 }

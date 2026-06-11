@@ -655,7 +655,6 @@ a { color: var(--accent); }
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
     </button>
   </div>
-  <div id="pending-bar" style="display:none"></div>
   <div id="detail">
     <div class="empty-detail" id="empty-detail">Select a node from the sidebar to view details and activity</div>
   </div>
@@ -1263,20 +1262,6 @@ async function loadNodeDetail(nodeId) {
     reportsHtml = '<div style="color:#484f58;padding:12px 0">No reports yet</div>';
   }
 
-  let permHtml = '';
-  if (n.status === 'pending') {
-    const latestMsg = data.reports && data.reports.length ? data.reports[0].message : '';
-    permHtml = `
-      <div class="perm-bar">
-        <div class="perm-msg" style="white-space:pre-wrap">${esc(latestMsg || 'Waiting for permission')}</div>
-        <div class="perm-btns">
-          <button class="btn btn-primary btn-sm" onclick="replyPermission(${n.id},'y')">Allow Once</button>
-          <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${n.id},'a')">Allow Always</button>
-          <button class="btn btn-danger btn-sm" onclick="replyPermission(${n.id},'n')">Deny</button>
-        </div>
-      </div>`;
-  }
-
   // Save terminal pane before innerHTML destroys it (WS updates trigger
   // loadNodeDetail while a terminal may be open inside #detail)
   const pane = document.getElementById('terminal-pane');
@@ -1288,7 +1273,6 @@ async function loadNodeDetail(nodeId) {
 
   detail.innerHTML = `
     <div class="node-meta">${metaHtml}</div>
-    ${permHtml}
     <div id="reports">
       <h3>Activity Log</h3>
       ${reportsHtml}
