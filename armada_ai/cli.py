@@ -312,6 +312,7 @@ def _status():
         print("Armada server: not reachable")
 
 
+
 def _doctor(nuke: bool = False):
     import sqlite3
     import glob

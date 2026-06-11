@@ -951,13 +951,13 @@ class TestAuth:
         r = client.get("/api/info")
         assert r.status_code == 401
 
-    def test_qr_requires_auth(self, client, monkeypatch):
-        """QR endpoint requires auth (not exempt)."""
+    def test_qr_is_auth_exempt(self, client, monkeypatch):
+        """QR endpoint is auth-exempt (generates QR from a URL)."""
         import armada_ai.server as server_mod
         monkeypatch.setattr(server_mod, "TOKEN", "wrong-token")
 
         r = client.get("/api/qr?url=http://example.com")
-        assert r.status_code == 401
+        assert r.status_code == 200
 
     def test_info_returns_lan_and_port(self, client):
         """Info endpoint returns LAN IP and port."""

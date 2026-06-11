@@ -106,14 +106,19 @@ def create_node_window(name: str, colour: str, working_dir: str,
         return None
 
     ensure_armada_session()
+
+    session = agent_session(name)
+    existing = tmux("has-session", "-t", session)
+    if existing.returncode == 0:
+        tmux("kill-session", "-t", session)
+
     shell_cmd = _build_shell_command(name, colour, working_dir, agent_type)
 
-    result = tmux("new-session", "-d", "-s", agent_session(name), shell_cmd)
+    result = tmux("new-session", "-d", "-s", session, shell_cmd)
     if result.returncode != 0:
         return None
 
     pane_id = None
-    session = agent_session(name)
     for _ in range(5):
         time.sleep(0.3)
         pane_result = tmux("display-message", "-p", "-t", session, "#{pane_id}")

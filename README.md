@@ -1,13 +1,22 @@
-# Armada
+```
+   █████╗ ██████╗ ███╗   ███╗ █████╗ ██████╗  █████╗ 
+  ██╔══██╗██╔══██╗████╗ ████║██╔══██╗██╔══██╗██╔══██╗
+  ███████║██████╔╝██╔████╔██║███████║██║  ██║███████║
+  ██╔══██║██╔══██╗██║╚██╔╝██║██╔══██║██║  ██║██╔══██║
+  ██║  ██║██║  ██║██║ ╚═╝ ██║██║  ██║██████╔╝██║  ██║
+  ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝
+```
 
 > Command your fleet of AI agents from anywhere — your browser, your phone, your tablet.
 
+[Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Features](#features) · [API](#api-endpoints) · [Development](#development)
+
 Armada wraps OpenCode and Claude Code agents in persistent tmux sessions and exposes them through a web dashboard. No more terminal tabs piling up. Start an agent, close your laptop, and pick up exactly where you left off — from any device on your network.
 
-- **Web-first** — every agent has a live web terminal. Manage Claude from your phone at the coffee shop.
-- **Persistent sessions** — agents run in tmux. Close the browser, come back later, reattach — the session is still there, output and all.
-- **Delegation** — nodes spawn child nodes. An orchestrator can farm out work to workers, each reporting status back. Collect results when they're done.
-- **Zero-config dashboard** — one command, one browser tab. See every agent's status, activity log, and live terminal at a glance.
+- **Web dashboard** — manage agents from any device on your network
+- **Persistent sessions** — agents run in tmux, survive browser closes and server restarts
+- **Delegation** — nodes spawn children, orchestrators farm out work to workers
+- **One command** — `armada` starts the server and opens the dashboard
 
 ## Installation
 

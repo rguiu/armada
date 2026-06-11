@@ -171,11 +171,11 @@ async def startup():
         def _notify_recovery():
             _time.sleep(2)
             try:
-                for name in names:
-                    rid = next((n["id"] for n in recovered if n["name"] == name), 0)
-                    if rid:
-                        db.add_status_report(rid, "idle",
-                                             "server restarted — reconnected to agent")
+                for n in recovered:
+                    node = db.get_node(n["id"])
+                    status = node.status if node else "idle"
+                    db.add_status_report(n["id"], status,
+                                         "server restarted — reconnected to agent")
             except Exception:
                 pass
         threading.Thread(target=_notify_recovery, daemon=True).start()
@@ -196,7 +196,8 @@ def _recover_on_startup():
         if name not in running:
             continue
         logs.log_recover(name)
-        db.add_status_report(node.id, "idle", "server restarted — reconnected to tmux window")
+        db.add_status_report(node.id, node.status,
+            "server restarted — reconnected to tmux window")
         recovered.append(node.as_summary())
     db.recover_nodes(running)
     return recovered
@@ -487,7 +488,16 @@ def delete_node(node_id: int):
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
 
-    killed = db.kill_node(node_id)
+    import sqlite3 as _sqlite3
+    for _attempt in range(10):
+        try:
+            killed = db.kill_node(node_id)
+            break
+        except _sqlite3.OperationalError as e:
+            if "locked" in str(e).lower() and _attempt < 9:
+                _time.sleep(0.1 * (_attempt + 1))
+                continue
+            raise
     for entry in killed:
         try:
             content = tmux.capture_pane_content(entry["name"])
@@ -508,9 +518,9 @@ def delete_node(node_id: int):
 @app.post("/api/nodes/{node_id}/send")
 async def send_to_node(node_id: int, request: Request):
     body = await request.json()
-    command = body.get("command", "").strip()
     raw = body.get("raw", False)
-    if not command:
+    command = body.get("command", "") if raw else body.get("command", "").strip()
+    if not command and not raw:
         raise HTTPException(status_code=400, detail="command is required")
 
     node = db.get_node(node_id)
@@ -777,6 +787,294 @@ def global_skills():
     return JSONResponse(list_project_skills(os.path.expanduser("~")))
 
 
+# --- Extensions Manager ---
+
+@app.get("/api/extensions")
+def list_extensions():  # pragma: no cover
+    """List all extensions and which projects have them installed (filesystem scan)."""
+    from pathlib import Path
+    repo_root = Path(__file__).parent.parent
+    source_skills = repo_root / "skills"
+    source_hooks = repo_root / "armada_ai" / "hooks"
+    source_plugins = repo_root / ".opencode" / "plugins"
+
+    extensions = []
+
+    if source_skills.is_dir():
+        for d in sorted(source_skills.iterdir()):
+            if not d.is_dir():
+                continue
+            md = d / "SKILL.md"
+            if not md.is_file():
+                continue
+            desc = ""
+            try:
+                for line in md.read_text().split("\n"):
+                    s = line.strip()
+                    if s and not s.startswith("#") and not s.startswith(">") and len(s) > 5:
+                        desc = s[:200]
+                        break
+            except Exception:
+                pass
+            extensions.append({"id": d.name, "type": "skill", "name": d.name, "description": desc, "agent": "both"})
+
+    if source_hooks.is_dir():
+        for f in sorted(source_hooks.iterdir()):
+            if not f.is_file() or not f.name.endswith(".sh"):
+                continue
+            ext_id = f"hook-{f.stem}"
+            desc = ""
+            try:
+                for line in f.read_text().split("\n"):
+                    s = line.strip()
+                    if s.startswith("# ") and len(s) > 8 and "!/" not in s:
+                        desc = s.lstrip("# ").strip()[:200]
+                        break
+            except Exception:
+                pass
+            extensions.append({"id": ext_id, "type": "hook", "name": f.name, "description": desc, "agent": "claude"})
+
+    if source_plugins.is_dir():
+        for f in sorted(source_plugins.iterdir()):
+            if not f.is_file():
+                continue
+            ext_id = f"plugin-{f.stem}"
+            extensions.append({"id": ext_id, "type": "plugin", "name": f.name, "description": "", "agent": "opencode"})
+
+    # Scan MCP configs from project root and global
+    mcp_seen = set()
+    for candidate in (
+        repo_root / ".opencode" / "mcp.json",
+        repo_root / ".claude" / "mcp.json",
+        repo_root / ".opencode" / "mcp.jsonc",
+        Path.home() / ".config" / "opencode" / "mcp.json",
+        Path.home() / ".claude" / "mcp.json",
+    ):
+        if candidate.is_file() and candidate.name not in mcp_seen:
+            mcp_seen.add(candidate.name)
+            desc = ""
+            try:
+                data = json.loads(candidate.read_text())
+                servers = data.get("mcpServers", {})
+                desc = ", ".join(list(servers.keys())[:3]) or "MCP config"
+            except Exception:
+                desc = "MCP config"
+            ext_id = f"mcp-{candidate.stem}"
+            mcp_agent = "opencode" if "opencode" in str(candidate) else "claude" if ".claude" in str(candidate) else "both"
+            extensions.append({"id": ext_id, "type": "mcp", "name": str(candidate.relative_to(candidate.parent.parent)) if candidate.parent.parent else candidate.name, "description": desc, "agent": mcp_agent})
+
+    # Scan custom extensions from ~/.armada/extensions/
+    custom_dir = Path.home() / ".armada" / "extensions"
+    for sub in ("skills", "hooks", "plugins", "mcp"):
+        sub_path = custom_dir / sub
+        if not sub_path.is_dir():
+            continue
+        for entry in sorted(sub_path.iterdir()):
+            if sub == "skills" and entry.is_dir():
+                md = entry / "SKILL.md"
+                if md.is_file():
+                    ext_id = f"custom-{entry.name}"
+                    desc = ""
+                    try:
+                        for line in md.read_text().split("\n"):
+                            s = line.strip()
+                            if s and not s.startswith("#") and not s.startswith(">") and len(s) > 5:
+                                desc = s[:200]
+                                break
+                    except Exception:
+                        pass
+                    extensions.append({"id": ext_id, "type": "skill", "name": entry.name, "description": desc, "source": "custom", "agent": "both"})
+            elif sub == "hooks" and entry.is_file() and entry.name.endswith(".sh"):
+                ext_id = f"custom-hook-{entry.stem}"
+                extensions.append({"id": ext_id, "type": "hook", "name": entry.name, "description": "Custom hook", "source": "custom", "agent": "claude"})
+            elif sub == "plugins" and entry.is_file():
+                ext_id = f"custom-plugin-{entry.stem}"
+                extensions.append({"id": ext_id, "type": "plugin", "name": entry.name, "description": "Custom plugin", "source": "custom", "agent": "opencode"})
+            elif sub == "mcp" and entry.is_file() and entry.name.endswith(".json"):
+                ext_id = f"custom-mcp-{entry.stem}"
+                extensions.append({"id": ext_id, "type": "mcp", "name": entry.name, "description": "Custom MCP", "source": "custom", "agent": "both"})
+
+    labels = db.list_project_labels()
+    for ext in extensions:
+        ext["projects"] = []
+        for lb in labels:
+            if not os.path.isdir(lb.path):
+                continue
+            installed = False
+            if ext["type"] == "skill":
+                for agent in ("opencode", "claude"):
+                    skill_path = Path(lb.path) / f".{agent}" / "skills" / ext["id"] / "SKILL.md"
+                    if skill_path.exists():
+                        installed = True
+                        break
+            elif ext["type"] == "hook":
+                hook_path = Path(lb.path) / ".claude" / "hooks" / ext["name"]
+                if hook_path.exists():
+                    installed = True
+            elif ext["type"] == "plugin":
+                for suffix in (".ts", ".js"):
+                    plugin_path = Path(lb.path) / ".opencode" / "plugins" / ext["name"]
+                    alt_path = Path(lb.path) / ".opencode" / "plugin" / ext["name"]
+                    if plugin_path.exists() or alt_path.exists():
+                        installed = True
+                        break
+            elif ext["type"] == "mcp":
+                for agent in ("opencode", "claude"):
+                    mcp_path = Path(lb.path) / f".{agent}" / "mcp.json"
+                    if mcp_path.exists():
+                        installed = True
+                        break
+            if installed:
+                ext["projects"].append({"id": lb.id, "name": lb.name, "path": lb.path})
+
+    return JSONResponse(extensions)
+
+
+@app.get("/api/extensions/{extension_id}/content")
+def extension_content(extension_id: str):
+    from pathlib import Path
+    repo_root = Path(__file__).parent.parent
+    paths = []
+    if extension_id.startswith("custom-mcp-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "mcp" / f"{extension_id[11:]}.json")
+    elif extension_id.startswith("custom-hook-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "hooks" / f"{extension_id[12:]}.sh")
+    elif extension_id.startswith("custom-plugin-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "plugins" / f"{extension_id[14:]}")
+    elif extension_id.startswith("custom-"):
+        paths.append(Path.home() / ".armada" / "extensions" / "skills" / extension_id[7:] / "SKILL.md")
+    elif extension_id.startswith("hook-"):
+        paths.append(repo_root / "armada_ai" / "hooks" / f"{extension_id[5:]}.sh")
+    elif extension_id.startswith("plugin-"):
+        for suffix in (".ts", ".js"):
+            p = repo_root / ".opencode" / "plugins" / f"{extension_id[7:]}{suffix}"
+            if p.exists():
+                paths.append(p)
+    else:
+        paths.append(repo_root / "skills" / extension_id / "SKILL.md")
+    for p in paths:
+        if p.exists():
+            try:
+                return JSONResponse({"id": extension_id, "path": str(p), "content": p.read_text()})
+            except Exception:
+                raise HTTPException(status_code=500, detail="Failed to read file")
+    raise HTTPException(status_code=404, detail="Extension file not found")
+
+
+@app.post("/api/extensions/install")
+async def install_extension_endpoint(request: Request):  # pragma: no cover
+    """Copy an extension's file(s) into a project directory."""
+    import shutil
+    from pathlib import Path as _Path
+
+    body = await request.json()
+    extension_id = body.get("extension_id")
+    project_label_id = body.get("project_label_id")
+
+    if not extension_id or not project_label_id:
+        raise HTTPException(status_code=400, detail="extension_id and project_label_id are required")
+
+    project_path = db.get_project_label_path(project_label_id)
+    if not project_path or not os.path.isdir(project_path):
+        raise HTTPException(status_code=400, detail="Project not found or path does not exist")
+
+    repo_root = _Path(__file__).parent.parent
+    target = _Path(project_path)
+    copied = []
+
+    if extension_id.startswith("hook-"):
+        hook_name = extension_id[5:].removeprefix("custom-")
+        src = repo_root / "armada_ai" / "hooks" / f"{hook_name}.sh"
+        if not src.exists():
+            src = _Path.home() / ".armada" / "extensions" / "hooks" / f"{hook_name}.sh"
+        if src.exists():
+            dst_dir = target / ".claude" / "hooks"
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            dst = dst_dir / f"{hook_name}.sh"
+            shutil.copy2(src, dst)
+            dst.chmod(0o755)
+            copied.append(str(dst))
+
+    elif extension_id.startswith("plugin-"):
+        plugin_name = extension_id[7:].removeprefix("custom-")
+        dst_dir = target / ".opencode" / "plugins"
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for suffix in (".ts", ".js"):
+            src = repo_root / ".opencode" / "plugins" / f"{plugin_name}{suffix}"
+            if not src.exists():
+                src = _Path.home() / ".armada" / "extensions" / "plugins" / f"{plugin_name}{suffix}"
+            if src.exists():
+                dst = dst_dir / f"{plugin_name}{suffix}"
+                shutil.copy2(src, dst)
+                copied.append(str(dst))
+
+    elif extension_id.startswith("mcp-"):
+        mcp_name = extension_id.removeprefix("mcp-").removeprefix("custom-")
+        src = repo_root / ".opencode" / f"{mcp_name}.json"
+        alt = repo_root / ".claude" / f"{mcp_name}.json"
+        if not src.exists() and not alt.exists():
+            src = _Path.home() / ".armada" / "extensions" / "mcp" / f"{mcp_name}.json"
+        for s in (src, alt):
+            if s.exists():
+                for agent_dir in (".opencode", ".claude"):
+                    dst_dir = target / agent_dir
+                    dst_dir.mkdir(parents=True, exist_ok=True)
+                    dst = dst_dir / "mcp.json"
+                    shutil.copy2(s, dst)
+                    copied.append(str(dst))
+
+    else:
+        skill_name = extension_id.removeprefix("custom-")
+        src = repo_root / "skills" / skill_name / "SKILL.md"
+        if not src.exists():
+            src = _Path.home() / ".armada" / "extensions" / "skills" / skill_name / "SKILL.md"
+        if src.exists():
+            for agent_dir in (".opencode", ".claude"):
+                dst_dir = target / agent_dir / "skills" / skill_name
+                dst_dir.mkdir(parents=True, exist_ok=True)
+                dst = dst_dir / "SKILL.md"
+                shutil.copy2(src, dst)
+                copied.append(str(dst))
+
+    if not copied:
+        raise HTTPException(status_code=404, detail="Extension source file not found")
+
+    return JSONResponse({"ok": True, "copied": copied})
+
+
+@app.post("/api/extensions/create")
+async def create_extension_endpoint(request: Request):  # pragma: no cover
+    """Save a custom extension to ~/.armada/extensions/."""
+    from pathlib import Path as _Path
+
+    body = await request.json()
+    ext_type = body.get("type", "skill")
+    name = body.get("name", "").strip()
+    code = body.get("code", "").strip()
+
+    if not name or not code:
+        raise HTTPException(status_code=400, detail="name and code are required")
+    if ext_type not in ("skill", "hook", "plugin", "mcp"):
+        raise HTTPException(status_code=400, detail="type must be skill, hook, plugin, or mcp")
+
+    ext_dir = _Path.home() / ".armada" / "extensions"
+    ext_dir.mkdir(parents=True, exist_ok=True)
+
+    if ext_type == "skill":
+        dst = ext_dir / "skills" / name / "SKILL.md"
+    elif ext_type == "hook":
+        dst = ext_dir / "hooks" / f"{name}.sh"
+    elif ext_type == "mcp":
+        dst = ext_dir / "mcp" / f"{name}.json"
+    else:
+        dst = ext_dir / "plugins" / f"{name}.ts"
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(code)
+
+    return JSONResponse({"ok": True, "path": str(dst)})
+
+
 # --- Maintenance ---
 
 @app.post("/api/refresh-hooks")
@@ -817,7 +1115,8 @@ async def agent_report(request: Request):
     if not node:
         raise HTTPException(status_code=404, detail=f"Unknown node: {report.name}")
 
-    db.add_status_report(node.id, report.status, report.message)
+    options_json = json.dumps(body.get("options", [])) if body.get("options") else ""
+    db.add_status_report(node.id, report.status, report.message, options=options_json)
     logs.log_report(report.name, report.status, report.message)
     metrics.counter_inc("armada_reports_total")
 

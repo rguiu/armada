@@ -50,12 +50,13 @@ def attach_to_node(name: str, colour: str = "#8b949e") -> str | None:
 
 def _try_iterm_attach(name: str, colour: str) -> str | None:
     r, g, b = _hex_to_rgb(colour)
+    session = tmux_session.agent_session(name)
     attach_file = os.path.join(tempfile.gettempdir(), f"_armada_attach_{os.getpid()}.sh")
     with open(attach_file, "w") as f:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
-        f.write(f"exec tmux attach-session -t {tmux_session.agent_session(name)}\n")
+        f.write(f"tmux attach-session -t '{session}' || {{ echo 'Failed to attach to tmux session: {session}'; read -p \"Press Enter to close...\"; }}\n")
 
     try:
         applescript = (
@@ -94,11 +95,12 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
 
 def _try_terminal_attach(name: str) -> str | None:
     try:
-        tmux_cmd = f"tmux attach-session -t {tmux_session.agent_session(name)}"
+        session = tmux_session.agent_session(name)
+        tmux_cmd = f"tmux attach-session -t '{session}'"
         attach_file = os.path.join(tempfile.gettempdir(),
                                    f"_armada_term_attach_{os.getpid()}.sh")
         with open(attach_file, "w") as f:
-            f.write(f"exec {tmux_cmd}\n")
+            f.write(f"{tmux_cmd} || {{ echo 'Failed to attach'; read; }}\n")
         applescript = (
             f'tell application "Terminal"\n'
             f'  activate\n'
@@ -120,7 +122,8 @@ def _try_terminal_attach(name: str) -> str | None:
 
 
 def _try_linux_attach(name: str, colour: str = "#8b949e") -> str | None:
-    tmux_cmd = f"tmux attach-session -t {tmux_session.agent_session(name)}"
+    session = tmux_session.agent_session(name)
+    tmux_cmd = f"tmux attach-session -t '{session}'"
     tmpdir = tempfile.gettempdir()
     attach_file = os.path.join(tmpdir, f"_armada_attach_{os.getpid()}.sh")
     r, g, b = _hex_to_rgb(colour)
@@ -129,7 +132,7 @@ def _try_linux_attach(name: str, colour: str = "#8b949e") -> str | None:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
-        f.write(f"exec {tmux_cmd}\n")
+        f.write(f"{tmux_cmd} || {{ echo 'Failed to attach'; read; }}\n")
     os.chmod(attach_file, 0o755)
 
     def _cleanup():

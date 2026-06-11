@@ -66,8 +66,17 @@ a { color: var(--accent); }
 
 /* ── Sidebar ── */
 #sidebar {
-  width: 280px; min-width: 280px; background: var(--bg-card); border-right: 1px solid var(--border);
+  width: 280px; min-width: 200px; max-width: 600px;
+  background: var(--bg-card); border-right: 1px solid var(--border);
   display: flex; flex-direction: column; overflow: hidden;
+  position: relative; flex-shrink: 0;
+}
+#sidebar-resize {
+  position: absolute; top: 0; right: 0; bottom: 0; width: 4px;
+  cursor: col-resize; z-index: 10;
+}
+#sidebar-resize:hover, #sidebar-resize.dragging {
+  background: var(--accent); width: 3px; right: 1px;
 }
 #sidebar-header {
   padding: 16px; border-bottom: 1px solid var(--border);
@@ -218,6 +227,22 @@ a { color: var(--accent); }
   color: #f85149; cursor: pointer; font-size: 12px; visibility: hidden;
 }
 .label-item:hover .label-del { visibility: visible; }
+
+/* ── Extensions Section ── */
+#extensions-section { border-top: 1px solid var(--border); padding: 8px; }
+#extensions-section .section-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; margin-bottom: 4px;
+}
+#extensions-section .section-title {
+  font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+#extensions-section .section-add {
+  font-size: 10px; color: var(--text-muted); background: none; border: none;
+  cursor: pointer; padding: 0 4px;
+}
+#extensions-section .section-add:hover { color: var(--text); }
 
 /* ── QR Section ── */
 #qr-section { border-top: 1px solid var(--border); padding: 8px; }
@@ -536,6 +561,7 @@ a { color: var(--accent); }
 
 <!-- ── Sidebar ── -->
 <div id="sidebar">
+  <div id="sidebar-resize"></div>
   <div id="sidebar-header">
     <div style="display:flex;align-items:center;gap:6px">
       <span id="pending-dot" title="Pending permission" onclick="selectPendingNode()"></span>
@@ -582,21 +608,34 @@ a { color: var(--accent); }
       <div style="display:flex;gap:4px">
         <button class="section-add" onclick="refreshHooks()" title="Re-deploy hooks & skills to all projects">Sync</button>
         <button class="section-add" onclick="openModal('label-modal')" title="Add project">+ Add</button>
+        <button class="section-add" onclick="toggleProjects()" id="proj-toggle">&#9660;</button>
       </div>
     </div>
     <div id="labels-list"></div>
   </div>
+  <div id="extensions-section">
+    <div class="section-header">
+      <span class="section-title">Extensions</span>
+      <div style="display:flex;gap:4px">
+        <button class="section-add" onclick="openModal('ext-modal')" title="Add extension">+ Add</button>
+        <button class="section-add" onclick="toggleExtensions()" id="ext-toggle">&#9654;</button>
+      </div>
+    </div>
+    <div id="extensions-content" style="display:none">
+      <div id="extensions-list"></div>
+    </div>
+  </div>
   <div id="qr-section">
     <div class="section-header">
       <span class="section-title">Connect Phone</span>
-      <button class="section-add" id="qr-toggle" onclick="toggleQR()">Show</button>
+      <button class="section-add" id="qr-toggle" onclick="toggleQR()">&#9654;</button>
     </div>
     <div id="qr-content" style="padding:8px;text-align:center;display:none">
       <div style="margin-bottom:12px;text-align:left">
         <div id="qr-url-local" style="margin-bottom:6px;font-size:12px;word-break:break-all"></div>
         <div id="qr-url-lan" style="font-size:12px;word-break:break-all"></div>
       </div>
-      <img id="qr-image" style="max-width:180px;border-radius:4px;background:#fff;padding:4px" alt="QR Code">
+      <div id="qr-svg" style="max-width:180px;margin:0 auto;border-radius:4px;background:#fff;padding:4px"></div>
     </div>
   </div>
 </div>
@@ -608,12 +647,13 @@ a { color: var(--accent); }
     <div style="display:flex;align-items:center;gap:8px">
       <button id="menu-toggle" onclick="toggleSidebar()" title="Menu">☰</button>
       <h1 id="main-title">Select a node</h1>
+      <button onclick="deselectNode()" id="deselect-btn" title="Close detail view" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px">&times;</button>
     </div>
     <div class="header-btns" id="header-actions"></div>
   </div>
   <div id="pending-bar" style="display:none"></div>
   <div id="detail">
-    <div class="empty-detail">Select a node from the sidebar to view details and activity</div>
+    <div class="empty-detail" id="empty-detail">Select a node from the sidebar to view details and activity</div>
   </div>
   <div id="terminal-pane">
     <div id="terminal-bar">
@@ -667,6 +707,29 @@ a { color: var(--accent); }
   </div>
 </div>
 
+<!-- ── Extension Modal ── -->
+<div class="modal-overlay" id="ext-modal">
+  <div class="modal">
+    <h3>New Extension</h3>
+    <label>Type</label>
+    <select id="ext-type">
+      <option value="skill">Skill</option>
+      <option value="hook">Hook</option>
+      <option value="plugin">Plugin</option>
+      <option value="mcp">MCP</option>
+    </select>
+    <label>Name</label>
+    <input type="text" id="ext-name" placeholder="e.g. my-custom-skill">
+    <label>Code</label>
+    <textarea id="ext-code" placeholder="# Paste or write your extension code here..." rows="10"
+      style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid var(--border-light);background:var(--bg-input);color:var(--text);font-size:12px;resize:vertical;font-family:Menlo,Monaco,monospace"></textarea>
+    <div class="modal-actions">
+      <button class="btn btn-outline" onclick="closeModal('ext-modal')">Cancel</button>
+      <button class="btn btn-primary" onclick="createExtension()">Create</button>
+    </div>
+  </div>
+</div>
+
 <!-- ── JS ── -->
 <script>
 let treeData = [];
@@ -711,6 +774,30 @@ let termWs = null;
 let termResizeObs = null;
 applyTheme(getTheme());
 
+/* ── Sidebar resize ── */
+(function() {
+  const sidebar = document.getElementById('sidebar');
+  const saved = localStorage.getItem('armada-sidebar-width');
+  if (saved) sidebar.style.width = saved;
+  let dragging = false, startX, startW;
+  const handle = document.getElementById('sidebar-resize');
+  handle.addEventListener('mousedown', e => {
+    dragging = true; startX = e.clientX; startW = sidebar.offsetWidth;
+    handle.classList.add('dragging');
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const w = Math.max(200, Math.min(600, startW + e.clientX - startX));
+    sidebar.style.width = w + 'px';
+    localStorage.setItem('armada-sidebar-width', w + 'px');
+  });
+  document.addEventListener('mouseup', () => {
+    dragging = false;
+    handle.classList.remove('dragging');
+  });
+})();
+
 /* ── Connection state ── */
 let connState = 'connected'; // connected | reconnecting | disconnected
 let _reconnectAttempt = 0;
@@ -740,9 +827,12 @@ let AUTH_TOKEN = '';
 })();
 
 async function api(url, opts = {}) {
+  opts.headers = opts.headers || {};
   if (AUTH_TOKEN) {
-    opts.headers = opts.headers || {};
     opts.headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+  }
+  if (opts.body && typeof opts.body === 'string') {
+    opts.headers['Content-Type'] = 'application/json';
   }
   const res = await fetch(url, opts);
   if (!res.ok) {
@@ -970,8 +1060,22 @@ function selectNode(n) {
   selectedSet.clear();
   refreshBatchBar();
   loadNodeDetail(n.id);
+  document.getElementById('deselect-btn').style.display = '';
   if (window.innerWidth <= 768) closeSidebar();
   if (activeTermNodeId && activeTermNodeId !== n.id) closeTerminal();
+}
+
+function deselectNode() {
+  selectedNodeId = null;
+  _selectedFingerprint = '';
+  document.querySelectorAll('#tree .node-item.selected').forEach(r => r.classList.remove('selected'));
+  document.getElementById('deselect-btn').style.display = 'none';
+  document.getElementById('main-title').textContent = 'Select a node';
+  document.getElementById('header-actions').innerHTML = '';
+  document.getElementById('detail').innerHTML = '<div class="empty-detail" id="empty-detail"></div>';
+  document.getElementById('detail').classList.remove('proj-view');
+  closeTerminal();
+  updateStats();
 }
 
 /* ── Project Overview ── */
@@ -1451,11 +1555,15 @@ async function hideNode(id) {
 }
 
 async function replyPermission(id, key) {
+  let command;
+  if (key === 'y') command = '\n';
+  else if (key === 'a') command = '\t\n';
+  else if (key === 'n') command = '\t\t\n';
   try {
     await api('/api/nodes/' + id + '/send', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({command: key + '\n', raw: true})
+      body: JSON.stringify({command: command, raw: true})
     });
     if (!selectedNodeId) {
       const bar = document.getElementById('pending-bar');
@@ -1464,6 +1572,24 @@ async function replyPermission(id, key) {
     }
   } catch(e) {
     toast('Failed to send reply: ' + e.message, true);
+  }
+}
+
+async function doPendingReply(id, optionIndex) {
+  try {
+    const data = await api('/api/nodes/' + id + '/reports?limit=1');
+    const report = data && data.length ? data[0] : null;
+    if (!report) return;
+    const options = JSON.parse(report.options || '[]');
+    const opt = options[optionIndex];
+    if (!opt || !opt.key) return;
+    await api('/api/nodes/' + id + '/send', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({command: opt.key, raw: true})
+    });
+  } catch(e) {
+    toast('Failed: ' + e.message, true);
   }
 }
 
@@ -1768,42 +1894,207 @@ function toggleQR() {
   const btn = document.getElementById('qr-toggle');
   if (content.style.display === 'none') {
     content.style.display = 'block';
-    btn.textContent = 'Hide';
+    btn.innerHTML = '&#9660;';
     if (!_qrInited) { initQR(); _qrInited = true; }
   } else {
     content.style.display = 'none';
-    btn.textContent = 'Show';
+    btn.innerHTML = '&#9654;';
   }
+}
+
+let _projOpen = true;
+function toggleProjects() {
+  _projOpen = !_projOpen;
+  document.getElementById('labels-list').style.display = _projOpen ? 'block' : 'none';
+  document.getElementById('proj-toggle').innerHTML = _projOpen ? '&#9660;' : '&#9654;';
 }
 
 function initQR() {
   const localUrl = 'http://127.0.0.1:9100?token=' + AUTH_TOKEN;
-  document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff">127.0.0.1:9100</a>';
+  document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff" target="_blank">127.0.0.1:9100</a>';
   fetchQR(localUrl);
 
-  fetch('/api/info', { headers: authHeaders() })
-    .then(r => r.ok ? r.json() : Promise.reject())
+  api('/api/info')
     .then(info => {
       const lanUrl = 'http://' + info.lan_ip + ':' + info.port + '?token=' + AUTH_TOKEN;
-      document.getElementById('qr-url-lan').innerHTML = '&#128279; <a href="' + lanUrl + '" style="color:#58a6ff">' + info.lan_ip + ':' + info.port + '</a>';
+      document.getElementById('qr-url-lan').innerHTML = '&#128279; <a href="' + lanUrl + '" style="color:#58a6ff" target="_blank">' + info.lan_ip + ':' + info.port + '</a>';
       fetchQR(lanUrl);
     })
     .catch(() => {
-      document.getElementById('qr-url-lan').innerHTML = '<span style="color:#8b949e">LAN info unavailable</span>';
+      document.getElementById('qr-url-lan').innerHTML = '<span style="color:var(--text-dim)">LAN info unavailable</span>';
     });
-}
-
-function authHeaders() {
-  return AUTH_TOKEN ? { 'Authorization': 'Bearer ' + AUTH_TOKEN } : {};
 }
 
 function fetchQR(url) {
-  fetch('/api/qr?url=' + encodeURIComponent(url), { headers: authHeaders() })
-    .then(r => r.blob())
-    .then(blob => {
-      document.getElementById('qr-image').src = URL.createObjectURL(blob);
+  fetch('/api/qr?url=' + encodeURIComponent(url))
+    .then(r => { if (!r.ok) throw new Error('status ' + r.status); return r.text(); })
+    .then(svg => {
+      const container = document.getElementById('qr-svg');
+      container.innerHTML = svg;
+      container.style.display = 'block';
+    })
+    .catch(() => {
+      document.getElementById('qr-svg').innerHTML = '<span style="color:var(--text-dim);font-size:11px">QR unavailable</span>';
     });
 }
+
+/* ── Extensions Manager ── */
+let _extOpen = false;
+
+function toggleExtensions() {
+  _extOpen = !_extOpen;
+  document.getElementById('extensions-content').style.display = _extOpen ? 'block' : 'none';
+  document.getElementById('ext-toggle').innerHTML = _extOpen ? '&#9660;' : '&#9654;';
+  if (_extOpen) loadExtensions();
+}
+
+async function loadExtensions() {
+  const container = document.getElementById('extensions-list');
+  container.innerHTML = '<div class="loading-tree"><div class="spinner" style="width:12px;height:12px;border-width:2px"></div></div>';
+  try {
+    const exts = await api('/api/extensions');
+    if (!exts || !exts.length) {
+      container.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:4px 8px">No extensions found</div>';
+      return;
+    }
+    const groups = {claude: [], opencode: [], both: []};
+    for (const ext of exts) {
+      const ag = ext.agent || 'both';
+      (groups[ag] || groups.both).push(ext);
+    }
+    const labels = {claude: 'Claude Code', opencode: 'OpenCode', both: 'Shared'};
+    const colors = {claude: '#c9a0ff', opencode: '#58a6ff', both: 'var(--text-dim)'};
+    let html = '';
+    for (const [ag, items] of Object.entries(groups)) {
+      if (!items.length) continue;
+      html += `<div style="margin-top:6px"><div style="font-size:10px;text-transform:uppercase;color:${colors[ag]};padding:2px 8px;letter-spacing:0.5px">${labels[ag]}</div>`;
+      for (const ext of items) {
+        const count = ext.projects ? ext.projects.length : 0;
+        html += `
+        <div class="label-item" onclick="selectExtension('${ext.id}')" id="ext-item-${ext.id}">
+          <div style="flex:1;min-width:0">
+            <span style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-right:6px">${ext.type}</span>
+            <span style="font-size:12px">${esc(ext.name)}</span>
+          </div>
+          <span style="font-size:10px;color:${count > 0 ? 'var(--green)' : 'var(--text-dim)'}">${count > 0 ? count + ' projects' : ''}</span>
+        </div>`;
+      }
+      html += '</div>';
+    }
+    container.innerHTML = html;
+  } catch(_) {
+    container.innerHTML = '<div style="color:var(--red);font-size:11px;padding:4px 8px">Failed to load. Restart the server.</div>';
+  }
+}
+
+async function selectExtension(extId) {
+  document.querySelectorAll('#extensions-list .label-item').forEach(el => el.style.background = '');
+  const item = document.getElementById('ext-item-' + extId);
+  if (item) item.style.background = 'var(--selected)';
+
+  selectedNodeId = null;
+  const detail = document.getElementById('detail');
+  detail.classList.add('proj-view');
+  document.getElementById('main-title').innerHTML = '<span style="color:var(--text-dim)">Extension</span>';
+  document.getElementById('header-actions').innerHTML = '';
+
+  try {
+    const [exts, labels] = await Promise.all([
+      api('/api/extensions'),
+      api('/api/project-labels'),
+    ]);
+    const ext = exts.find(e => e.id === extId);
+    if (!ext) return;
+
+    const installedIds = new Set((ext.projects || []).map(p => p.id));
+    let projHtml = labels.map(l => {
+      const installed = installedIds.has(l.id);
+      return `<div class="label-item">
+        <div><span>${esc(l.name)}</span><span style="font-size:10px;color:var(--text-dim);margin-left:8px">${esc(l.path)}</span></div>
+        ${installed
+          ? '<span style="font-size:11px;color:var(--green)">installed</span>'
+          : `<button class="btn btn-outline-blue btn-sm" onclick="installExtension('${ext.id}','${l.id}')">install</button>`
+        }
+      </div>`;
+    }).join('');
+
+    if (!ext.projects || !ext.projects.length) {
+      projHtml = '<div style="color:var(--text-dim);font-size:11px;padding:4px 0;margin-bottom:8px">Not installed in any project.</div>' + projHtml;
+    }
+
+    const agentLabels = {claude: 'Claude Code', opencode: 'OpenCode', both: 'Both'};
+    const agentColors = {claude: '#c9a0ff', opencode: '#58a6ff', both: 'var(--text-muted)'};
+    const ag = ext.agent || 'both';
+    detail.innerHTML = `
+      <h2>${esc(ext.name)}</h2>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:4px">
+        <span style="color:var(--accent);font-size:11px;text-transform:uppercase">${ext.type}</span>
+        <span style="font-size:10px;color:${agentColors[ag]};border:1px solid ${agentColors[ag]};border-radius:3px;padding:1px 5px">${agentLabels[ag]}</span>
+      </div>
+      <div style="color:var(--text-muted);margin-bottom:8px;font-size:12px;line-height:1.5">${esc(ext.description || 'No description available.')}</div>
+      <button class="btn btn-outline btn-sm" onclick="toggleExtContent('${ext.id}')" style="margin-bottom:16px">View source</button>
+      <div id="ext-content-${ext.id}" style="display:none;margin-bottom:16px">
+        <pre id="ext-content-text-${ext.id}" style="font-size:10px;background:var(--bg);color:var(--text-muted);padding:12px;border-radius:4px;border:1px solid var(--border);max-height:300px;overflow:auto;white-space:pre-wrap;font-family:Menlo,Monaco,monospace">Loading...</pre>
+      </div>
+      <h3>Installed in (${(ext.projects || []).length})</h3>
+      ${projHtml}
+    `;
+  } catch(_) {
+    detail.innerHTML = '<div style="color:var(--red);padding:12px">Failed to load extension details</div>';
+  }
+}
+
+async function toggleExtContent(extId) {
+  const container = document.getElementById('ext-content-' + extId);
+  if (!container) return;
+  const isHidden = container.style.display === 'none';
+  container.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    const pre = document.getElementById('ext-content-text-' + extId);
+    if (pre && pre.textContent === 'Loading...') {
+      try {
+        const data = await api('/api/extensions/' + extId + '/content');
+        pre.textContent = data.content || '(empty)';
+      } catch(e) {
+        pre.textContent = 'Failed to load: ' + e.message;
+      }
+    }
+  }
+}
+
+async function installExtension(extId, projectId) {
+  try {
+    await api('/api/extensions/install', {
+      method: 'POST',
+      body: JSON.stringify({extension_id: extId, project_label_id: projectId}),
+    });
+    selectExtension(extId);
+    toast('Extension installed');
+  } catch(e) {
+    toast('Failed: ' + e.message, true);
+  }
+}
+
+async function createExtension() {
+  const type = document.getElementById('ext-type').value;
+  const name = document.getElementById('ext-name').value.trim();
+  const code = document.getElementById('ext-code').value.trim();
+  if (!name || !code) { toast('Name and code are required', true); return; }
+  try {
+    await api('/api/extensions/create', {
+      method: 'POST',
+      body: JSON.stringify({type: type, name: name, code: code}),
+    });
+    closeModal('ext-modal');
+    document.getElementById('ext-name').value = '';
+    document.getElementById('ext-code').value = '';
+    loadExtensions();
+    toast('Extension created');
+  } catch(e) {
+    toast('Failed: ' + e.message, true);
+  }
+}
+
 
 /* ── Init ── */
 refreshAll();
@@ -2010,12 +2301,13 @@ function applyStatusFilter() {
 
 function updateStats() {
   const counts = { active: 0, idle: 0, pending: 0 };
+  const pendingNodes = [];
   let totalCost = 0;
   function walk(nodes) {
     for (const n of nodes) {
       if (n.status === 'dead') continue;
       if (n.status === 'active') counts.active++;
-      else if (n.status === 'pending') counts.pending++;
+      else if (n.status === 'pending') { counts.pending++; pendingNodes.push(n); }
       else if (n.status === 'idle') counts.idle++;
       totalCost += n.total_cost || 0;
       if (n.children) walk(n.children);
@@ -2026,6 +2318,46 @@ function updateStats() {
   document.getElementById('stat-idle').innerHTML = '<span class="stat-dot idle-dot"></span> ' + counts.idle;
   document.getElementById('stat-pending').innerHTML = '<span class="stat-dot pending"></span> ' + counts.pending;
   document.getElementById('stat-cost').textContent = '$' + totalCost.toFixed(2);
+
+  const empty = document.getElementById('empty-detail');
+  if (!pendingNodes.length) {
+    document.getElementById('pending-dot').classList.remove('show');
+    if (!selectedNodeId) {
+      empty.style.display = '';
+      empty.innerHTML = 'Select a node from the sidebar to view details and activity';
+    }
+    return;
+  }
+  document.getElementById('pending-dot').classList.add('show');
+
+  if (!selectedNodeId) {
+    empty.style.display = '';
+    empty.innerHTML = `
+      <div style="text-align:left;max-width:600px;width:100%">
+        <h3 style="color:var(--yellow);margin-bottom:12px">&#9679; Pending Permissions (${pendingNodes.length})</h3>
+        ${pendingNodes.map(n => {
+          let options = [];
+          try { options = JSON.parse(n.latest_options || '[]'); } catch(_) {}
+          if (!options.length) options = [{label:'Allow', key:'\n'}, {label:'Always', key:'\t\n'}, {label:'Deny', key:'\t\t\n'}];
+          return `
+          <div class="perm-bar" style="margin:8px 0;padding:12px 16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
+                <span style="font-weight:600;cursor:pointer;font-size:13px" onclick="selectNodeById(${n.id})">${esc(n.name)}</span>
+              </div>
+              <div style="color:var(--text-muted);font-size:12px">${esc(n.latest_message || 'Waiting for permission...')}</div>
+            </div>
+            <div class="perm-btns" style="flex-shrink:0;padding-top:8px">
+              ${options.map((o, i) => {
+                const cls = i === options.length - 1 ? 'btn-danger' : i === 0 ? 'btn-primary' : 'btn-outline-blue';
+                return `<button class="btn ${cls} btn-sm" onclick="doPendingReply(${n.id},${i})">${esc(o.label)}</button>`;
+              }).join('')}
+            </div>
+          </div>`;
+        }).join('')}
+      </div>`;
+  }
 }
 
 function _hasPending(node) {
