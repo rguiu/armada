@@ -33,6 +33,8 @@ try {
   evtLog = require("fs").appendFileSync.bind(null, "/tmp/armada-events.log");
 } catch (_) {}
 
+let _pendingTool = null;
+
 export const ArmadaPending = async () => {
   const seenCosts = new Set();
   return {
@@ -41,19 +43,25 @@ export const ArmadaPending = async () => {
       try { evtLog(JSON.stringify(event) + "\n"); } catch (_) {}
     }
     if (event.type === "tool.execute.before") {
+      _pendingTool = event.properties.tool;
       post("active", "running " + event.properties.tool);
     } else if (event.type === "tool.execute.after") {
+      _pendingTool = null;
       post("idle", event.properties.tool + " completed");
     } else if (event.type === "permission.asked") {
       const perm = event.properties.permission || "unknown";
       const patterns = (event.properties.patterns || []).join(", ") || "any file";
-      post("pending", perm + " permission for: " + patterns, {
-        options: [
-          { label: "Allow once", key: "&#9166;" },
-          { label: "Allow always", key: "Tab+&#9166;" },
-          { label: "Reject", key: "Tab+Tab+&#9166;" },
-        ]
-      });
+      const tool = _pendingTool || "unknown";
+      // Send with small delay to ensure it arrives after active post
+      setTimeout(() => {
+        post("pending", tool + " needs " + perm + " permission: " + patterns, {
+          options: [
+            { label: "Allow once", key: "\n" },
+            { label: "Allow always", key: "\t\n" },
+            { label: "Reject", key: "\t\t\n" },
+          ]
+        });
+      }, 200);
     } else if (event.type === "message.part.updated") {
       const part = event.properties?.part;
       if (part?.type === "step-finish" && part.id && !seenCosts.has(part.id)) {

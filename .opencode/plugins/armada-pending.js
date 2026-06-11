@@ -1,9 +1,10 @@
 var NODE = process.env ? process.env.ARMADA_NODE_NAME : undefined;
 
-function post(status, message) {
+function post(status, message, extra) {
   if (!NODE) return;
+  extra = extra || {};
+  var body = JSON.stringify({ name: NODE, status: status, message: message, options: extra.options });
   var http = require("http");
-  var body = JSON.stringify({ name: NODE, status: status, message: message });
   var url = new (require("url").URL)("http://127.0.0.1:9100/api/report");
   var req = http.request({
     hostname: url.hostname, port: url.port, path: url.pathname,
@@ -36,9 +37,8 @@ export async function ArmadaPending() {
         if (props2.tool) post("idle", props2.tool + " completed");
       } else if (event.type === "permission.asked") {
         var props3 = event.properties || {};
-        var patterns = props3.patterns || [];
-        post("pending", (props3.permission || "?") + " permission: " + patterns.join(", "));
-      }
-    },
+        var patterns = (props3.patterns || []).join(", ") || "any file";
+        post("pending", (props3.permission || "?") + " permission for: " + patterns);
+      } else if (event.type === "message.part.updated") {
   };
 }
