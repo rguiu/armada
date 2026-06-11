@@ -11,16 +11,7 @@
 
 Armada wraps OpenCode and Claude Code agents in persistent tmux sessions and exposes them through a web dashboard. No more terminal tabs piling up. Start an agent, close your laptop, and pick up exactly where you left off — from any device on your network.
 
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Commands](#commands)
-- [Example Pipeline](#example-multi-agent-pipeline)
-- [Features](#features)
-- [Architecture](#architecture)
-- [Agent Skills](#agent-skills)
-- [API Endpoints](#api-endpoints)
-- [Development](#development)
-- [License](#license)
+[Installation](#installation) · [Quick Start](#quick-start) · [Commands](#commands) · [Features](#features) · [API](#api-endpoints) · [Development](#development)
 
 - **Web dashboard** — manage agents from any device on your network
 - **Persistent sessions** — agents run in tmux, survive browser closes and server restarts
