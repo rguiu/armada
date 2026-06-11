@@ -650,7 +650,7 @@ a { color: var(--accent); }
       <button onclick="deselectNode()" id="deselect-btn" title="Close detail view" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px">&times;</button>
     </div>
     <div class="header-btns" id="header-actions"></div>
-    <button onclick="goDashboard()" id="dash-btn" title="Dashboard" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:15px;padding:0 3px">⊞</button>
+    <button onclick="goDashboard()" id="dash-btn" title="Dashboard" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px">⊞</button>
   </div>
   <div id="pending-bar" style="display:none"></div>
   <div id="detail">
@@ -2334,7 +2334,37 @@ function updateStats() {
     document.getElementById('pending-dot').classList.remove('show');
     if (!selectedNodeId) {
       empty.style.display = '';
-      empty.innerHTML = 'Select a node from the sidebar to view details and activity';
+      const allNodes = [];
+      function collect(nodes) { for (const n of nodes) { if (n.status !== 'dead') allNodes.push(n); if (n.children) collect(n.children); } }
+      collect(treeData);
+      const total = counts.active + counts.idle + counts.pending;
+      empty.innerHTML = `
+        <div style="text-align:left;max-width:700px;width:100%">
+          <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+            <div style="flex:1;min-width:100px;padding:12px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border);text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--text)">${total}</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Agents</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border);text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--green)">${counts.active}</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Active</div>
+            </div>
+            <div style="flex:1;min-width:100px;padding:12px;background:var(--bg-card);border-radius:8px;border:1px solid var(--border);text-align:center">
+              <div style="font-size:24px;font-weight:700;color:var(--text)">$${totalCost.toFixed(2)}</div>
+              <div style="font-size:11px;color:var(--text-dim);margin-top:2px">Cost</div>
+            </div>
+          </div>
+          ${allNodes.length ? '<h3 style="margin-bottom:8px;font-size:13px;color:var(--text-dim)">All Agents</h3>' + allNodes.map(n => `
+            <div class="label-item" style="cursor:pointer;margin:2px 0" onclick="selectNodeById(${n.id})">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
+                <span style="font-size:13px">${esc(n.name)}</span>
+                <span class="badge ${n.status === 'active' ? 'active' : n.status === 'pending' ? 'pending' : ''}" style="font-size:10px">${n.status}</span>
+              </div>
+              <span style="font-size:11px;color:var(--text-dim)">${esc(n.latest_message || '')}</span>
+            </div>
+          `).join('') : '<div style="color:var(--text-dim);font-size:13px;padding:16px 0">No agents yet. Click <b style="color:var(--accent);cursor:pointer" onclick="openModal(\'node-modal\')">+ Node</b> to create one.</div>'}
+        </div>`;
     }
     return;
   }
