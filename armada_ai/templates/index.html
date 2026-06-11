@@ -1974,9 +1974,11 @@ async function selectExtension(extId) {
   const item = document.getElementById('ext-item-' + extId);
   if (item) item.style.background = 'var(--selected)';
 
+  selectedNodeId = null;
   const detail = document.getElementById('detail');
   detail.classList.add('proj-view');
   document.getElementById('main-title').innerHTML = '<span style="color:var(--text-dim)">Extension</span>';
+  document.getElementById('header-actions').innerHTML = '';
 
   try {
     const [exts, labels] = await Promise.all([
@@ -2021,6 +2023,24 @@ async function selectExtension(extId) {
     `;
   } catch(_) {
     detail.innerHTML = '<div style="color:var(--red);padding:12px">Failed to load extension details</div>';
+  }
+}
+
+async function toggleExtContent(extId) {
+  const container = document.getElementById('ext-content-' + extId);
+  if (!container) return;
+  const isHidden = container.style.display === 'none';
+  container.style.display = isHidden ? 'block' : 'none';
+  if (isHidden) {
+    const pre = document.getElementById('ext-content-text-' + extId);
+    if (pre && pre.textContent === 'Loading...') {
+      try {
+        const data = await api('/api/extensions/' + extId + '/content');
+        pre.textContent = data.content || '(empty)';
+      } catch(e) {
+        pre.textContent = 'Failed to load: ' + e.message;
+      }
+    }
   }
 }
 
