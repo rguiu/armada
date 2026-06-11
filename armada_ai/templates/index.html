@@ -650,9 +650,11 @@ a { color: var(--accent); }
       <button onclick="deselectNode()" id="deselect-btn" title="Close detail view" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px">&times;</button>
     </div>
     <div class="header-btns" id="header-actions"></div>
-    <button onclick="goDashboard()" id="dash-btn" title="Dashboard" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px">⊞</button>
+    <button onclick="goDashboard()" id="dash-btn" title="Dashboard" style="display:none;background:none;border:1px solid var(--border-light);border-radius:4px;color:var(--text-muted);cursor:pointer;padding:3px 5px;line-height:0"
+      onmouseenter="this.style.background='var(--hover)'" onmouseleave="this.style.background='none'">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+    </button>
   </div>
-  <div id="pending-bar" style="display:none"></div>
   <div id="detail">
     <div class="empty-detail" id="empty-detail">Select a node from the sidebar to view details and activity</div>
   </div>
@@ -1260,20 +1262,6 @@ async function loadNodeDetail(nodeId) {
     reportsHtml = '<div style="color:#484f58;padding:12px 0">No reports yet</div>';
   }
 
-  let permHtml = '';
-  if (n.status === 'pending') {
-    const latestMsg = data.reports && data.reports.length ? data.reports[0].message : '';
-    permHtml = `
-      <div class="perm-bar">
-        <div class="perm-msg">${esc(latestMsg || 'Waiting for permission')}</div>
-        <div class="perm-btns">
-          <button class="btn btn-primary btn-sm" onclick="replyPermission(${n.id},'y')">Allow Once</button>
-          <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${n.id},'a')">Allow Always</button>
-          <button class="btn btn-danger btn-sm" onclick="replyPermission(${n.id},'n')">Deny</button>
-        </div>
-      </div>`;
-  }
-
   // Save terminal pane before innerHTML destroys it (WS updates trigger
   // loadNodeDetail while a terminal may be open inside #detail)
   const pane = document.getElementById('terminal-pane');
@@ -1285,7 +1273,6 @@ async function loadNodeDetail(nodeId) {
 
   detail.innerHTML = `
     <div class="node-meta">${metaHtml}</div>
-    ${permHtml}
     <div id="reports">
       <h3>Activity Log</h3>
       ${reportsHtml}
@@ -1566,8 +1553,9 @@ async function hideNode(id) {
 async function replyPermission(id, key) {
   let command;
   if (key === 'y') command = '\n';
-  else if (key === 'a') command = '\t\n';
-  else if (key === 'n') command = '\t\t\n';
+  else if (key === 'a') command = '\x1b[C\n';
+  else if (key === 'n') command = '\x1b[C\x1b[C\n';
+  else command = key;
   try {
     await api('/api/nodes/' + id + '/send', {
       method: 'POST',
@@ -1575,9 +1563,7 @@ async function replyPermission(id, key) {
       body: JSON.stringify({command: command, raw: true})
     });
     if (!selectedNodeId) {
-      const bar = document.getElementById('pending-bar');
-      bar.style.display = 'none';
-      bar.innerHTML = '';
+      document.getElementById('pending-bar').style.display = 'none';
     }
   } catch(e) {
     toast('Failed to send reply: ' + e.message, true);
@@ -1589,13 +1575,23 @@ async function doPendingReply(id, optionIndex) {
     const data = await api('/api/nodes/' + id + '/reports?limit=1');
     const report = data && data.length ? data[0] : null;
     if (!report) return;
-    const options = JSON.parse(report.options || '[]');
+    let options = [];
+    try { options = JSON.parse(report.options || '[]'); } catch(_) {}
+    if (!options.length) return;
     const opt = options[optionIndex];
     if (!opt || !opt.key) return;
+
+    let rawKey = opt.key;
+    if (typeof rawKey === 'string') {
+      rawKey = rawKey.replace(/⏎|&#9166;|\\n/g, '\n');
+      rawKey = rawKey.replace(/Tab\+?/gi, '\t');
+      rawKey = rawKey.replace(/Enter\+?/gi, '\n');
+    }
+
     await api('/api/nodes/' + id + '/send', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({command: opt.key, raw: true})
+      body: JSON.stringify({command: rawKey, raw: true})
     });
   } catch(e) {
     toast('Failed: ' + e.message, true);
@@ -1869,7 +1865,18 @@ function uptimeDiff(start, end) {
 async function refreshHooks() {
   try {
     const res = await api('/api/refresh-hooks', {method:'POST'});
-    toast('Hooks synced to ' + res.updated.length + ' project(s).');
+    const parts = [];
+    if (res.updated && res.updated.length) parts.push('Updated ' + res.updated.length + ' project(s)');
+    if (res.skipped && res.skipped.length) {
+      parts.push('Skipped ' + res.skipped.length + ' (missing dirs)');
+      res.skipped.forEach(s => clientLog('warn', 'Sync skipped ' + s.name + ': ' + s.reason));
+    }
+    if (res.failed && res.failed.length) {
+      parts.push('Failed ' + res.failed.length + ' project(s)');
+      res.failed.forEach(f => clientLog('warn', 'Sync failed ' + f.name + ': ' + f.reason));
+    }
+    if (!parts.length) parts.push('No projects to sync');
+    toast(parts.join('; '), !!(res.failed && res.failed.length));
   } catch(e) {
     toast('Sync failed: ' + e.message, true);
   }
@@ -2225,26 +2232,7 @@ function updatePendingDot() {
   dot.classList.toggle('show', hasPending);
   updateStats();
 
-  if (!selectedNodeId) {
-    const bar = document.getElementById('pending-bar');
-    if (node) {
-      bar.style.display = 'flex';
-      bar.innerHTML = `
-        <span class="perm-node-name" onclick="selectPendingNode()" title="Select node">${esc(node.name)}</span>
-        <span class="perm-msg">${esc(node.latest_message || 'Waiting for permission')}</span>
-        <div class="perm-btns">
-          <button class="btn btn-primary btn-sm" onclick="replyPermission(${node.id},'y')">Allow Once</button>
-          <button class="btn btn-outline-blue btn-sm" onclick="replyPermission(${node.id},'a')">Allow Always</button>
-          <button class="btn btn-danger btn-sm" onclick="replyPermission(${node.id},'n')">Deny</button>
-        </div>
-      `;
-    } else {
-      bar.style.display = 'none';
-      bar.innerHTML = '';
-    }
-  } else {
-    document.getElementById('pending-bar').style.display = 'none';
-  }
+  document.getElementById('pending-bar').style.display = 'none';
 
   if (hasPending && !wasPending) {
     notifyPending();
@@ -2378,7 +2366,7 @@ function updateStats() {
         ${pendingNodes.map(n => {
           let options = [];
           try { options = JSON.parse(n.latest_options || '[]'); } catch(_) {}
-          if (!options.length) options = [{label:'Allow', key:'\n'}, {label:'Always', key:'\t\n'}, {label:'Deny', key:'\t\t\n'}];
+          const hasButtons = options.length > 0;
           return `
           <div class="perm-bar" style="margin:8px 0;padding:12px 16px;flex-wrap:wrap">
             <div style="flex:1;min-width:0">
@@ -2386,13 +2374,13 @@ function updateStats() {
                 <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
                 <span style="font-weight:600;cursor:pointer;font-size:13px" onclick="selectNodeById(${n.id})">${esc(n.name)}</span>
               </div>
-              <div style="color:var(--text-muted);font-size:12px">${esc(n.latest_message || 'Waiting for permission...')}</div>
+              <div style="color:var(--text-muted);font-size:12px;white-space:pre-wrap">${esc(n.latest_message || 'Waiting for permission...')}</div>
             </div>
             <div class="perm-btns" style="flex-shrink:0;padding-top:8px">
-              ${options.map((o, i) => {
+              ${hasButtons ? options.map((o, i) => {
                 const cls = i === options.length - 1 ? 'btn-danger' : i === 0 ? 'btn-primary' : 'btn-outline-blue';
                 return `<button class="btn ${cls} btn-sm" onclick="doPendingReply(${n.id},${i})">${esc(o.label)}</button>`;
-              }).join('')}
+              }).join('') : '<span style="font-size:11px;color:var(--text-dim)">Respond in terminal</span>'}
             </div>
           </div>`;
         }).join('')}

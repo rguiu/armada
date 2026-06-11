@@ -1081,16 +1081,23 @@ async def create_extension_endpoint(request: Request):  # pragma: no cover
 def refresh_hooks():
     labels = db.list_project_labels()
     updated = []
+    skipped = []
+    failed = []
     for label in labels:
         if not os.path.isdir(label.path):
+            skipped.append({"id": label.id, "name": label.name, "reason": "directory missing"})
             continue
         try:
             deployment.install_skills_to_project(label.path)
             deployment.deploy_claude_hooks(label.path)
             updated.append(label.id)
-        except Exception:
-            pass
-    return JSONResponse({"updated": updated})
+        except Exception as e:
+            failed.append({"id": label.id, "name": label.name, "reason": str(e)})
+    return JSONResponse({
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
+    })
 
 
 # --- Agent Report ---

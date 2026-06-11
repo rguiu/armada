@@ -75,15 +75,16 @@ def install_skills_to_user() -> list[str]:
 def _deploy_pending_plugin(cwd: str):
     """Install armada-pending plugin files into a project."""
     project = Path(cwd)
-    dst_dir = project / ".opencode" / "plugins"
-    dst_dir.mkdir(parents=True, exist_ok=True)
-
     copies = []
-    for plugin_file in ("armada-pending.ts", "armada-pending.js"):
-        src = _PLUGIN_SRC_DIR / plugin_file
-        if src.exists():
-            shutil.copy2(src, dst_dir / plugin_file)
-            copies.append(plugin_file)
+    for dst_dir_name in ("plugins", "plugin"):
+        dst_dir = project / ".opencode" / dst_dir_name
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        for plugin_file in ("armada-pending.ts", "armada-pending.js"):
+            src = _PLUGIN_SRC_DIR / plugin_file
+            if src.exists():
+                shutil.copy2(src, dst_dir / plugin_file)
+                if plugin_file not in copies:
+                    copies.append(plugin_file)
 
     if not copies:
         return

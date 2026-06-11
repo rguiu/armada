@@ -197,20 +197,45 @@ def send_raw_keys(name: str, keys: str) -> bool:
     if not has_tmux():
         return False
     target = agent_target(name)
-    if '\n' in keys or '\r' in keys:
-        lines = keys.replace('\r\n', '\n').replace('\r', '\n').split('\n')
-        for i, line in enumerate(lines):
-            if i > 0:
-                tmux("send-keys", "-t", target, "Enter")
-            if line:
-                result = tmux("send-keys", "-l", "-t", target, line)
-                if result.returncode != 0:
-                    return False
-    else:
-        result = tmux("send-keys", "-l", "-t", target, keys)
-        if result.returncode != 0:
-            return False
+    parts = keys.replace('\r\n', '\n').replace('\r', '\n')
+    buf = []
+    for ch in parts:
+        if ch == '\n':
+            _flush_raw_buf(target, buf)
+            tmux("send-keys", "-t", target, "Enter")
+        elif ch == '\t':
+            _flush_raw_buf(target, buf)
+            tmux("send-keys", "-t", target, "Tab")
+        else:
+            buf.append(ch)
+    _flush_raw_buf(target, buf)
     return True
+
+
+_ANSI_TO_TMUX = {
+    '\x1b[A': 'Up',
+    '\x1b[B': 'Down',
+    '\x1b[C': 'Right',
+    '\x1b[D': 'Left',
+}
+
+
+def _flush_raw_buf(target, buf):
+    if not buf:
+        return
+    s = ''.join(buf)
+    buf.clear()
+    while s:
+        matched = False
+        for ansi, tmux_key in _ANSI_TO_TMUX.items():
+            if s.startswith(ansi):
+                tmux("send-keys", "-t", target, tmux_key)
+                s = s[len(ansi):]
+                matched = True
+                break
+        if not matched:
+            tmux("send-keys", "-l", "-t", target, s[0])
+            s = s[1:]
 
 
 def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):

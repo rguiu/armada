@@ -1,45 +1,57 @@
 #!/bin/bash
-# Claude Code PermissionRequest hook — reports "pending" with question and options
 N="${ARMADA_NODE_NAME:-}"
 [ -z "$N" ] && exit 0
+
 INPUT=$(cat 2>/dev/null)
-# Debug: dump raw input so we can see what Claude sends
-echo "$INPUT" >> /tmp/armada-claude-permission.log 2>/dev/null
-DATA=$(echo "$INPUT" | python3 -c "
-import sys, json
+echo "=== $(date) ===" >> /tmp/armada-perm-debug.log 2>/dev/null
+echo "$INPUT" >> /tmp/armada-perm-debug.log 2>/dev/null
+
+BODY=$(echo "$INPUT" | python3 -c "
+import sys, json, traceback
 try:
     d = json.load(sys.stdin)
+    
+    # Dump all top-level keys to debug log
+    with open('/tmp/armada-perm-debug.log', 'a') as log:
+        log.write('KEYS: ' + str(list(d.keys())) + '\n')
+        log.write('FULL: ' + json.dumps({k: str(v)[:100] for k, v in d.items()}, indent=2) + '\n')
+    
+    # Try every possible field that might contain the question text
+    question = ''
+    for field in ('prompt', 'question', 'message', 'text', 'reason', 'description', 'explanation', 'content', 'body'):
+        val = d.get(field, '')
+        if val and isinstance(val, str) and len(val) > len(question):
+            question = val
+        elif isinstance(val, dict) and 'text' in val:
+            if len(str(val.get('text',''))) > len(question):
+                question = str(val.get('text',''))
+    
+    if not question:
+        inp = d.get('input', '')
+        if isinstance(inp, dict):
+            for k in ('command', 'text', 'content'):
+                if inp.get(k) and len(str(inp[k])) > len(question):
+                    question = str(inp[k])
+        elif inp:
+            question = str(inp)
+    
+    question = question.strip()[:300]
     tool = d.get('tool_name', '')
-    perm = d.get('permission', '')
-    inp = d.get('input', '')
-    if isinstance(inp, dict):
-        inp = inp.get('command', inp.get('text', str(inp)))
     
-    parts = []
-    if tool: parts.append(tool)
-    if perm: parts.append(perm)
-    
-    desc = d.get('prompt') or d.get('question') or d.get('reason') or d.get('text') or d.get('description') or ''
-    if desc:
-        parts.append(desc[:120])
-    elif inp:
-        parts.append(str(inp)[:120])
-    
-    ctx = ' — '.join(parts) if parts else 'waiting for approval'
+    msg = question if question else (tool or 'waiting for approval')
     
     options = d.get('options', [])
     if not options:
-        options = [{'label': 'Allow once', 'key': chr(10)}, {'label': 'Allow always', 'key': chr(9)+chr(10)}, {'label': 'Deny', 'key': chr(9)+chr(9)+chr(10)}]
+        options = []
     
-    print(json.dumps({'message': ctx, 'options': options}))
-except:
-    print(json.dumps({'message': 'waiting for approval', 'options': [{'label': 'Allow once', 'key': chr(10)}, {'label': 'Allow always', 'key': chr(9)+chr(10)}, {'label': 'Deny', 'key': chr(9)+chr(9)+chr(10)}]}))
-" 2>/dev/null || echo '{"message":"waiting for approval","options":[{"label":"Allow once","key":"\n"},{"label":"Allow always","key":"\t\n"},{"label":"Deny","key":"\t\t\n"}]}')
-
-MSG=$(echo "$DATA" | python3 -c "import sys,json; print(json.load(sys.stdin)['message'])" 2>/dev/null)
-OPTS=$(echo "$DATA" | python3 -c "import sys,json; print(json.dumps(json.load(sys.stdin)['options']))" 2>/dev/null)
+    print(json.dumps({'name': '$N', 'status': 'pending', 'message': msg, 'options': options}))
+except Exception as e:
+    with open('/tmp/armada-perm-debug.log', 'a') as log:
+        traceback.print_exc(file=log)
+    print(json.dumps({'name': '$N', 'status': 'pending', 'message': 'waiting for approval', 'options': []}))
+")
 
 curl -s -X POST http://127.0.0.1:9100/api/report \
   -H "Content-Type: application/json" \
-  -d "{\"name\":\"$N\",\"status\":\"pending\",\"message\":\"$MSG\",\"options\":$OPTS}" > /dev/null 2>&1
+  -d "$BODY" > /dev/null 2>&1
 exit 0

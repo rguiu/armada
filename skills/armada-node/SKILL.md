@@ -49,6 +49,8 @@ curl -s -X POST http://127.0.0.1:9100/api/report \
 
 ### When waiting for user input (mark yourself pending):
 
+The Armada pending plugin handles permission requests automatically — do NOT manually report `pending` for tool permission waits (the plugin sends options/buttons with those reports). Only report `pending` manually for non-permission waits: questions you ask the user, confirmations you need, or any prompt where you are waiting for a text response (not a permission dialog).
+
 ```bash
 N=${ARMADA_NODE_NAME:-unknown}
 curl -s -X POST http://127.0.0.1:9100/api/report \
@@ -56,7 +58,7 @@ curl -s -X POST http://127.0.0.1:9100/api/report \
   -d '{"name":"'"$N"'","status":"pending","message":"<what you need from the user>"}'
 ```
 
-Use `pending` whenever you are blocked waiting for the user: permission requests, questions, confirmations, or any prompt the user must respond to. This makes your node pulse yellow in the dashboard so the user knows you need attention.
+This makes your node pulse yellow in the dashboard so the user knows you need attention.
 
 ### Report at EVERY step. Examples:
 
