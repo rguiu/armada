@@ -595,7 +595,6 @@ def _focus_attached_node(name):
 
 
 def _watch_nodes():
-    import time
     import select
     import tty
     import termios
@@ -817,7 +816,7 @@ def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=
 def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_names=None):
     sys.stdout.write("\033[H\033[J")
 
-    nodes_tab = f"\033[33m⚠ Nodes \033[0m" if has_pending else " Nodes "
+    nodes_tab = "\033[33m⚠ Nodes \033[0m" if has_pending else " Nodes "
     top = f" {nodes_tab} \033[7m Projects \033[0m   |  {len(projects)} projects"
     sys.stdout.write(f"\033[1m{top}\033[0m\n\n")
 
@@ -882,7 +881,7 @@ def _watch_form(fd, old_settings, title, fields):
                 line = f" {prefix} {label:<20} {val}{suffix} "
                 sys.stdout.write(line.ljust(tw)[:tw] + "\n")
 
-            sys.stdout.write(f"\n\033[2m[tab/↑↓]field  [←→]change  [esc]cancel\033[0m")
+            sys.stdout.write("\n\033[2m[tab/↑↓]field  [←→]change  [esc]cancel\033[0m")
             sys.stdout.flush()
 
             b = os.read(fd, 1)
@@ -1022,8 +1021,10 @@ def _create_cmd(subargs: list[str]):
         print(f"Created node {result['name']} (id={result['id']})")
     except Exception as e:
         resp = ""
-        try: resp = str(e.read(), "utf-8")[:200]
-        except Exception: pass
+        try:
+            resp = str(e.read(), "utf-8")[:200]
+        except Exception:
+            pass
         print(f"Failed: {e}\n{resp}", file=sys.stderr)
         sys.exit(1)
 
