@@ -132,8 +132,15 @@ The `--qr` flag prints an ASCII QR code in the terminal. Scan it to authenticate
 |---|---|
 | `armada` | Start daemon + open dashboard |
 | `armada start` | Start daemon in background |
+| `armada --no-browser` | Start server, print URLs, don't open browser |
 | `armada stop` | Stop the daemon |
-| `armada attach` | Start in foreground (debugging) |
+| `armada watch` | Interactive terminal dashboard (nodes + projects) |
+| `armada nodes` | List all agents in a table |
+| `armada attach <name>` | Open iTerm attached to a node by name |
+| `armada create -p <project>` | Create a new agent node |
+| `armada projects` | List projects |
+| `armada projects add <id> <name> <path>` | Register a project |
+| `armada projects rm <id>` | Remove a project |
 | `armada setup` | Install skills to user profile |
 | `armada token` | Print the auth token |
 | `armada token --qr` | Print token as scannable QR code |
@@ -145,6 +152,110 @@ The `--qr` flag prints an ASCII QR code in the terminal. Scan it to authenticate
 | `armada service install` | Install as system service (launchd/systemd) |
 | `armada doctor` | Clean up stale tmux sessions and DB state |
 | `armada status` | Show server health and agent counts |
+
+## CLI Watch Dashboard
+
+`armada watch` is a live terminal dashboard (`htop`-style) for managing agents and projects without a browser.
+
+```
+$ armada watch
+
+ Nodes   Projects   |  3 active  1 pending  12 idle  |  23 agents
+
+ ● HOOK20           ▣ idle   PGLease            unknown needs external_directory
+ ○ HOOK18             idle   PGLease            server restarted — reconnected
+ ○ H1                 idle   Armada
+ ○ Armada-006         idle   Armada
+ ● Armada-005         active Armada             running bash
+ ...
+
+ ⚠ Pending: HOOK20
+
+ ┃ [↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit ┃
+```
+
+**Nodes tab** (default):
+
+| Key | Action |
+|---|---|
+| `↑` `↓` | Navigate agent list |
+| `Enter` | Attach to selected node (opens iTerm or focuses existing tab) |
+| `n` | New node (interactive form) |
+| `k` | Kill selected node (terminate tmux, mark as dead) |
+| `d` | Delete selected node (kill tmux + hide from list) |
+| `Tab` | Switch to Projects view |
+| `q` | Quit |
+
+**Projects tab** (`Tab` to switch):
+
+```
+ ⚠ Nodes   Projects   |  9 projects
+
+ Armada                   Armada              /Users/raul/Projects/armadaai
+ PGLease                  PGLease             /Users/raul/Projects/aitools/pglease
+ ...
+
+ ┃ [↑↓]nav [n]ew [d]elete [tab]nodes [q]quit ┃
+```
+
+| Key | Action |
+|---|---|
+| `n` | New project (interactive form with ID, Name, Path) |
+| `d` | Remove selected project |
+| `Tab` | Switch back to Nodes view |
+
+**Alerts** — when a node needs permission:
+- Terminal **beeps** (`\a`)
+- Pending nodes **blink yellow** in the list
+- The **Nodes tab** shows `⚠ Nodes` in yellow when you're on the Projects tab
+- A `⚠ Pending: <names>` line appears at the bottom
+
+**Attached indicator** — a green `▣` after the status column means a terminal is already attached to that node. Pressing Enter focuses the existing iTerm tab instead of opening a new one.
+
+**Forms** — creating nodes and projects uses interactive terminal forms:
+
+```
+ New Node
+
+   Name                my-agent
+   Project         ◀ Armada ▶ *
+   Agent           ◀ auto ▶
+   Parent ID       2
+   Prompt           review the auth module
+   [ Save ]
+
+ [tab/↑↓]field  [←→]change  [esc]cancel
+```
+
+- `Tab` / `↑` `↓` to move between fields
+- `←` `→` to cycle select options (Project, Agent)
+- Type freely in text fields (Name, Parent ID, Prompt)
+- Press Enter on `[ Save ]` to submit, `Esc` to cancel
+
+### Quick CLI examples
+
+```bash
+# Start without opening a browser
+armada --no-browser
+
+# List all agents
+armada nodes
+
+# Watch live (interactive dashboard)
+armada watch
+
+# Create a new node
+armada create -p Armada -a opencode -n "reviewer" -m "review the latest diff"
+
+# Attach to a node
+armada attach Armada-005
+
+# List all projects
+armada projects
+
+# Add a new project
+armada projects add myapp "My App" ~/Projects/myapp
+```
 
 ## Example: Multi-Agent Pipeline
 
