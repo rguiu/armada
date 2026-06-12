@@ -202,7 +202,7 @@ a { color: var(--accent); }
 .loading-terminal { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); font-size: 13px; }
 
 /* ── Labels section ── */
-#labels-section { border-top: 1px solid var(--border); padding: 8px; }
+#labels-section { border-top: 1px solid var(--border); padding: 8px; flex-shrink: 0; }
 #labels-section .section-header {
   display: flex; justify-content: space-between; align-items: center;
   padding: 4px 8px; margin-bottom: 4px;
@@ -1543,9 +1543,6 @@ async function replyPermission(id, key) {
       headers: {'Content-Type':'application/json'},
       body: JSON.stringify({command: command, raw: true})
     });
-    if (!selectedNodeId) {
-      document.getElementById('pending-bar').style.display = 'none';
-    }
   } catch(e) {
     toast('Failed to send reply: ' + e.message, true);
   }
@@ -1750,18 +1747,25 @@ async function refreshTree() {
 }
 
 async function refreshLabels() {
-  const data = await api('/api/project-labels');
-  const el = document.getElementById('labels-list');
-  if (!data.length) {
-    el.innerHTML = '<div class="label-item" style="color:#484f58">No labels</div>';
-    return;
+  try {
+    const data = await api('/api/project-labels');
+    const el = document.getElementById('labels-list');
+    if (!el) { console.error('labels-list element not found'); return; }
+    if (!data || !data.length) {
+      el.innerHTML = '<div class="label-item" style="color:#484f58">No labels</div>';
+      return;
+    }
+    el.innerHTML = data.map(l => `
+      <div class="label-item" onclick="showProjectOverview('${esc(l.id)}')" title="View project overview">
+        <div><span>${esc(l.name)}</span> <span class="label-path">${esc(l.path)}</span></div>
+        <span class="label-del" onclick="event.stopPropagation();deleteLabel('${esc(l.id)}')">x</span>
+      </div>
+    `).join('');
+  } catch(e) {
+    console.error('Failed to load project labels:', e.message);
+    const el = document.getElementById('labels-list');
+    if (el) el.innerHTML = '<div class="label-item" style="color:#f85149">Failed to load: ' + esc(e.message) + '</div>';
   }
-  el.innerHTML = data.map(l => `
-    <div class="label-item" onclick="showProjectOverview('${esc(l.id)}')" title="View project overview">
-      <div><span>${esc(l.name)}</span> <span class="label-path">${esc(l.path)}</span></div>
-      <span class="label-del" onclick="event.stopPropagation();deleteLabel('${esc(l.id)}')">x</span>
-    </div>
-  `).join('');
 }
 
 async function refreshNodeModalDropdowns() {
@@ -2214,8 +2218,6 @@ function updatePendingDot() {
   const hasPending = !!node;
   dot.classList.toggle('show', hasPending);
   updateStats();
-
-  document.getElementById('pending-bar').style.display = 'none';
 
   if (hasPending && !wasPending) {
     notifyPending();
