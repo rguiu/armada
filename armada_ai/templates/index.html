@@ -285,7 +285,9 @@ a { color: var(--accent); }
 
 #detail { flex: 1; overflow-y: auto; padding: 20px; min-height: 0; }
 #detail.has-terminal { overflow: hidden; display: flex; flex-direction: column; }
+#detail.has-terminal .node-meta { display: none; }
 #detail.has-terminal #reports { display: none; }
+#detail.has-terminal #children-output { display: none; }
 #detail .term-host { flex: 1; min-height: 0; overflow: hidden; margin: 0 -20px; }
 .empty-detail {
   display: flex; align-items: center; justify-content: center;
@@ -649,11 +651,13 @@ a { color: var(--accent); }
       <h1 id="main-title">Select a node</h1>
       <button onclick="deselectNode()" id="deselect-btn" title="Close detail view" style="display:none;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;padding:0 4px">&times;</button>
     </div>
-    <div class="header-btns" id="header-actions"></div>
-    <button onclick="goDashboard()" id="dash-btn" title="Dashboard" style="display:none;background:none;border:1px solid var(--border-light);border-radius:4px;color:var(--text-muted);cursor:pointer;padding:3px 5px;line-height:0"
-      onmouseenter="this.style.background='var(--hover)'" onmouseleave="this.style.background='none'">
-      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-    </button>
+    <div style="display:flex;align-items:center;gap:8px">
+      <div class="header-btns" id="header-actions"></div>
+      <button onclick="goDashboard()" id="dash-btn" title="Dashboard" style="display:none;background:none;border:1px solid var(--border-light);border-radius:4px;color:var(--text-muted);cursor:pointer;padding:3px 5px;line-height:0"
+        onmouseenter="this.style.background='var(--hover)'" onmouseleave="this.style.background='none'">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+      </button>
+    </div>
   </div>
   <div id="detail">
     <div class="empty-detail" id="empty-detail">Select a node from the sidebar to view details and activity</div>
@@ -1113,14 +1117,6 @@ async function showProjectOverview(labelId) {
     const configs = data.configs || {};
     const git = data.git || {};
 
-    const counts = { armada: 0, project: 0, global: 0 };
-    let skillsHtml = '';
-    for (const s of skills) {
-      counts[s.source || 'global']++;
-      skillsHtml += `<span class="skill-chip ${esc(s.source)}" title="${esc(s.description || '')}"><span class="chip-dot"></span>${esc(s.name)}</span>`;
-    }
-    if (!skillsHtml) skillsHtml = '<span class="proj-empty">No skills found in this project</span>';
-
     let pluginsHtml = '';
     for (const p of plugins) {
       pluginsHtml += `<div class="proj-item"><span class="proj-agent-badge ${esc(p.agent)}">${esc(p.agent)}</span> ${esc(p.name)}</div>`;
@@ -1166,10 +1162,6 @@ async function showProjectOverview(labelId) {
       <div class="proj-overview">
         <h2>${esc(l.name)}</h2>
         <div class="proj-path">${esc(l.path)}</div>
-        <div class="proj-section">
-          <h3>Skills (${skills.length})</h3>
-          <div style="display:flex;flex-wrap:wrap;gap:4px">${skillsHtml}</div>
-        </div>
         <div class="proj-section">
           <h3>Plugins (${plugins.length})</h3>
           ${pluginsHtml}
@@ -1283,20 +1275,10 @@ async function loadNodeDetail(nodeId) {
     </div>
     ${n.status !== 'dead' ? `
     <div class="cmd-bar" style="flex-wrap:wrap">
-      <div class="preset-chips">
-        <button class="preset-chip" onclick="setCmd(${n.id},'/plan ')">/plan</button>
-        <button class="preset-chip" onclick="setCmd(${n.id},'/armada ')">/armada</button>
-        ${n.agent_type === 'opencode' ? `<button class="preset-chip" onclick="setCmd(${n.id},'/clear')">/clear</button>` : ''}
-        <button class="preset-chip" onclick="setCmd(${n.id},'ls -la')">ls</button>
-        <button class="preset-chip" onclick="setCmd(${n.id},'git diff')">diff</button>
-        <button class="preset-chip" onclick="setCmd(${n.id},'git status')">status</button>
-        <button class="preset-chip" onclick="setCmd(${n.id},'exit')">exit</button>
-      </div>
       <div style="display:flex;gap:6px;align-items:center;width:100%">
         <input type="text" id="cmd-input-${n.id}" placeholder="Type a command..."
           style="flex:1;padding:5px 10px;border-radius:6px;border:1px solid #30363d;background:#0d1117;color:#e1e4e8;font-size:12px;font-family:inherit"
           onkeydown="if(event.key==='Enter')sendCommand(${n.id})">
-        <label class="cmd-raw"><input type="checkbox" id="cmd-raw-${n.id}"> raw</label>
         <button class="btn btn-outline btn-sm" onclick="sendCommand(${n.id})">Send</button>
       </div>
     </div>` : ''}
@@ -1508,12 +1490,11 @@ async function sendCommand(id) {
   if (!input) return;
   const command = input.value.trim();
   if (!command) return;
-  const raw = document.getElementById('cmd-raw-' + id)?.checked || false;
   try {
     await api('/api/nodes/' + id + '/send', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({command, raw})
+      body: JSON.stringify({command})
     });
     input.value = '';
     input.focus();
@@ -1679,6 +1660,8 @@ async function createNode() {
     selectedNodeId = node.id;
     refreshTree();
     loadNodeDetail(node.id);
+    document.getElementById('deselect-btn').style.display = '';
+    document.getElementById('dash-btn').style.display = '';
   } catch(e) {
     toast('Create failed: ' + e.message, true);
   }
