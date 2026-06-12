@@ -102,6 +102,97 @@ class TestSendKeys:
             assert tmux.send_keys("test_node", "hello") is False
 
 
+class TestSendRawKeys:
+    def test_send_raw_keys_plain_text(self):
+        tmux = _real_tmux_module()
+        from armada_ai.infrastructure import tmux_session as impl
+
+        mock_run = MagicMock(return_value=_make_completed())
+        with patch.object(impl, "has_tmux", return_value=True), \
+             patch.object(impl, "tmux", mock_run):
+            result = tmux.send_raw_keys("test_node", "hello")
+            assert result is True
+            target = impl.agent_target("test_node")
+            mock_run.assert_any_call("send-keys", "-l", "-t", target, "hello")
+
+    def test_send_raw_keys_with_enter(self):
+        tmux = _real_tmux_module()
+        from armada_ai.infrastructure import tmux_session as impl
+
+        mock_run = MagicMock(return_value=_make_completed())
+        with patch.object(impl, "has_tmux", return_value=True), \
+             patch.object(impl, "tmux", mock_run):
+            result = tmux.send_raw_keys("test_node", "hi\n")
+            assert result is True
+            target = impl.agent_target("test_node")
+            mock_run.assert_any_call("send-keys", "-l", "-t", target, "hi")
+            mock_run.assert_any_call("send-keys", "-t", target, "Enter")
+
+    def test_send_raw_keys_with_tab(self):
+        tmux = _real_tmux_module()
+        from armada_ai.infrastructure import tmux_session as impl
+
+        mock_run = MagicMock(return_value=_make_completed())
+        with patch.object(impl, "has_tmux", return_value=True), \
+             patch.object(impl, "tmux", mock_run):
+            result = tmux.send_raw_keys("test_node", "a\tb")
+            assert result is True
+            target = impl.agent_target("test_node")
+            mock_run.assert_any_call("send-keys", "-l", "-t", target, "a")
+            mock_run.assert_any_call("send-keys", "-t", target, "Tab")
+            mock_run.assert_any_call("send-keys", "-l", "-t", target, "b")
+
+    def test_send_raw_keys_ansi_down_arrow(self):
+        tmux = _real_tmux_module()
+        from armada_ai.infrastructure import tmux_session as impl
+
+        mock_run = MagicMock(return_value=_make_completed())
+        with patch.object(impl, "has_tmux", return_value=True), \
+             patch.object(impl, "tmux", mock_run):
+            result = tmux.send_raw_keys("test_node", "\x1b[B\n")
+            assert result is True
+            target = impl.agent_target("test_node")
+            mock_run.assert_any_call("send-keys", "-t", target, "Down")
+            mock_run.assert_any_call("send-keys", "-t", target, "Enter")
+
+    def test_send_raw_keys_ansi_right_right_enter(self):
+        tmux = _real_tmux_module()
+        from armada_ai.infrastructure import tmux_session as impl
+
+        mock_run = MagicMock(return_value=_make_completed())
+        with patch.object(impl, "has_tmux", return_value=True), \
+             patch.object(impl, "tmux", mock_run):
+            result = tmux.send_raw_keys("test_node", "\x1b[C\x1b[C\n")
+            assert result is True
+            target = impl.agent_target("test_node")
+            right_calls = [c for c in mock_run.call_args_list
+                           if c == call("send-keys", "-t", target, "Right")]
+            assert len(right_calls) == 2
+            mock_run.assert_any_call("send-keys", "-t", target, "Enter")
+
+    def test_send_raw_keys_mixed_ansi_and_text(self):
+        tmux = _real_tmux_module()
+        from armada_ai.infrastructure import tmux_session as impl
+
+        mock_run = MagicMock(return_value=_make_completed())
+        with patch.object(impl, "has_tmux", return_value=True), \
+             patch.object(impl, "tmux", mock_run):
+            result = tmux.send_raw_keys("test_node", "ab\x1b[Bcd\n")
+            assert result is True
+            target = impl.agent_target("test_node")
+            mock_run.assert_any_call("send-keys", "-l", "-t", target, "ab")
+            mock_run.assert_any_call("send-keys", "-t", target, "Down")
+            mock_run.assert_any_call("send-keys", "-l", "-t", target, "cd")
+            mock_run.assert_any_call("send-keys", "-t", target, "Enter")
+
+    def test_send_raw_keys_no_tmux(self):
+        tmux = _real_tmux_module()
+        from armada_ai.infrastructure import tmux_session as impl
+
+        with patch.object(impl, "has_tmux", return_value=False):
+            assert tmux.send_raw_keys("any", "hi") is False
+
+
 class TestSendInitialPrompt:
     def test_agent_process_found(self):
         tmux = _real_tmux_module()

@@ -163,6 +163,13 @@ def window_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def pane_alive(pane_id: str) -> bool:
+    if not has_tmux() or not pane_id:
+        return False
+    result = tmux("display-message", "-t", pane_id, "-p", "#{pane_id}")
+    return result.returncode == 0 and result.stdout.strip() == pane_id
+
+
 def running_window_names() -> set[str]:
     if not has_tmux():
         return set()
@@ -234,8 +241,12 @@ def _flush_raw_buf(target, buf):
                 matched = True
                 break
         if not matched:
-            tmux("send-keys", "-l", "-t", target, s[0])
-            s = s[1:]
+            i = 0
+            while i < len(s) and not any(s[i:].startswith(a) for a in _ANSI_TO_TMUX):
+                i += 1
+            if i > 0:
+                tmux("send-keys", "-l", "-t", target, s[:i])
+                s = s[i:]
 
 
 def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):

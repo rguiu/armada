@@ -3,51 +3,35 @@ N="${ARMADA_NODE_NAME:-}"
 [ -z "$N" ] && exit 0
 
 INPUT=$(cat 2>/dev/null)
-echo "=== $(date) ===" >> /tmp/armada-perm-debug.log 2>/dev/null
-echo "$INPUT" >> /tmp/armada-perm-debug.log 2>/dev/null
 
 BODY=$(echo "$INPUT" | python3 -c "
-import sys, json, traceback
+import sys, json
 try:
     d = json.load(sys.stdin)
-    
-    # Dump all top-level keys to debug log
-    with open('/tmp/armada-perm-debug.log', 'a') as log:
-        log.write('KEYS: ' + str(list(d.keys())) + '\n')
-        log.write('FULL: ' + json.dumps({k: str(v)[:100] for k, v in d.items()}, indent=2) + '\n')
-    
-    # Try every possible field that might contain the question text
-    question = ''
-    for field in ('prompt', 'question', 'message', 'text', 'reason', 'description', 'explanation', 'content', 'body'):
-        val = d.get(field, '')
-        if val and isinstance(val, str) and len(val) > len(question):
-            question = val
-        elif isinstance(val, dict) and 'text' in val:
-            if len(str(val.get('text',''))) > len(question):
-                question = str(val.get('text',''))
-    
-    if not question:
-        inp = d.get('input', '')
-        if isinstance(inp, dict):
-            for k in ('command', 'text', 'content'):
-                if inp.get(k) and len(str(inp[k])) > len(question):
-                    question = str(inp[k])
-        elif inp:
-            question = str(inp)
-    
-    question = question.strip()[:300]
-    tool = d.get('tool_name', '')
-    
-    msg = question if question else (tool or 'waiting for approval')
-    
-    options = d.get('options', [])
-    if not options:
-        options = []
-    
+    tool = d.get('tool_name', 'unknown')
+    inp = d.get('tool_input', d.get('input', ''))
+    if isinstance(inp, dict):
+        inp = inp.get('command', inp.get('file_path', inp.get('text', str(inp))))
+    inp_line = str(inp).split(chr(10))[0][:80] if inp else ''
+    msg = tool
+    if inp_line: msg += ' — ' + inp_line
+
+    # Claude Code uses vertical list: Down arrow = \x1b[B
+    suggestions = d.get('permission_suggestions', [])
+    if suggestions:
+        options = [
+            {'label': 'Allow once', 'key': '\n'},
+            {'label': 'Always allow', 'key': '\x1b[B\n'},
+            {'label': 'Deny', 'key': '\x1b[B\x1b[B\n'},
+        ]
+    else:
+        options = [
+            {'label': 'Allow', 'key': '\n'},
+            {'label': 'Deny', 'key': '\x1b[B\n'},
+        ]
+
     print(json.dumps({'name': '$N', 'status': 'pending', 'message': msg, 'options': options}))
-except Exception as e:
-    with open('/tmp/armada-perm-debug.log', 'a') as log:
-        traceback.print_exc(file=log)
+except:
     print(json.dumps({'name': '$N', 'status': 'pending', 'message': 'waiting for approval', 'options': []}))
 ")
 
