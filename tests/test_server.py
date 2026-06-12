@@ -198,6 +198,22 @@ class TestAgentReport:
         })
         assert r.status_code == 400
 
+    def test_report_error_status(self, temp_db, client):
+        temp_db.create_node("errnode", "#c00")
+        r = client.post("/api/report", json={
+            "name": "errnode", "status": "error", "message": "boom",
+        })
+        assert r.status_code == 200
+
+    def test_report_with_latency(self, temp_db, client):
+        import time
+        temp_db.create_node("latent", "#ddd")
+        r = client.post("/api/report", json={
+            "name": "latent", "status": "active", "message": "hi",
+            "_client_ts": time.time() - 2,
+        })
+        assert r.status_code == 200
+
 
 class TestSendEndpoint:
     def test_send_to_bash_worker(self, temp_db, client):
