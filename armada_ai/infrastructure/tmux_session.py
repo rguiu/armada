@@ -241,8 +241,12 @@ def _flush_raw_buf(target, buf):
                 matched = True
                 break
         if not matched:
-            tmux("send-keys", "-l", "-t", target, s[0])
-            s = s[1:]
+            i = 0
+            while i < len(s) and not any(s[i:].startswith(a) for a in _ANSI_TO_TMUX):
+                i += 1
+            if i > 0:
+                tmux("send-keys", "-l", "-t", target, s[:i])
+                s = s[i:]
 
 
 def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):

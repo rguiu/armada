@@ -522,7 +522,11 @@ class TestRemainingEndpoints:
         })
         r = client.post("/api/refresh-hooks")
         assert r.status_code == 200
-        assert "updated" in r.json()
+        data = r.json()
+        assert "updated" in data
+        assert "skipped" in data
+        assert "failed" in data
+        assert "hooksproj" in data["updated"]
 
     def test_create_node_with_parent(self, temp_db, client):
         """Creating a node with a parent_id should work."""
@@ -707,6 +711,28 @@ class TestRemainingEndpoints:
                            lambda p: None)
         r = client.post("/api/refresh-hooks")
         assert r.status_code == 200
+        data = r.json()
+        assert len(data["skipped"]) == 1
+        assert data["skipped"][0]["id"] == "gonepath"
+        assert data["skipped"][0]["reason"] == "directory missing"
+
+    def test_refresh_hooks_deploy_failure(self, temp_db, client, monkeypatch):
+        """Refresh hooks should report failed deployments."""
+        import armada_ai.server as server_mod
+        proj_path = tempfile.mkdtemp(prefix="armada_test_fail_")
+        client.post("/api/project-labels", json={
+            "id": "failproj", "name": "Fail Project", "path": proj_path,
+        })
+        monkeypatch.setattr(server_mod.deployment, "install_skills_to_project",
+                           lambda p: (_ for _ in ()).throw(RuntimeError("disk full")))
+        monkeypatch.setattr(server_mod.deployment, "deploy_claude_hooks",
+                           lambda p: None)
+        r = client.post("/api/refresh-hooks")
+        assert r.status_code == 200
+        data = r.json()
+        assert len(data["failed"]) == 1
+        assert data["failed"][0]["id"] == "failproj"
+        assert "disk full" in data["failed"][0]["reason"]
 
     def test_global_skills(self, client):
         """GET /api/skills returns global skills."""
