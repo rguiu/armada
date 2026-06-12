@@ -534,6 +534,7 @@ def delete_node(node_id: int):
         except Exception:
             pass
         logs.log_kill(entry["name"])
+        db.add_status_report(entry["id"], "dead", "killed by user")
 
     _schedule_broadcast()
     return JSONResponse({"ok": True, "killed": len(killed)})
@@ -573,6 +574,13 @@ async def patch_node(node_id: int, request: Request):
 
     if action == "hide":
         hidden = db.hide_node(node_id)
+        for entry in hidden:
+            try:
+                tmux.kill_node_window(entry["name"])
+            except Exception:
+                pass
+            logs.log_kill(entry["name"])
+            db.add_status_report(entry["id"], "dead", "deleted by user")
         await _broadcast_tree()
         return JSONResponse({"ok": True, "hidden": len(hidden)})
     if action == "reparent":
