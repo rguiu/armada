@@ -11,6 +11,7 @@ import re
 import json
 import asyncio
 import time as _time
+from datetime import datetime as _datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
@@ -234,13 +235,36 @@ def _start_health_loop(interval: int = 15):
 
 def _run_health_check():
     nodes = db.get_all_nodes(include_dead=False)
-    running_windows = tmux.running_window_names()
+    if not nodes:
+        return
+    now = _time.time()
 
     for node in nodes:
-        if node.name not in running_windows:
-            logs.log_health(node.name, dead=True)
-            _mark_node_dead(node.id)
-            _auto_restart_node(node)
+        if node.tmux_pane_id and tmux.pane_alive(node.tmux_pane_id):
+            continue
+        if not node.tmux_pane_id and tmux.window_exists(node.name):
+            continue
+        if node.created_at:
+            try:
+                created = _datetime.fromisoformat(node.created_at).timestamp()
+                if now - created < 15:
+                    continue
+            except (ValueError, TypeError):
+                pass
+        logs.log_health(node.name, dead=True)
+        _mark_node_dead(node.id)
+        _auto_restart_node(node)
+
+    _resurrect_dead_nodes()
+
+
+def _resurrect_dead_nodes():
+    dead_nodes = [n for n in db.get_all_nodes(include_dead=True)
+                  if n.is_dead() and n.tmux_pane_id]
+    for node in dead_nodes:
+        if tmux.pane_alive(node.tmux_pane_id):
+            db.update_node_status(node.id, "idle")
+            logs.log_recover(node.name)
 
 
 def _mark_node_dead(node_id: int):

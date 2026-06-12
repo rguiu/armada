@@ -309,6 +309,8 @@ def update_node_status(node_id: int, status: str, tmux_pane_id: str | None = Non
         conn = _get_conn()
         parts = ["status = ?"]
         params = [status]
+        if status != "dead":
+            parts.append("killed_at = NULL")
         if tmux_pane_id is not None:
             parts.append("tmux_pane_id = ?")
             params.append(tmux_pane_id)
@@ -522,7 +524,8 @@ def get_all_nodes(include_dead: bool = True) -> list[Node]:
     conn = _get_conn()
     base = """
         SELECT n.id, n.name, n.parent_id, n.project_label_id, n.colour, n.status,
-               n.agent_type, n.created_at, {} n.total_tokens_in, n.total_tokens_out,
+               n.agent_type, n.created_at, {} n.tmux_pane_id,
+               n.total_tokens_in, n.total_tokens_out,
                n.total_cost, n.log_count,
                p.name as project_label_name,
                (SELECT message FROM status_reports WHERE node_id = n.id

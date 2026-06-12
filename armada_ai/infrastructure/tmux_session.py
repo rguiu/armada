@@ -163,6 +163,13 @@ def window_exists(name: str) -> bool:
     return result.returncode == 0
 
 
+def pane_alive(pane_id: str) -> bool:
+    if not has_tmux() or not pane_id:
+        return False
+    result = tmux("display-message", "-t", pane_id, "-p", "#{pane_id}")
+    return result.returncode == 0 and result.stdout.strip() == pane_id
+
+
 def running_window_names() -> set[str]:
     if not has_tmux():
         return set()
