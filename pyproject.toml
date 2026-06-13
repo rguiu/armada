@@ -25,11 +25,9 @@ classifiers = [
     "Topic :: System :: Clustering",
 ]
 dependencies = [
-    "click>=8.0",
     "fastapi>=0.100",
     "uvicorn>=0.20",
-    "websockets>=12.0",
-    "jinja2>=3.0",
+    "websockets>=10.0",
     "qrcode>=8.0",
 ]
 
