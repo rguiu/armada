@@ -118,6 +118,7 @@ Either works. Pick based on which agent you already have installed.
 | `armada projects add <id> <name> <path>` | Register a project |
 | `armada projects rm <id>` | Remove a project |
 | `armada setup` | Install skills to user profile |
+| `armada version` | Print the Armada version |
 | `armada token` | Print the auth token |
 | `armada token --qr` | Print token as scannable QR code |
 | `armada config` | Show or set configuration |

@@ -98,6 +98,9 @@ def main():
     elif args[0] == "setup":
         _setup_skills()
 
+    elif args[0] == "version":
+        print(f"armada {constants.VERSION}")
+
     elif args[0] == "token":
         _print_token(qr=qr, lan=lan)
 
@@ -127,11 +130,12 @@ def main():
         _watch_cmd(args[1:])
 
     else:
-        print("Usage: armada [start|stop|attach|setup|token|doctor|status|config|service|nodes|watch] [--lan] [--qr] [--keep-token]")
+        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|watch] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
         print("  attach       Attach to a node: armada attach <name> (no args = debug mode)")
         print("  setup        Install Armada skills to user profile")
+        print("  version      Print the Armada version")
         print("  token        Print the auth token (--qr for scannable QR code)")
         print("  doctor       Clean up orphaned tmux sessions and stale state")
         print("  status       Show server and node status")
