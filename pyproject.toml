@@ -55,7 +55,7 @@ include = ["armada_ai", "armada_ai.*"]
 "tests" = ["*"]
 
 [tool.setuptools.package-data]
-"armada_ai" = ["templates/**", "static/**", "hooks/**", "bin/**"]
+"armada_ai" = ["templates/**", "static/**", "hooks/**", "bin/**", "armada-bash.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

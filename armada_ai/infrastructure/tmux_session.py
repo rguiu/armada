@@ -376,6 +376,6 @@ def _write_zsh_startup(zdotdir: str, tools_dir: Path):
         if os.path.exists(home_zshrc):
             f.write(f'[[ -f "{home_zshrc}" ]] && source "{home_zshrc}"\n')
         f.write(f'export PATH="{tools_dir}:$PATH"\n')
-        armada_bash = str(Path(__file__).parent / "armada-bash.sh")
+        armada_bash = str(Path(__file__).parent.parent / "armada-bash.sh")
         if os.path.exists(armada_bash):
             f.write(f'source "{armada_bash}"\n')
