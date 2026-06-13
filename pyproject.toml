@@ -28,7 +28,7 @@ dependencies = [
     "fastapi>=0.100",
     "uvicorn>=0.20",
     "websockets>=10.0",
-    "qrcode>=8.0",
+    "qrcode>=7.0",
 ]
 
 [project.urls]
