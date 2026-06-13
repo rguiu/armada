@@ -1,0 +1,84 @@
+name: Release
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  release:
+    name: Build and Publish to Test PyPI
+    runs-on: ubuntu-latest
+
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: pip install build twine
+
+      - name: Get version
+        id: version
+        run: |
+          VER=$(python -c "import sys; sys.path.insert(0, '.'); from armada_ai.constants import VERSION; print(VERSION)")
+          echo "version=$VER" >> $GITHUB_OUTPUT
+          echo "📦 Version: $VER"
+
+      - name: Create tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to Test PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TEST_PYPI_API_TOKEN }}
+        run: |
+          twine upload --repository testpypi dist/* || echo "⚠ Test PyPI upload failed (might already exist)"
+
+      - name: Create GitHub Release (draft)
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          draft: true
+          prerelease: false
+          generate_release_notes: true
+          files: dist/*
+          body: |
+            ## Published to Test PyPI
+
+            **Test installation:**
+            ```bash
+            pip install --index-url https://test.pypi.org/simple/ armada-ai==${{ steps.version.outputs.version }}
+            ```
+
+            **After testing succeeds, publish to production:**
+            1. Go to Actions → "Publish to Production PyPI"
+            2. Click "Run workflow"
+            3. Enter confirmation: `publish`
+            4. Click "Run workflow"
+
+            ---
+
+            **PR:** ${{ github.event.pull_request.html_url }}

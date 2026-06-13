@@ -1,0 +1,44 @@
+name: Publish to Production PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "publish" to confirm'
+        required: true
+        type: string
+
+jobs:
+  publish:
+    name: Publish to Production PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+
+    steps:
+      - name: Verify confirmation
+        run: |
+          if [ "${{ inputs.confirm }}" != "publish" ]; then
+            echo "You must type 'publish' to confirm"
+            exit 1
+          fi
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

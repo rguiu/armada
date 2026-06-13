@@ -14,11 +14,12 @@ LAUNCHD_PLIST = """<?xml version="1.0" encoding="UTF-8"?>
     <array>
         <string>%%ARMADA_PATH%%</string>
         <string>start</string>
+        <string>--no-browser</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <true/>
+    <false/>
     <key>StandardOutPath</key>
     <string>%%HOME%%/.armada/daemon.log</string>
     <key>StandardErrorPath</key>

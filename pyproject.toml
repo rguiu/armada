@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "armada-ai"
-version = "0.1.0"
+version = "0.2.0"
 description = "Terminal orchestration for Open Code and Claude Code agents"
 readme = "README.md"
 license = "MIT"
@@ -25,12 +25,10 @@ classifiers = [
     "Topic :: System :: Clustering",
 ]
 dependencies = [
-    "click>=8.0",
     "fastapi>=0.100",
     "uvicorn>=0.20",
-    "websockets>=12.0",
-    "jinja2>=3.0",
-    "qrcode>=8.0",
+    "websockets>=10.0",
+    "qrcode>=7.0",
 ]
 
 [project.urls]
@@ -57,7 +55,7 @@ include = ["armada_ai", "armada_ai.*"]
 "tests" = ["*"]
 
 [tool.setuptools.package-data]
-"armada_ai" = ["templates/**", "static/**"]
+"armada_ai" = ["templates/**", "static/**", "hooks/**", "bin/**", "armada-bash.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
