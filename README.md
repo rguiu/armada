@@ -159,12 +159,15 @@ $ armada watch
 | Key | Action |
 |---|---|
 | `↑` `↓` | Navigate agent list |
-| `Enter` | Attach to selected node |
+| `Enter` | Attach to selected node (focuses existing pane) |
+| `a` | Split-attach (experimental — opens a new tmux pane for the node) |
 | `n` | New node (interactive form) |
 | `k` | Kill selected node |
 | `d` | Delete selected node |
 | `Tab` | Switch to Projects view |
 | `q` | Quit |
+
+> **Note:** `a` (split-attach) is experimental and may not work reliably in all terminal environments. It is not shown in the bottom bar but remains available as a hidden shortcut.
 
 Forms for creating nodes and projects use keyboard navigation: `Tab`/`↑↓` to move between fields, `←→` to cycle options, type freely in text fields, `Enter` on `[Save]` to submit, `Esc` to cancel.
 </details>
