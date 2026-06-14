@@ -87,8 +87,12 @@ def main():
         _stop_server()
 
     elif args[0] == "attach":
-        if len(args) > 1:
-            _attach_node(args[1])
+        do_split = "--split" in args
+        node_arg = next((a for a in args[1:] if not a.startswith("--")), None)
+        if do_split and node_arg:
+            _attach_split(node_arg)
+        elif node_arg:
+            _attach_node(node_arg)
         else:
             from .server import start_server, _ensure_token
             _ensure_token(keep=True)
@@ -133,7 +137,7 @@ def main():
         print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|watch] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
-        print("  attach       Attach to a node: armada attach <name> (no args = debug mode)")
+        print("  attach       Attach to a node: armada attach <name> [--split] (no args = debug mode)")
         print("  setup        Install Armada skills to user profile")
         print("  version      Print the Armada version")
         print("  token        Print the auth token (--qr for scannable QR code)")
@@ -682,6 +686,9 @@ def _watch_nodes():
                     selected = min(len(rows) - 1, selected + 1)
                 elif (ch == '\r' or ch == '\n') and rows:
                     name = rows[selected]["name"]
+                    _attach_split(name, quiet=True)
+                elif ch == 'a' and rows:
+                    name = rows[selected]["name"]
                     if name in attached:
                         _focus_attached_node(name)
                     else:
@@ -814,7 +821,7 @@ def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=
     if pending:
         sys.stdout.write(f"\n\033[33m⚠ Pending: {', '.join(pending_names)}\033[0m\n")
 
-    _watch_draw_bottom(tw, "[↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit")
+    _watch_draw_bottom(tw, "[↑↓]nav [enter]split [a]attach [n]ew [k]kill [d]delete [tab]projects [q]quit")
 
 
 def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_names=None):
@@ -1117,14 +1124,12 @@ def _kill_node(search: str):
         print(f"Failed: {e}")
 
 
-def _attach_node(search: str, exit_on_error: bool = True):
+def _find_node(search: str):
     try:
         tree = _api_get("/api/tree")
     except Exception as e:
         print(f"Failed to reach Armada server: {e}", file=sys.stderr)
-        if exit_on_error:
-            sys.exit(1)
-        return
+        return None
 
     def _find(nodes):
         for n in nodes:
@@ -1139,6 +1144,12 @@ def _attach_node(search: str, exit_on_error: bool = True):
     node = _find(tree)
     if not node:
         print(f"Node not found: {search}", file=sys.stderr)
+    return node
+
+
+def _attach_node(search: str, exit_on_error: bool = True):
+    node = _find_node(search)
+    if not node:
         if exit_on_error:
             sys.exit(1)
         return
@@ -1156,3 +1167,35 @@ def _attach_node(search: str, exit_on_error: bool = True):
         print(f"Failed to attach: {e}\n{resp_body}", file=sys.stderr)
         if exit_on_error:
             sys.exit(1)
+
+
+def _attach_split(search: str, quiet: bool = False):
+    node = _find_node(search)
+    if not node:
+        if not quiet:
+            sys.exit(1)
+        return
+
+    if not os.environ.get("TMUX"):
+        msg = "Not inside a tmux session. Run 'tmux' first, then try again."
+        if quiet:
+            print(msg, file=sys.stderr)
+        else:
+            print(msg, file=sys.stderr)
+            print("  tmux", file=sys.stderr)
+            print(f"  armada attach --split {search}", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    session = f"armada-{node['name']}"
+    try:
+        subprocess.run(["tmux", "split-window", "-v", "tmux", "attach-session", "-t", session], check=True)
+    except subprocess.CalledProcessError as e:
+        msg = f"Failed to split and attach: {e}"
+        print(msg, file=sys.stderr)
+        if not quiet:
+            sys.exit(1)
+        return
+
+    if not quiet:
+        print(f"Attached to {node['name']} (split below)")
