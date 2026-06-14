@@ -90,6 +90,7 @@ def init_db():
                 parent_id INTEGER REFERENCES nodes(id) ON DELETE CASCADE,
                 project_label_id TEXT REFERENCES project_labels(id),
                 tmux_pane_id TEXT,
+                tmux_session_id TEXT,
                 colour TEXT NOT NULL,
                 status TEXT DEFAULT 'idle',
                 agent_type TEXT DEFAULT 'auto',
@@ -141,6 +142,7 @@ def _migrate():
             ("total_tokens_out", "INTEGER DEFAULT 0"),
             ("total_cost", "REAL DEFAULT 0.0"),
             ("log_count", "INTEGER DEFAULT 0"),
+            ("tmux_session_id", "TEXT"),
         ]:
             try:
                 conn.execute(f"ALTER TABLE nodes ADD COLUMN {col} {col_type}")
@@ -210,14 +212,16 @@ def get_project_label_path(label_id: str) -> str | None:
 def create_node(name: str, colour: str, parent_id: int | None = None,
                 project_label_id: str | None = None,
                 tmux_pane_id: str | None = None,
+                tmux_session_id: str | None = None,
                 agent_type: str = "auto") -> int:
     def _do():
         conn = _get_conn()
         try:
             cursor = conn.execute(
                 "INSERT INTO nodes (name, colour, parent_id, project_label_id, "
-                "tmux_pane_id, agent_type) VALUES (?, ?, ?, ?, ?, ?)",
-                (name, colour, parent_id, project_label_id, tmux_pane_id, agent_type),
+                "tmux_pane_id, tmux_session_id, agent_type) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (name, colour, parent_id, project_label_id, tmux_pane_id,
+                 tmux_session_id, agent_type),
             )
             conn.commit()
             return cursor.lastrowid
@@ -225,8 +229,9 @@ def create_node(name: str, colour: str, parent_id: int | None = None,
             conn.execute(
                 "UPDATE nodes SET killed_at = NULL, hidden_at = NULL, status = 'idle', "
                 "colour = ?, parent_id = ?, project_label_id = ?, tmux_pane_id = ?, "
-                "agent_type = ? WHERE name = ?",
-                (colour, parent_id, project_label_id, tmux_pane_id, agent_type, name),
+                "tmux_session_id = ?, agent_type = ? WHERE name = ?",
+                (colour, parent_id, project_label_id, tmux_pane_id,
+                 tmux_session_id, agent_type, name),
             )
             conn.commit()
             row = conn.execute(
@@ -304,7 +309,8 @@ def rename_node(node_id: int, new_name: str):
     _retry(_do, write=True)
 
 
-def update_node_status(node_id: int, status: str, tmux_pane_id: str | None = None):
+def update_node_status(node_id: int, status: str, tmux_pane_id: str | None = None,
+                       tmux_session_id: str | None = None):
     def _do():
         conn = _get_conn()
         parts = ["status = ?"]
@@ -314,6 +320,9 @@ def update_node_status(node_id: int, status: str, tmux_pane_id: str | None = Non
         if tmux_pane_id is not None:
             parts.append("tmux_pane_id = ?")
             params.append(tmux_pane_id)
+        if tmux_session_id is not None:
+            parts.append("tmux_session_id = ?")
+            params.append(tmux_session_id)
         params.append(node_id)
         conn.execute(f"UPDATE nodes SET {', '.join(parts)} WHERE id = ?", params)
         conn.commit()
@@ -525,6 +534,7 @@ def get_all_nodes(include_dead: bool = True) -> list[Node]:
     base = """
         SELECT n.id, n.name, n.parent_id, n.project_label_id, n.colour, n.status,
                n.agent_type, n.created_at, {} n.tmux_pane_id,
+               n.tmux_session_id,
                n.total_tokens_in, n.total_tokens_out,
                n.total_cost, n.log_count,
                p.name as project_label_name,
@@ -657,7 +667,8 @@ def recover_live_nodes(running_names: set[str]) -> list[Node]:
     conn = _get_conn()
     placeholders = ",".join("?" * len(running_names))
     rows = conn.execute(
-        f"SELECT id, name, colour, parent_id, project_label_id, tmux_pane_id, agent_type "
+        f"SELECT id, name, colour, parent_id, project_label_id, tmux_pane_id, "
+        f"tmux_session_id, agent_type "
         f"FROM nodes WHERE killed_at IS NULL AND hidden_at IS NULL AND name IN ({placeholders})",
         list(running_names),
     ).fetchall()

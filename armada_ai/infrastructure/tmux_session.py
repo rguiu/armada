@@ -101,9 +101,9 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
 
 
 def create_node_window(name: str, colour: str, working_dir: str,
-                       agent_type: str = "auto") -> str | None:
+                       agent_type: str = "auto") -> tuple[str, str] | tuple[None, None]:
     if not has_tmux():
-        return None
+        return None, None
 
     ensure_armada_session()
 
@@ -116,7 +116,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
 
     result = tmux("new-session", "-d", "-s", session, shell_cmd)
     if result.returncode != 0:
-        return None
+        return None, None
 
     pane_id = None
     for _ in range(5):
@@ -128,6 +128,12 @@ def create_node_window(name: str, colour: str, working_dir: str,
                 pane_id = pid
                 break
 
+    session_id = None
+    if pane_id:
+        sid_result = tmux("display-message", "-p", "-t", session, "#{session_id}")
+        if sid_result.returncode == 0:
+            session_id = sid_result.stdout.strip()
+
     if pane_id:
         tmux("set-option", "-t", session, "pane-active-border-style", f"fg={colour}")
         tmux("set-option", "-t", session, "pane-border-style", f"fg={colour}")
@@ -137,13 +143,34 @@ def create_node_window(name: str, colour: str, working_dir: str,
         tmux("kill-session", "-t", session)
         _zdotdirs.pop(name, None)
 
-    return pane_id
+    return pane_id, session_id
 
 
 def kill_node_window(name: str):
     if not has_tmux():
         return
     tmux("kill-session", "-t", agent_session(name))
+
+
+def rename_node_session(old_name: str, new_name: str) -> bool:
+    if not has_tmux():
+        return False
+    old_session = agent_session(old_name)
+    new_session = agent_session(new_name)
+    result = tmux("has-session", "-t", old_session)
+    if result.returncode != 0:
+        return False
+    rename_result = tmux("rename-session", "-t", old_session, new_session)
+    return rename_result.returncode == 0
+
+
+def get_session_id(name: str) -> str | None:
+    if not has_tmux():
+        return None
+    result = tmux("display-message", "-p", "-t", agent_session(name), "#{session_id}")
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
 
 
 def capture_pane_content(name: str, max_lines: int = 200) -> str:
@@ -166,8 +193,8 @@ def window_exists(name: str) -> bool:
 def pane_alive(pane_id: str) -> bool:
     if not has_tmux() or not pane_id:
         return False
-    result = tmux("display-message", "-t", pane_id, "-p", "#{pane_id}")
-    return result.returncode == 0 and result.stdout.strip() == pane_id
+    result = tmux("display-message", "-t", pane_id, "-p", "#{pane_dead}")
+    return result.returncode == 0 and result.stdout.strip() != "1"
 
 
 def running_window_names() -> set[str]:
