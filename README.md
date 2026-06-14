@@ -9,6 +9,11 @@
 
 > Command your fleet of AI agents from anywhere — your browser, your phone, your tablet.
 
+[![PyPI](https://img.shields.io/pypi/v/armada-ai)](https://pypi.org/project/armada-ai/)
+[![Test PyPI](https://img.shields.io/badge/testpypi-v0.2.1-blue.svg)](https://test.pypi.org/project/armada-ai/)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://pypi.org/project/armada-ai/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/rguiu/armada/blob/main/LICENSE)
+
 ## What is Armada?
 
 Armada runs [OpenCode](https://opencode.ai) and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents inside persistent tmux sessions, controlled from a web dashboard. Start an agent on your laptop, close it, and pick up where you left off — from any device on your network.
