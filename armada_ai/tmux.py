@@ -10,6 +10,7 @@ from .infrastructure.tmux_session import (  # noqa: F401  re-exported
     capture_pane_content, window_exists, running_window_names,
     send_keys, send_raw_keys, send_initial_prompt,
     cleanup_stale_sessions,
+    rename_node_session, get_session_id,
 )
 from .infrastructure.deployment import (  # noqa: F401  re-exported
     install_skills_to_project as install_skills,

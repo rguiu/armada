@@ -199,6 +199,11 @@ def _recover_on_startup():
         logs.log_recover(name)
         db.add_status_report(node.id, node.status,
             "server restarted — reconnected to tmux window")
+        if not node.tmux_session_id:
+            sid = tmux.get_session_id(name)
+            if sid:
+                db.update_node_status(node.id, node.status,
+                                      tmux_session_id=sid)
         recovered.append(node.as_summary())
     db.recover_nodes(running)
     return recovered
@@ -291,15 +296,17 @@ def _auto_restart_node(node):
         return
     try:
         working_dir = db.get_project_label_path(node.project_label_id) or os.getcwd()
-        pane_id = tmux.create_node_window(
+        result = tmux.create_node_window(
             name=name, colour=node.colour,
             working_dir=working_dir, agent_type=node.agent_type,
         )
+        pane_id, session_id = result if result is not None else (None, None)
         if pane_id:
             nid = db.create_node(
                 name=name, colour=node.colour, parent_id=None,
                 project_label_id=node.project_label_id,
-                tmux_pane_id=pane_id, agent_type=node.agent_type,
+                tmux_pane_id=pane_id, tmux_session_id=session_id,
+                agent_type=node.agent_type,
             )
             db.add_status_report(nid, "active",
                 f"auto-restarted (attempt {restart_count + 1}/{constants.MAX_RESTARTS})")
@@ -474,14 +481,16 @@ async def create_node(request: Request):
     colour = naming.next_colour(db.active_colours())
     agent_name = req.name or naming.generate_sequential_name(
         req.project_label_id, existing_names)
+    agent_name = agent_name.replace(".", "-")
 
     # Deploy skills/hooks before creating tmux window
     deployment.deploy_for_agent_type(agent_name, req.agent_type, path)
 
-    pane_id = tmux.create_node_window(
+    result = tmux.create_node_window(
         name=agent_name, colour=colour, working_dir=path,
         agent_type=req.agent_type,
     )
+    pane_id, session_id = result if result is not None else (None, None)
     if pane_id is None:
         raise HTTPException(status_code=500,
             detail="Failed to create tmux window. Is tmux installed and running?")
@@ -489,6 +498,7 @@ async def create_node(request: Request):
     node_id = db.create_node(
         name=agent_name, colour=colour, parent_id=req.parent_id,
         project_label_id=req.project_label_id, tmux_pane_id=pane_id,
+        tmux_session_id=session_id,
         agent_type=req.agent_type,
     )
 
@@ -597,7 +607,10 @@ async def patch_node(node_id: int, request: Request):
             raise HTTPException(status_code=400, detail="name is required")
         if new_name in db.existing_names():
             raise HTTPException(status_code=409, detail=f"Node '{new_name}' already exists")
+        old_name = db.get_node(node_id).name if db.get_node(node_id) else None
         db.rename_node(node_id, new_name)
+        if old_name:
+            tmux.rename_node_session(old_name, new_name)
         await _broadcast_tree()
         return JSONResponse({"ok": True})
     raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
@@ -611,7 +624,7 @@ def attach(node_id: int):
     if not tmux.window_exists(node.name):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    error = tmux.attach_node(node.name, node.colour)
+    error = tmux.attach_node(node.name, node.colour, node.tmux_session_id)
     if error:
         raise HTTPException(status_code=500, detail=error)
 

@@ -57,6 +57,7 @@ class Node:
     project_label_name: str | None = None
     project_path: str | None = None
     tmux_pane_id: str | None = None
+    tmux_session_id: str | None = None
     created_at: str | None = None
     killed_at: str | None = None
     hidden_at: str | None = None
@@ -82,6 +83,7 @@ class Node:
             project_label_name=row.get("project_label_name"),
             project_path=row.get("project_path"),
             tmux_pane_id=row.get("tmux_pane_id"),
+            tmux_session_id=row.get("tmux_session_id"),
             created_at=row.get("created_at"),
             killed_at=row.get("killed_at"),
             hidden_at=row.get("hidden_at"),
@@ -125,6 +127,7 @@ class Node:
             "latest_message": self.latest_message,
             "latest_report_time": self.latest_report_time,
             "latest_options": self.latest_options,
+            "tmux_session_id": self.tmux_session_id,
         }
 
 

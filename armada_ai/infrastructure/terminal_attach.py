@@ -18,14 +18,15 @@ def _hex_to_rgb(hex_colour: str) -> tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
-def attach_to_node(name: str, colour: str = "#8b949e") -> str | None:
+def attach_to_node(name: str, colour: str = "#8b949e",
+                   session_id: str | None = None) -> str | None:
     """Open a terminal attached to the named tmux session.
     Returns None on success, or an error message string."""
     if not tmux_session.has_tmux():
         return "tmux is not installed"
 
     tmux_session.cleanup_stale_sessions()
-    session = tmux_session.agent_session(name)
+    session = session_id or tmux_session.agent_session(name)
 
     if os.environ.get("TMUX"):
         subprocess.run(["tmux", "switch-client", "-t", session])
@@ -37,20 +38,20 @@ def attach_to_node(name: str, colour: str = "#8b949e") -> str | None:
         has_iterm = os.path.exists("/Applications/iTerm.app") or os.path.exists(
             os.path.expanduser("~/Applications/iTerm.app"))
         if has_iterm:
-            result = _try_iterm_attach(name, colour)
+            result = _try_iterm_attach(name, colour, session_id)
             if result is None:
                 return None
-        result = _try_terminal_attach(name)
+        result = _try_terminal_attach(name, session_id)
         if result is None:
             return None
         return "Cannot auto-open terminal. Run: tmux attach -t armada"
     else:
-        return _try_linux_attach(name, colour)
+        return _try_linux_attach(name, colour, session_id)
 
 
-def _try_iterm_attach(name: str, colour: str) -> str | None:
+def _try_iterm_attach(name: str, colour: str, session_id: str | None = None) -> str | None:
     r, g, b = _hex_to_rgb(colour)
-    session = tmux_session.agent_session(name)
+    session = session_id or tmux_session.agent_session(name)
     attach_file = os.path.join(tempfile.gettempdir(), f"_armada_attach_{os.getpid()}.sh")
     with open(attach_file, "w") as f:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
@@ -93,9 +94,9 @@ def _try_iterm_attach(name: str, colour: str) -> str | None:
         return f"iTerm error: {e}"
 
 
-def _try_terminal_attach(name: str) -> str | None:
+def _try_terminal_attach(name: str, session_id: str | None = None) -> str | None:
     try:
-        session = tmux_session.agent_session(name)
+        session = session_id or tmux_session.agent_session(name)
         tmux_cmd = f"tmux attach-session -t '{session}'"
         attach_file = os.path.join(tempfile.gettempdir(),
                                    f"_armada_term_attach_{os.getpid()}.sh")
@@ -121,8 +122,9 @@ def _try_terminal_attach(name: str) -> str | None:
         return f"Terminal error: {e}"
 
 
-def _try_linux_attach(name: str, colour: str = "#8b949e") -> str | None:
-    session = tmux_session.agent_session(name)
+def _try_linux_attach(name: str, colour: str = "#8b949e",
+                       session_id: str | None = None) -> str | None:
+    session = session_id or tmux_session.agent_session(name)
     tmux_cmd = f"tmux attach-session -t '{session}'"
     tmpdir = tempfile.gettempdir()
     attach_file = os.path.join(tmpdir, f"_armada_attach_{os.getpid()}.sh")

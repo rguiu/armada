@@ -87,8 +87,12 @@ def main():
         _stop_server()
 
     elif args[0] == "attach":
-        if len(args) > 1:
-            _attach_node(args[1])
+        do_split = "--split" in args
+        node_arg = next((a for a in args[1:] if not a.startswith("--")), None)
+        if do_split and node_arg:
+            _attach_split(node_arg)
+        elif node_arg:
+            _attach_node(node_arg)
         else:
             from .server import start_server, _ensure_token
             _ensure_token(keep=True)
@@ -133,7 +137,7 @@ def main():
         print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|watch] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
-        print("  attach       Attach to a node: armada attach <name> (no args = debug mode)")
+        print("  attach       Attach to a node: armada attach <name> [--split] (no args = debug mode)")
         print("  setup        Install Armada skills to user profile")
         print("  version      Print the Armada version")
         print("  token        Print the auth token (--qr for scannable QR code)")
@@ -603,13 +607,29 @@ def _watch_nodes():
     import tty
     import termios
 
+    if not os.environ.get("TMUX"):
+        import shutil
+        armada = shutil.which("armada") or sys.argv[0]
+        result = subprocess.run(["tmux", "has-session", "-t", "armada_watch"],
+                               capture_output=True)
+        if result.returncode == 0:
+            os.execvp("tmux", ["tmux", "attach-session", "-d", "-t", "armada_watch"])
+        os.execvp("tmux", ["tmux", "new-session", "-s", "armada_watch", armada, "watch"])
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     rows = []
     projects = []
     selected = 0
     view = "nodes"
-    _seen_pending = set()  # track pending nodes across refreshes for alerting
+    _seen_pending = set()
+    _status_msg = ""
+
+    subprocess.run(["tmux", "rename-window", "⚓ CLI"], capture_output=True)
+    subprocess.run(["tmux", "set-option", "allow-rename", "off"], capture_output=True)
+    subprocess.run(["tmux", "set-option", "automatic-rename", "off"], capture_output=True)
+    subprocess.run(["tmux", "set-option", "set-titles", "on"], capture_output=True)
+    subprocess.run(["tmux", "set-option", "set-titles-string", "⛵ WATCH ⛵"], capture_output=True)
 
     try:
         tty.setcbreak(fd)
@@ -639,7 +659,7 @@ def _watch_nodes():
             attached = _get_attached()
 
             if view == "nodes":
-                _watch_draw_nodes(tree, projects, selected, tw, has_pending, attached)
+                _watch_draw_nodes(tree, projects, selected, tw, has_pending, attached, _status_msg)
             else:
                 pending_names = [r["name"] for r in rows_check if r["status"] == "pending"]
                 _watch_draw_projects(projects, selected, tw, has_pending, pending_names)
@@ -670,6 +690,7 @@ def _watch_nodes():
             elif ch == '\t':
                 view = "projects" if view == "nodes" else "nodes"
                 selected = 0
+                _status_msg = ""
 
             elif view == "nodes":
                 rows = _watch_collect_nodes(tree)
@@ -678,17 +699,28 @@ def _watch_nodes():
 
                 if ch == 'UP':
                     selected = max(0, selected - 1)
+                    _status_msg = ""
                 elif ch == 'DOWN':
                     selected = min(len(rows) - 1, selected + 1)
+                    _status_msg = ""
                 elif (ch == '\r' or ch == '\n') and rows:
                     name = rows[selected]["name"]
-                    if name in attached:
-                        _focus_attached_node(name)
-                    else:
-                        try:
+                    try:
+                        if name in attached:
+                            _focus_attached_node(name)
+                            _status_msg = f"Focused {name}"
+                        else:
                             _api_post(f"/api/nodes/{rows[selected]['id']}/attach")
-                        except Exception:
-                            pass
+                            _status_msg = f"Attaching to {name}..."
+                    except Exception as e:
+                        _status_msg = f"Attach error: {e}"
+                elif ch == 'a' and rows:
+                    name = rows[selected]["name"]
+                    try:
+                        ok, msg = _attach_split(name, quiet=True)
+                        _status_msg = msg
+                    except Exception as e:
+                        _status_msg = f"Attach error: {e}"
                 elif ch == 'k' and rows:
                     try:
                         import urllib.request as ur
@@ -718,7 +750,9 @@ def _watch_nodes():
                     except Exception:
                         pass
                 elif ch == 'n':
-                    _watch_add_node(fd, old_settings, projects)
+                    err = _watch_add_node(fd, old_settings, projects)
+                    if err:
+                        _status_msg = err
                     tty.setcbreak(fd)
 
             elif view == "projects":
@@ -764,6 +798,7 @@ def _watch_collect_nodes(tree):
             rows.append({
                 "id": n["id"], "name": n["name"],
                 "status": n["status"],
+                "colour": n.get("colour", "#8b949e"),
                 "project": n.get("project_label_name", "") or "",
                 "message": n.get("latest_message", "") or "",
                 "depth": depth,
@@ -774,7 +809,7 @@ def _watch_collect_nodes(tree):
     return rows
 
 
-def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=None):
+def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=None, status_msg=""):
     rows = _watch_collect_nodes(tree)
     pending_ids = {r["id"] for r in rows if r["status"] == "pending"}
     pending_names = [r["name"] for r in rows if r["id"] in pending_ids]
@@ -797,13 +832,16 @@ def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=
     else:
         for i, r in enumerate(rows):
             icon = "●" if r["status"] in ("active", "pending", "error") else "○"
-            color = {"active": "\033[32m", "pending": "\033[33m\033[5m",
+            is_dead = r["status"] == "dead"
+            icon_color = {"active": "\033[32m", "pending": "\033[33m\033[5m",
                      "error": "\033[31m", "dead": "\033[2m",
                      "idle": ""}.get(r["status"], "")
+            if is_dead:
+                icon_color = "\033[2m"
+            name_color = "\033[2m" if is_dead else _hex_to_ansi(r.get("colour", "#8b949e"))
             at = "\033[32m▣\033[0m" if r["name"] in attached else " "
             indent = "  " * r["depth"]
-            reset = "\033[0m" if color else ""
-            line = f" {color}{icon} {indent}{r['name'][:30]:<30}{reset}" \
+            line = f" {icon_color}{icon} {indent}{name_color}{r['name'][:30]:<30}\033[0m" \
                    f" \033[2m{r['status']:<7}\033[0m{at} {r['project'][:18]:<18} {r['message'][:50]}"
             line = line.ljust(tw)
             if i == selected:
@@ -813,6 +851,11 @@ def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=
 
     if pending:
         sys.stdout.write(f"\n\033[33m⚠ Pending: {', '.join(pending_names)}\033[0m\n")
+
+    if status_msg:
+        is_error = status_msg.startswith("Failed") or status_msg.startswith("No tmux") or status_msg.startswith("Not inside") or status_msg.startswith("Node not")
+        color = "\033[31m" if is_error else "\033[32m"
+        sys.stdout.write(f"\n{color}  {status_msg}\033[0m\n")
 
     _watch_draw_bottom(tw, "[↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit")
 
@@ -843,6 +886,27 @@ def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_name
 
 def _watch_draw_bottom(tw, shortcuts):
     sys.stdout.write(f"\n\033[7m {shortcuts} \033[0m")
+
+
+def _hex_to_ansi(hex_colour: str) -> str:
+    h = hex_colour.lstrip("#")
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    _MAP = [
+        (0xEF, 0x44, 0x44, "31"),     # red
+        (0xF9, 0x73, 0x16, "1;33"),   # orange → bright yellow
+        (0xEA, 0xB3, 0x08, "33"),     # yellow
+        (0x22, 0xC5, 0x5E, "32"),     # green
+        (0x14, 0xB8, 0xA6, "1;36"),   # teal → bright cyan
+        (0x3B, 0x82, 0xF6, "34"),     # blue
+        (0x63, 0x66, 0xF1, "1;34"),   # indigo → bright blue
+        (0xA8, 0x55, 0xF7, "35"),     # purple
+        (0xEC, 0x48, 0x99, "1;35"),   # pink → bright magenta
+        (0x06, 0xB6, 0xD4, "36"),     # cyan
+        (0x84, 0xCC, 0x16, "1;32"),   # lime → bright green
+        (0xD9, 0x46, 0xEF, "1;31"),   # fuchsia → bright red
+    ]
+    best = min(_MAP, key=lambda m: abs(m[0] - r) + abs(m[1] - g) + abs(m[2] - b))
+    return f"\033[{best[3]}m"
 
 
 def _watch_form(fd, old_settings, title, fields):
@@ -941,21 +1005,22 @@ def _watch_add_node(fd, old_settings, projects):
     ]
     result = _watch_form(fd, old_settings, "New Node", fields)
     if not result:
-        return
+        return None
     try:
         body = {
             "project_label_id": result["Project"],
             "agent_type": result["Agent"] or "auto",
         }
         if result["Name"]:
-            body["name"] = result["Name"]
+            body["name"] = result["Name"].replace(".", "-")
         if result["Parent ID"]:
             body["parent_id"] = int(result["Parent ID"])
         if result["Prompt"]:
             body["initial_prompt"] = result["Prompt"]
         _api_post("/api/nodes", body)
-    except Exception:
-        pass
+    except Exception as e:
+        return f"Failed: {e}"
+    return None
 
 
 def _watch_add_project(fd, old_settings):
@@ -1014,7 +1079,7 @@ def _create_cmd(subargs: list[str]):
         "agent_type": ns.agent,
     }
     if ns.name:
-        body["name"] = ns.name
+        body["name"] = ns.name.replace(".", "-")
     if ns.parent:
         body["parent_id"] = ns.parent
     if ns.prompt:
@@ -1117,14 +1182,12 @@ def _kill_node(search: str):
         print(f"Failed: {e}")
 
 
-def _attach_node(search: str, exit_on_error: bool = True):
+def _find_node(search: str):
     try:
         tree = _api_get("/api/tree")
     except Exception as e:
         print(f"Failed to reach Armada server: {e}", file=sys.stderr)
-        if exit_on_error:
-            sys.exit(1)
-        return
+        return None
 
     def _find(nodes):
         for n in nodes:
@@ -1139,6 +1202,56 @@ def _attach_node(search: str, exit_on_error: bool = True):
     node = _find(tree)
     if not node:
         print(f"Node not found: {search}", file=sys.stderr)
+    return node
+
+
+def _switch_client(search: str, quiet: bool = False):
+    node = _find_node(search)
+    if not node:
+        msg = f"Node not found: {search}"
+        if quiet:
+            return False, msg
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    if not os.environ.get("TMUX"):
+        msg = "Not inside a tmux session"
+        if quiet:
+            return False, msg
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    name = node["name"]
+    session_id = node.get("tmux_session_id")
+    session = session_id or f"armada-{name}"
+
+    try:
+        result = subprocess.run(["tmux", "has-session", "-t", session],
+                                capture_output=True)
+        if result.returncode != 0:
+            msg = f"No tmux session for {name} (node may not be active)"
+            if quiet:
+                return False, msg
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+        subprocess.run(["tmux", "switch-client", "-t", session], check=True)
+    except subprocess.CalledProcessError as e:
+        msg = f"Failed to attach: {e}"
+        if quiet:
+            return False, msg
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    msg = f"Switched to {name}"
+    if not quiet:
+        print(msg)
+    return True, msg
+
+
+def _attach_node(search: str, exit_on_error: bool = True):
+    search = search.replace(".", "-")
+    node = _find_node(search)
+    if not node:
         if exit_on_error:
             sys.exit(1)
         return
@@ -1156,3 +1269,55 @@ def _attach_node(search: str, exit_on_error: bool = True):
         print(f"Failed to attach: {e}\n{resp_body}", file=sys.stderr)
         if exit_on_error:
             sys.exit(1)
+
+
+def _attach_split(search: str, quiet: bool = False):
+    search = search.replace(".", "-")
+    node = _find_node(search)
+    if not node:
+        msg = f"Node not found: {search}"
+        if quiet:
+            return False, msg
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    if not os.environ.get("TMUX"):
+        msg = "Not inside a tmux session. Run 'tmux' first, then try again."
+        if quiet:
+            return False, msg
+        print(msg, file=sys.stderr)
+        print("  tmux", file=sys.stderr)
+        print(f"  armada attach --split {search}", file=sys.stderr)
+        sys.exit(1)
+
+    session = f"armada-{node['name']}"
+    try:
+        result = subprocess.run(["tmux", "has-session", "-t", session], capture_output=True)
+        if result.returncode != 0:
+            msg = f"No tmux session for {node['name']} (node may not be active)"
+            if quiet:
+                return False, msg
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+
+        cmd = f'unset TMUX; tmux attach -d -t "{session}"'
+
+        r1 = subprocess.run(["tmux", "split-window", "-v", cmd],
+                           capture_output=True, text=True)
+        if r1.returncode != 0:
+            msg = f"split-window failed: {r1.stderr.strip()}"
+            if quiet:
+                return False, msg
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+    except subprocess.CalledProcessError as e:
+        msg = f"Failed to split and attach: {e}"
+        if quiet:
+            return False, msg
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+
+    msg = f"Attached to {node['name']}"
+    if not quiet:
+        print(msg)
+    return True, msg
