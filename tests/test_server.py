@@ -5,6 +5,7 @@ import pytest
 import time
 from unittest.mock import MagicMock
 from starlette.websockets import WebSocketDisconnect
+from armada_ai.constants import VERSION
 
 
 def _mkproj(temp_db, id="proj", name="Project"):
@@ -1140,7 +1141,7 @@ class TestNewEndpoints:
         data = r.json()
         assert "uptime" in data
         assert "version" in data
-        assert data["version"] == "0.2.0"
+        assert data["version"] == VERSION
 
     def test_patch_rename_bad_node(self, client):
         r = client.patch("/api/nodes/9999", json={"action": "rename", "name": "x"})
