@@ -41,15 +41,25 @@ jobs:
         id: version
         run: |
           VER=$(python -c "import sys; sys.path.insert(0, '.'); from armada_ai.constants import VERSION; print(VERSION)")
+          TOML_VER=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if [ "$VER" != "$TOML_VER" ]; then
+            echo "❌ Version mismatch: constants.py=$VER pyproject.toml=$TOML_VER"
+            exit 1
+          fi
           echo "version=$VER" >> $GITHUB_OUTPUT
           echo "📦 Version: $VER"
 
       - name: Create tag
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
+          TAG="v${{ steps.version.outputs.version }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "⚠ Tag $TAG already exists — version not bumped in this PR? Skipping tag creation."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
 
       - name: Build package
         run: python -m build
