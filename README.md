@@ -10,7 +10,7 @@
 > Command your fleet of AI agents from anywhere — your browser, your phone, your tablet.
 
 [![PyPI](https://img.shields.io/pypi/v/armada-ai)](https://pypi.org/project/armada-ai/)
-[![Test PyPI](https://img.shields.io/badge/testpypi-v0.2.1-blue.svg)](https://test.pypi.org/project/armada-ai/)
+[![Test PyPI](https://img.shields.io/badge/testpypi-v0.2.2-blue.svg)](https://test.pypi.org/project/armada-ai/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://pypi.org/project/armada-ai/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/rguiu/armada/blob/main/LICENSE)
 
