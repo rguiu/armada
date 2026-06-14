@@ -18,4 +18,6 @@ PLAN.md
 /demo-script.md
 .coverage
 coverage.xml
+PUBLISHING.md
+RELEASING.md
 SESSION_LOG.md

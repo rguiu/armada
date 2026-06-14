@@ -29,6 +29,7 @@ dependencies = [
     "uvicorn>=0.20",
     "websockets>=10.0",
     "qrcode>=7.0",
+    "tomli>=1.0; python_version < '3.11'",
 ]
 
 [project.urls]
