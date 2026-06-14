@@ -607,6 +607,11 @@ def _watch_nodes():
     import tty
     import termios
 
+    if not os.environ.get("TMUX"):
+        import shutil
+        armada = shutil.which("armada") or sys.argv[0]
+        os.execvp("tmux", ["tmux", "new-session", "-s", "armada_watch", armada, "watch"])
+
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
     rows = []
