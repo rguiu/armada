@@ -1211,8 +1211,20 @@ def _attach_split(search: str, quiet: bool = False):
                 return False, msg
             print(msg, file=sys.stderr)
             sys.exit(1)
-        subprocess.run(["tmux", "split-window", "-v",
-                       f'tmux attach -d -t "{session}"'], check=True)
+        r1 = subprocess.run(["tmux", "split-window", "-v",
+                            f'tmux attach -d -t "{session}"'],
+                           capture_output=True, text=True)
+        if r1.returncode != 0:
+            msg = f"split-window failed: {r1.stderr.strip()}"
+            if quiet:
+                return False, msg
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+        import time
+        time.sleep(0.5)
+        r2 = subprocess.run(["tmux", "list-panes"], capture_output=True, text=True)
+        panes = len(r2.stdout.strip().split("\n")) if r2.stdout.strip() else 0
+        subprocess.run(["tmux", "select-pane", "-t", "{top}"], check=True)
     except subprocess.CalledProcessError as e:
         msg = f"Failed to split and attach: {e}"
         if quiet:
@@ -1220,7 +1232,7 @@ def _attach_split(search: str, quiet: bool = False):
         print(msg, file=sys.stderr)
         sys.exit(1)
 
-    msg = f"Attached to {node['name']} (split below)"
+    msg = f"Attached to {node['name']} ({panes} panes)"
     if not quiet:
         print(msg)
     return True, msg
