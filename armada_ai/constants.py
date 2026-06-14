@@ -10,7 +10,7 @@ CONFIG_PATH = os.path.join(DATA_DIR, "config.yaml")
 PID_FILE = os.path.join(DATA_DIR, "server.pid")
 TOKEN_FILE = os.path.join(DATA_DIR, "token")
 
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 MAX_RETRIES = 5
 RETRY_BASE_DELAY = 0.05
