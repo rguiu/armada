@@ -7,7 +7,7 @@
   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝
 ```
 
-> Command your fleet of AI agents from anywhere — your browser, your phone, your tablet.
+> Live supervision for your coding agents. Real-time status, persistent sessions, any device.
 
 [![PyPI](https://img.shields.io/pypi/v/armada-ai)](https://pypi.org/project/armada-ai/)
 [![Test PyPI](https://img.shields.io/badge/testpypi-v0.2.2-blue.svg)](https://test.pypi.org/project/armada-ai/)
@@ -16,12 +16,15 @@
 
 ## What is Armada?
 
-Armada runs [OpenCode](https://opencode.ai) and [Claude Code](https://docs.anthropic.com/en/docs/claude-code) agents inside persistent tmux sessions, controlled from a web dashboard. Start an agent on your laptop, close it, and pick up where you left off — from any device on your network.
+Start a Claude Code or OpenCode agent on your laptop, close it, and pick up where you left off — from any device on your network.
 
-- **Web dashboard** — manage agents from any device
-- **Persistent sessions** — agents survive browser closes, laptop sleeps, and server restarts
-- **Orchestration** — agents spawn child nodes, delegate tasks, and run in parallel
-- **One command** — `armada` starts the server and opens the dashboard
+Armada gives you fleet management for coding agents: persistent tmux sessions, a web dashboard, and real-time status visibility. Know instantly which agents are working, waiting for approval, or stuck.
+
+- **Agent status** — every agent reports `idle`, `active`, `pending`, or `error`. See which agents are blocked or waiting for input at a glance.
+- **Persistent sessions** — built on tmux: reconnect, multiplex, survive disconnects. No custom runtime to maintain.
+- **Web dashboard** — manage agents from your browser, phone, or tablet. Scan the QR code to open on other devices.
+- **Delegation** — agents can spawn child workers, delegate tasks, and run in parallel.
+- **One command** — `armada` starts the server and opens the dashboard.
 
 ## Installation
 
@@ -172,24 +175,26 @@ $ armada watch
 Forms for creating nodes and projects use keyboard navigation: `Tab`/`↑↓` to move between fields, `←→` to cycle options, type freely in text fields, `Enter` on `[Save]` to submit, `Esc` to cancel.
 </details>
 
-## Multi-Agent Pipeline
+## Agent Delegation
+
+Agents can delegate work to child nodes using built-in skills:
 
 ```
-Architect (orchestrator)
-├── Reviewer (worker)  — reviews the code
-└── Tests (worker)     — writes and runs tests
+Orchestrator
+├── Reviewer  — reviews the code
+└── Tests     — writes and runs tests
 ```
 
 1. Start Armada: `armada`
 2. Register a project and create an orchestrator node (agent type: "opencode" or "claude")
 3. The orchestrator spawns child workers, delegates tasks, and monitors results
-4. The dashboard updates in real time as each worker reports active/idle
+4. The dashboard updates in real time as each worker reports `active`/`idle`
 
 Skills (`armada-node`, `armada-worker`, `armada-orchestrator`) teach agents how to spawn children, delegate work, and report results back to the dashboard.
 
 ## Architecture
 
-SQLite (WAL) + FastAPI REST server, daemonized. Each node is a tmux session running an agent. Nodes report status via `POST /api/report`. The dashboard updates in real time over a persistent WebSocket.
+SQLite (WAL) + FastAPI REST server, daemonized. Each node is a tmux session — no custom agent runtime, just tmux providing persistence, reconnection, and multiplexing. Nodes report status via `POST /api/report`. The dashboard refreshes over a persistent WebSocket.
 
 ## API Endpoints
 
