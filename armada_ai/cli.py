@@ -619,6 +619,7 @@ def _watch_nodes():
     selected = 0
     view = "nodes"
     _seen_pending = set()  # track pending nodes across refreshes for alerting
+    _status_msg = ""
 
     try:
         tty.setcbreak(fd)
@@ -648,7 +649,7 @@ def _watch_nodes():
             attached = _get_attached()
 
             if view == "nodes":
-                _watch_draw_nodes(tree, projects, selected, tw, has_pending, attached)
+                _watch_draw_nodes(tree, projects, selected, tw, has_pending, attached, _status_msg)
             else:
                 pending_names = [r["name"] for r in rows_check if r["status"] == "pending"]
                 _watch_draw_projects(projects, selected, tw, has_pending, pending_names)
@@ -679,6 +680,7 @@ def _watch_nodes():
             elif ch == '\t':
                 view = "projects" if view == "nodes" else "nodes"
                 selected = 0
+                _status_msg = ""
 
             elif view == "nodes":
                 rows = _watch_collect_nodes(tree)
@@ -687,11 +689,14 @@ def _watch_nodes():
 
                 if ch == 'UP':
                     selected = max(0, selected - 1)
+                    _status_msg = ""
                 elif ch == 'DOWN':
                     selected = min(len(rows) - 1, selected + 1)
+                    _status_msg = ""
                 elif (ch == '\r' or ch == '\n') and rows:
                     name = rows[selected]["name"]
-                    _attach_split(name, quiet=True)
+                    ok, msg = _attach_split(name, quiet=True)
+                    _status_msg = msg
                 elif ch == 'a' and rows:
                     name = rows[selected]["name"]
                     if name in attached:
@@ -786,7 +791,7 @@ def _watch_collect_nodes(tree):
     return rows
 
 
-def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=None):
+def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=None, status_msg=""):
     rows = _watch_collect_nodes(tree)
     pending_ids = {r["id"] for r in rows if r["status"] == "pending"}
     pending_names = [r["name"] for r in rows if r["id"] in pending_ids]
@@ -825,6 +830,11 @@ def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=
 
     if pending:
         sys.stdout.write(f"\n\033[33m⚠ Pending: {', '.join(pending_names)}\033[0m\n")
+
+    if status_msg:
+        is_error = status_msg.startswith("Failed") or status_msg.startswith("No tmux") or status_msg.startswith("Not inside") or status_msg.startswith("Node not")
+        color = "\033[31m" if is_error else "\033[32m"
+        sys.stdout.write(f"\n{color}  {status_msg}\033[0m\n")
 
     _watch_draw_bottom(tw, "[↑↓]nav [enter]split [a]attach [n]ew [k]kill [d]delete [tab]projects [q]quit")
 
@@ -1177,30 +1187,40 @@ def _attach_node(search: str, exit_on_error: bool = True):
 def _attach_split(search: str, quiet: bool = False):
     node = _find_node(search)
     if not node:
-        if not quiet:
-            sys.exit(1)
-        return
+        msg = f"Node not found: {search}"
+        if quiet:
+            return False, msg
+        print(msg, file=sys.stderr)
+        sys.exit(1)
 
     if not os.environ.get("TMUX"):
         msg = "Not inside a tmux session. Run 'tmux' first, then try again."
         if quiet:
-            print(msg, file=sys.stderr)
-        else:
-            print(msg, file=sys.stderr)
-            print("  tmux", file=sys.stderr)
-            print(f"  armada attach --split {search}", file=sys.stderr)
-            sys.exit(1)
-        return
+            return False, msg
+        print(msg, file=sys.stderr)
+        print("  tmux", file=sys.stderr)
+        print(f"  armada attach --split {search}", file=sys.stderr)
+        sys.exit(1)
 
     session = f"armada-{node['name']}"
     try:
-        subprocess.run(["tmux", "split-window", "-v", "tmux", "attach-session", "-t", session], check=True)
+        result = subprocess.run(["tmux", "has-session", "-t", session], capture_output=True)
+        if result.returncode != 0:
+            msg = f"No tmux session for {node['name']} (node may not be active)"
+            if quiet:
+                return False, msg
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+        subprocess.run(["tmux", "split-window", "-v",
+                       f'tmux attach -d -t "{session}"'], check=True)
     except subprocess.CalledProcessError as e:
         msg = f"Failed to split and attach: {e}"
+        if quiet:
+            return False, msg
         print(msg, file=sys.stderr)
-        if not quiet:
-            sys.exit(1)
-        return
+        sys.exit(1)
 
+    msg = f"Attached to {node['name']} (split below)"
     if not quiet:
-        print(f"Attached to {node['name']} (split below)")
+        print(msg)
+    return True, msg
