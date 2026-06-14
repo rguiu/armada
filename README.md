@@ -217,3 +217,5 @@ CI runs ruff + pytest-cov on Python 3.10–3.13 on push to `main`.
 ## License
 
 MIT
+
+
