@@ -24,7 +24,8 @@ def _read_version() -> str:
 VERSION = _read_version()
 
 DATA_DIR = os.path.expanduser("~/.armada")
-DB_PATH = os.path.join(DATA_DIR, "armada.db")
+_db_path_env = os.environ.get("ARMADA_DB_PATH")
+DB_PATH = os.path.expanduser(_db_path_env) if _db_path_env else os.path.join(DATA_DIR, "armada.db")
 PROJECTS_FILE = os.path.join(DATA_DIR, "projects.json")
 LOGS_DIR = os.path.join(DATA_DIR, "logs")
 HOOKS_DIR = os.path.join(DATA_DIR, "hooks")

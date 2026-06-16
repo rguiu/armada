@@ -133,8 +133,11 @@ def main():
     elif args[0] == "watch":
         _watch_cmd(args[1:])
 
+    elif args[0] == "demodb":
+        _demodb_cmd(args[1:])
+
     else:
-        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|watch] [--lan] [--qr] [--keep-token]")
+        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|demodb|watch] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
         print("  attach       Attach to a node: armada attach <name> [--split] (no args = debug mode)")
@@ -148,6 +151,7 @@ def main():
         print("  nodes        List all agents in a table")
         print("  create       Create a new agent node")
         print("  projects     List, add, or remove projects")
+        print("  demodb       Seed a demo database for screen recordings")
         print("  watch        Interactive live dashboard with select, attach, and alerts")
         print("  --lan        Bind to / use LAN IP (for other devices on network)")
         print("  --qr         Show QR code (with token command)")
@@ -390,10 +394,10 @@ def _doctor(nuke: bool = False):
             subprocess.run(["tmux", "kill-server"], capture_output=True, timeout=5)
         except Exception:
             pass
-        db_path = os.path.expanduser("~/.armada/armada.db")
+        db_path = constants.DB_PATH
         if os.path.exists(db_path):
             os.remove(db_path)
-            print("  Removed armada.db")
+            print(f"  Removed {os.path.basename(db_path)}")
         if os.path.exists(pid_file):
             os.remove(pid_file)
             print("  Removed PID file")
@@ -407,7 +411,7 @@ def _doctor(nuke: bool = False):
 
     # 3. Sync DB with tmux
     print("\n[3] Database sync")
-    db_path = os.path.expanduser("~/.armada/armada.db")
+    db_path = constants.DB_PATH
     if os.path.exists(db_path):
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -1321,3 +1325,20 @@ def _attach_split(search: str, quiet: bool = False):
     if not quiet:
         print(msg)
     return True, msg
+
+
+def _demodb_cmd(subargs: list[str]):
+    from . import demodb
+    force = "--force" in subargs
+    if not subargs or subargs[0] == "seed":
+        demodb.seed(force=force)
+    elif subargs[0] == "path":
+        print(constants.DB_PATH)
+    else:
+        print("Usage: armada demodb [seed|path] [--force]")
+        print("  seed     Seed a demo database at ARMADA_DB_PATH (or ~/.armada/armada-demo.db)")
+        print("  path     Print the current DB path (respects ARMADA_DB_PATH env var)")
+        print()
+        print("  Default: ARMADA_DB_PATH=~/.armada/armada-demo.db")
+        print("  Safety:  refuses to seed non-demo DBs unless --force is given")
+        sys.exit(1)
