@@ -70,7 +70,7 @@ Open `http://127.0.0.1:9100`.
 4. **Monitor** — the dashboard updates every 10 seconds. See status, activity logs, and task history.
 5. **Connect other devices** — scan the QR code in the sidebar to open the dashboard on your phone or tablet.
 
-<video src="img/armada1.webm" autoplay loop muted playsinline width="100%"></video>
+![CLI Demo](img/armada1.gif)
 
 ## Agent Types: Claude Code vs OpenCode
 
