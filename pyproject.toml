@@ -77,6 +77,7 @@ omit = [
     "armada_ai/project_explorer.py",
     "armada_ai/transport/middleware.py",
     "armada_ai/transport/static_assets.py",
+    "armada_ai/demodb.py",
 ]
 
 [tool.coverage.report]
