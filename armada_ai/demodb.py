@@ -108,7 +108,7 @@ def _seed_database(db_path: str):
 
     print()
     print(f"  Projects:   {len(DEMO_PROJECTS)}")
-    print(f"  Nodes:      0 (empty — ready for your demo)")
+    print("  Nodes:      0 (empty — ready for your demo)")
     print()
     print(f"  Database:   {db_path}")
     print()
