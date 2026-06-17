@@ -47,23 +47,27 @@ curl -s -X POST http://127.0.0.1:9100/api/report \
 
 Never say just "working" — always describe exactly what step you're on. Keep messages under 10 words.
 
-## Finding Your Node ID
+## Finding Your Node ID and Agent Type
 ```bash
 N=${ARMADA_NODE_NAME:-unknown}
-curl -s http://127.0.0.1:9100/api/nodes | \
-  python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='$N']"
+MY_ID=$(curl -s http://127.0.0.1:9100/api/nodes | \
+  python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='$N']")
+MY_AGENT=$(curl -s http://127.0.0.1:9100/api/nodes/$MY_ID | \
+  python3 -c "import sys,json;print(json.load(sys.stdin)['node']['agent_type'])")
 ```
 
 ## Spawning Workers
 
-Create a worker node:
+**RULE: Children ALWAYS inherit the parent's `agent_type`.** Use `$MY_AGENT` (detected above) for every child you spawn. Do NOT choose a different agent type on your own — only use a different value if the user explicitly requests it.
+
+Detect your own agent type first (see above), then spawn:
 ```bash
 curl -s -X POST http://127.0.0.1:9100/api/nodes \
   -H "Content-Type: application/json" \
-  -d '{"name":"WORKER_NAME","parent_id":PARENT_ID,"project_label_id":"LABEL_ID","agent_type":"opencode"}'
+  -d '{"name":"WORKER_NAME","parent_id":'"$MY_ID"',"project_label_id":"LABEL_ID","agent_type":"'"$MY_AGENT"'"}'
 ```
 
-Use descriptive worker names: `test-writer`, `api-designer`, `code-reviewer`. For computational tasks, use `"agent_type":"bash"`.
+Use descriptive worker names: `test-writer`, `api-designer`, `code-reviewer`.
 
 ## Sending Tasks to Workers
 

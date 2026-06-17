@@ -72,63 +72,36 @@ This makes your node pulse yellow in the dashboard so the user knows you need at
 
 If spawning, report after each `curl` to the spawn endpoint. If polling, report the count (e.g. "1/3 idle so far"). The dashboard should tell a story. Keep each message under 10 words but be specific.
 
-## Finding Your Node ID
+## Finding Your Node ID and Agent Type
 
-Your node ID is needed for spawning children:
+Your node ID is needed for spawning children. Your agent type is inherited by children by default.
 ```bash
 N=${ARMADA_NODE_NAME:-unknown}
-curl -s http://127.0.0.1:9100/api/nodes | \
-  python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='$N']"
+MY_ID=$(curl -s http://127.0.0.1:9100/api/nodes | \
+  python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='$N']")
+MY_AGENT=$(curl -s http://127.0.0.1:9100/api/nodes/$MY_ID | \
+  python3 -c "import sys,json;print(json.load(sys.stdin)['node']['agent_type'])")
 ```
 
-## Spawning Child Nodes — DECISION TREE
+## Spawning Child Nodes
 
-**IMPORTANT:** You MUST spawn children that can receive their task immediately. Choose based on the task type:
+**RULE: Children ALWAYS inherit the parent's `agent_type`.** Use `$MY_AGENT` (detected in "Finding Your Node ID and Agent Type") for every child you spawn. Do NOT choose a different agent type on your own — only use a different value if the user explicitly requests it (e.g. "use bash workers").
 
-| Task type | agent_type | How to send work |
-|-----------|-----------|-----------------|
-| Shell commands, sleep, compute, RANDOM, file ops, curl | **`"bash"`** | `tmux send-keys -t "armada:<name>" "<command>" Enter` |
-| AI reasoning, code review, code generation, design | `"opencode"` | Attach to node and type the prompt (open on blank prompt) |
-
-**If the task is computational (running commands, generating numbers, waiting, file I/O), ALWAYS use `"bash"` agent type.** OpenCode nodes will just sit idle with a blank prompt — they need a human to attach and type instructions.
-
-### Bash workers (parallel computation — USE THIS FOR COMPUTATIONAL TASKS)
-
-Spawn bash workers for ANY task that involves shell commands (sleep, $RANDOM, math, file operations):
+### Spawn a child node
 
 ```bash
 curl -s -X POST http://127.0.0.1:9100/api/nodes \
   -H "Content-Type: application/json" \
-  -d '{"name":"worker-1","parent_id":PARENT_ID,"project_label_id":"my-project","agent_type":"bash"}'
+  -d '{"name":"WORKER_NAME","parent_id":'"$MY_ID"',"project_label_id":"my-project","agent_type":"'"$MY_AGENT"'"}'
 ```
 
-**Immediately after spawning, send each worker its task via the Armada API. Do NOT use raw tmux send-keys — use the `/send` endpoint:**
+**Send tasks via the `/send` endpoint — never use raw tmux commands:**
 
 ```bash
 curl -s -X POST "http://127.0.0.1:9100/api/nodes/WORKER_ID/send" \
   -H 'Content-Type: application/json' \
-  -d '{"command":"armada-node-report active \"doing the work\" && <actual command> && armada-node-result \"value\""}'
+  -d '{"command":"armada-node-report active \"doing the work\" && <work> && armada-node-result \"value\""}'
 ```
-
-Example — send a computation to a bash worker:
-```bash
-W=<worker_id>
-curl -s -X POST "http://127.0.0.1:9100/api/nodes/$W/send" \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"armada-node-report active computing && sleep 60 && N=$RANDOM && armada-node-result $N && echo done"}'
-```
-
-**Critical: use single quotes for the -d argument to prevent $ expansion in bash.** The URL should use double quotes so $W expands.
-
-The worker has these tools pre-installed:
-- `armada-node-report active "msg"` — mark itself as working
-- `armada-node-result <value>` — save a result value and go idle
-
-The worker will:
-1. Report status "active: computing"
-2. Execute the command (wait)
-3. Write its result to `/tmp/armada-results/<worker-name>/result`
-4. Report status "idle"
 
 **Always wait ~2 seconds after spawning before sending commands** (tmux windows need time to initialize):
 ```bash
@@ -136,17 +109,21 @@ sleep 2
 curl -s -X POST "http://127.0.0.1:9100/api/nodes/$W/send" -H "Content-Type: application/json" -d "{\"command\":\"...\"}"
 ```
 
-### OpenCode / Claude workers (AI reasoning — only for tasks needing an LLM)
+### Bash override (ONLY when the user explicitly requests it)
 
-Only use `agent_type: "opencode"` when the task requires AI reasoning (code review, design, analysis):
+If — and only if — the user explicitly asks for bash workers, override with `"agent_type":"bash"`:
 
 ```bash
 curl -s -X POST http://127.0.0.1:9100/api/nodes \
   -H "Content-Type: application/json" \
-  -d '{"name":"reviewer","parent_id":PARENT_ID,"project_label_id":"my-project","agent_type":"opencode"}'
+  -d '{"name":"worker-1","parent_id":'"$MY_ID"',"project_label_id":"my-project","agent_type":"bash"}'
 ```
 
-The child starts at a blank prompt. You must attach to it and paste the task. These nodes CANNOT receive instructions via tmux send-keys — they are interactive AI agents.
+Bash workers have these tools pre-installed:
+- `armada-node-report active "msg"` — mark itself as working
+- `armada-node-result <value>` — save a result value and go idle
+
+Bash workers write results to `/tmp/armada-results/<worker-name>/result`.
 
 ## Reading Child Results
 
@@ -160,16 +137,17 @@ cat /tmp/armada-results/worker-1/result
 To run 3 parallel workers and sum their results:
 
 ```bash
-# 1. Get your own ID
+# 1. Get your own ID and agent type
 MY_ID=$(curl -s http://127.0.0.1:9100/api/nodes | python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='\$ARMADA_NODE_NAME']")
+MY_AGENT=$(curl -s http://127.0.0.1:9100/api/nodes/\$MY_ID | python3 -c "import sys,json;print(json.load(sys.stdin)['node']['agent_type'])")
 
 # 2. Find your project label
 PROJ=$(curl -s http://127.0.0.1:9100/api/nodes/\$MY_ID | python3 -c "import sys,json;print(json.load(sys.stdin)['node'].get('project_label_id',''))")
 
-# 3. Spawn 3 workers
-W1=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-1\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"bash\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-W2=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-2\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"bash\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-W3=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-3\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"bash\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+# 3. Spawn 3 workers (inheriting parent's agent type)
+W1=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-1\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"$MY_AGENT\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+W2=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-2\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"$MY_AGENT\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
+W3=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-3\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"$MY_AGENT\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
 
 # 4. Assign work (wait 2s for tmux windows, then use /send)
 sleep 2
