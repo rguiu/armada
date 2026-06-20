@@ -32,7 +32,7 @@ from .project_explorer import (
     list_project_skills, list_project_plugins, list_project_hooks,
     get_project_config, get_project_git_info,
 )
-from .domain.models import AgentStatus, CreateNodeRequest, AgentReportRequest
+from .domain.models import AgentStatus, CreateNodeRequest, AgentReportRequest, Node
 from .transport.middleware import _CSP_HEADER
 from .transport.static_assets import manifest_route, service_worker_route, app_icon_route
 
@@ -767,6 +767,151 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws")
 
 
+# --- Task Mailbox ---
+
+def _deliver_pending_messages(node: Node) -> int:
+    if not node.is_alive() or not tmux.window_exists(node.name):
+        return 0
+    messages = db.get_pending_messages_for_node(node.id)
+    if not messages:
+        return 0
+    delivered = 0
+    for msg in messages:
+        sender = msg.from_node_name or f"node-{msg.from_node_id}" if msg.from_node_id else "system"
+        try:
+            payload_preview = json.loads(msg.payload) if msg.payload.startswith("{") else msg.payload
+        except (json.JSONDecodeError, AttributeError):
+            payload_preview = msg.payload
+        if isinstance(payload_preview, dict):
+            text = payload_preview.get("body", payload_preview.get("command", json.dumps(payload_preview)))
+        else:
+            text = str(payload_preview)
+        if node.agent_type in ("bash", "auto"):
+            tmux.send_keys(node.name, "armada-node-check-inbox")
+            db.mark_message_delivered(msg.id)
+            delivered += 1
+            break
+        else:
+            content = f"[armada-message from={sender} type={msg.type} id={msg.id}]\n{text}"
+            if tmux.send_keys(node.name, content):
+                db.mark_message_delivered(msg.id)
+                delivered += 1
+    return delivered
+
+
+@app.post("/api/nodes/{node_id}/messages")
+async def send_message_to_node(node_id: int, request: Request):
+    body = await request.json()
+    payload = body.get("payload")
+    if payload is None:
+        raise HTTPException(status_code=400, detail="payload is required")
+    if isinstance(payload, dict):
+        payload = json.dumps(payload)
+    msg_type = body.get("type", "message")
+    from_node_id = body.get("from_node_id")
+
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    msg_id = db.create_message(from_node_id, node_id, msg_type, payload)
+    if node.status == AgentStatus.IDLE.value:
+        _deliver_pending_messages(node)
+    await _broadcast_tree()
+    msg = db.get_message(msg_id)
+    return JSONResponse(msg.as_dict() if msg else {"id": msg_id}, status_code=201)
+
+
+@app.get("/api/nodes/{node_id}/messages")
+def get_node_messages(node_id: int, status: str = "pending", limit: int = 50):
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    messages = db.get_messages_for_node(node_id, status=status, limit=limit)
+    return JSONResponse([m.as_dict() for m in messages])
+
+
+@app.patch("/api/messages/{message_id}")
+async def update_message(message_id: int, request: Request):
+    body = await request.json()
+    new_status = body.get("status")
+    if new_status not in ("done",):
+        raise HTTPException(status_code=400, detail="status must be 'done'")
+    msg = db.get_message(message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    ok = db.mark_message_done(message_id)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Message cannot be marked done in its current state")
+    return JSONResponse({"ok": True})
+
+
+@app.post("/api/nodes/{node_id}/broadcast")
+async def broadcast_to_children(node_id: int, request: Request):
+    body = await request.json()
+    payload = body.get("payload")
+    if payload is None:
+        raise HTTPException(status_code=400, detail="payload is required")
+    if isinstance(payload, dict):
+        payload = json.dumps(payload)
+    msg_type = body.get("type", "message")
+
+    node = db.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+
+    msg_ids = db.create_broadcast(node_id, msg_type, payload)
+    children = db.get_node_children(node_id)
+    for child in children:
+        if child.status == AgentStatus.IDLE.value:
+            _deliver_pending_messages(child)
+    await _broadcast_tree()
+    return JSONResponse({"ok": True, "messages_created": len(msg_ids), "message_ids": msg_ids}, status_code=201)
+
+
+@app.post("/api/queue")
+async def post_to_queue(request: Request):
+    body = await request.json()
+    payload = body.get("payload")
+    if payload is None:
+        raise HTTPException(status_code=400, detail="payload is required")
+    if isinstance(payload, dict):
+        payload = json.dumps(payload)
+    msg_type = body.get("type", "task")
+    from_node_id = body.get("from_node_id")
+
+    msg_id = db.create_message(from_node_id, None, msg_type, payload)
+    msg = db.get_message(msg_id)
+    return JSONResponse(msg.as_dict() if msg else {"id": msg_id}, status_code=201)
+
+
+@app.get("/api/queue")
+def list_queue(status: str = "pending", limit: int = 50):
+    tasks = db.get_queue_tasks(status=status, limit=limit)
+    return JSONResponse([t.as_dict() for t in tasks])
+
+
+@app.post("/api/queue/{message_id}/claim")
+async def claim_queue_task(message_id: int, request: Request):
+    body = await request.json()
+    node_id = body.get("node_id")
+    if not node_id:
+        raise HTTPException(status_code=400, detail="node_id is required")
+    expires = body.get("expires_minutes", 10)
+
+    msg = db.get_message(message_id)
+    if not msg:
+        raise HTTPException(status_code=404, detail="Task not found")
+    if msg.to_node_id is not None:
+        raise HTTPException(status_code=400, detail="Not a queue task")
+
+    ok = db.claim_queue_task(message_id, node_id, expires)
+    if not ok:
+        raise HTTPException(status_code=409, detail="Task already claimed")
+    msg = db.get_message(message_id)
+    return JSONResponse(msg.as_dict() if msg else {"ok": True})
+
+
 # --- Project Labels ---
 
 @app.get("/api/project-labels")
@@ -1193,9 +1338,9 @@ async def agent_report(request: Request):
                                 report.tokens.get("output", 0), ("output",))
 
     await _broadcast_tree()
+    if report.status == AgentStatus.IDLE.value:
+        _deliver_pending_messages(node)
     return JSONResponse({"ok": True})
-
-
 # --- Logs ---
 
 _SAFE_LOG_NAME = re.compile(r'^[a-zA-Z0-9_][-a-zA-Z0-9_]*$')

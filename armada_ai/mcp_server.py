@@ -228,6 +228,110 @@ def list_projects() -> str:
     return json.dumps(_api("GET", "/api/project-labels"))
 
 
+@mcp.tool()
+def send_message(to_node_id: int, payload: str, msg_type: str = "message") -> str:
+    """Send a message to another node's inbox.
+
+    Args:
+        to_node_id: Target node ID.
+        payload: Message content (JSON string or plain text).
+        msg_type: Message type (e.g. "task", "result", "message"). Default "message".
+
+    Returns:
+        JSON with the created message details.
+    """
+    me = _get_self()
+    body: dict[str, Any] = {"payload": payload, "type": msg_type}
+    if me.get("id"):
+        body["from_node_id"] = me["id"]
+    return json.dumps(_api("POST", f"/api/nodes/{to_node_id}/messages", body))
+
+
+@mcp.tool()
+def read_inbox(status: str = "pending") -> str:
+    """Read messages in this node's inbox.
+
+    Args:
+        status: Filter by status: "pending", "delivered", "done", or "all". Default "pending".
+
+    Returns:
+        JSON array of messages.
+    """
+    me = _get_self()
+    node_id = me.get("id")
+    if not node_id:
+        return json.dumps({"error": "Not running as an Armada node"})
+    return json.dumps(_api("GET", f"/api/nodes/{node_id}/messages?status={status}&limit=50"))
+
+
+@mcp.tool()
+def ack_message(message_id: int) -> str:
+    """Acknowledge a message (mark as done).
+
+    Args:
+        message_id: The message ID to acknowledge.
+
+    Returns:
+        JSON confirmation.
+    """
+    return json.dumps(_api("PATCH", f"/api/messages/{message_id}", {"status": "done"}))
+
+
+@mcp.tool()
+def broadcast(payload: str, msg_type: str = "message") -> str:
+    """Send a message to all children of this node.
+
+    Args:
+        payload: Message content (JSON string or plain text).
+        msg_type: Message type. Default "message".
+
+    Returns:
+        JSON with count of messages created.
+    """
+    me = _get_self()
+    node_id = me.get("id")
+    if not node_id:
+        return json.dumps({"error": "Not running as an Armada node"})
+    return json.dumps(_api("POST", f"/api/nodes/{node_id}/broadcast", {"payload": payload, "type": msg_type}))
+
+
+@mcp.tool()
+def post_to_queue(payload: str, msg_type: str = "task") -> str:
+    """Post a task to the shared work queue for any idle agent to claim.
+
+    Args:
+        payload: Task description (JSON string or plain text).
+        msg_type: Message type. Default "task".
+
+    Returns:
+        JSON with the created task details.
+    """
+    me = _get_self()
+    body: dict[str, Any] = {"payload": payload, "type": msg_type}
+    if me.get("id"):
+        body["from_node_id"] = me["id"]
+    return json.dumps(_api("POST", "/api/queue", body))
+
+
+@mcp.tool()
+def claim_from_queue() -> str:
+    """Claim the next available task from the shared work queue.
+
+    Returns:
+        JSON with the claimed task details, or empty list if no tasks available.
+    """
+    me = _get_self()
+    node_id = me.get("id")
+    if not node_id:
+        return json.dumps({"error": "Not running as an Armada node"})
+    tasks = _api("GET", "/api/queue?status=pending&limit=1")
+    if isinstance(tasks, list) and tasks:
+        task_id = tasks[0].get("id")
+        if task_id:
+            return json.dumps(_api("POST", f"/api/queue/{task_id}/claim", {"node_id": node_id}))
+    return json.dumps({"message": "No tasks available"})
+
+
 def main():
     mcp.run()
 

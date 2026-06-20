@@ -169,3 +169,55 @@ class PatchNodeRequest:
     action: str
     parent_id: int | None = None
     name: str | None = None
+
+
+@dataclass
+class Message:
+    id: int
+    from_node_id: int | None
+    to_node_id: int | None
+    type: str
+    payload: str
+    status: str
+    created_at: str
+    delivered_at: str | None = None
+    done_at: str | None = None
+    claimed_by: int | None = None
+    claim_expires_at: str | None = None
+    from_node_name: str | None = None
+    to_node_name: str | None = None
+
+    @classmethod
+    def from_row(cls, row: dict[str, Any]) -> Message:
+        return cls(
+            id=row["id"],
+            from_node_id=row.get("from_node_id"),
+            to_node_id=row.get("to_node_id"),
+            type=row.get("type", "message"),
+            payload=row.get("payload", ""),
+            status=row.get("status", "pending"),
+            created_at=row.get("created_at", ""),
+            delivered_at=row.get("delivered_at"),
+            done_at=row.get("done_at"),
+            claimed_by=row.get("claimed_by"),
+            claim_expires_at=row.get("claim_expires_at"),
+            from_node_name=row.get("from_node_name"),
+            to_node_name=row.get("to_node_name"),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "from_node_id": self.from_node_id,
+            "to_node_id": self.to_node_id,
+            "from_node_name": self.from_node_name,
+            "to_node_name": self.to_node_name,
+            "type": self.type,
+            "payload": self.payload,
+            "status": self.status,
+            "created_at": self.created_at,
+            "delivered_at": self.delivered_at,
+            "done_at": self.done_at,
+            "claimed_by": self.claimed_by,
+            "claim_expires_at": self.claim_expires_at,
+        }
