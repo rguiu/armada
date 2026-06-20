@@ -4,7 +4,7 @@ N="${ARMADA_NODE_NAME:-}"
 
 INPUT=$(cat 2>/dev/null)
 
-BODY=$(echo "$INPUT" | python3 -c "
+PARSED=$(echo "$INPUT" | python3 -c "
 import sys, json
 try:
     d = json.load(sys.stdin)
@@ -16,7 +16,6 @@ try:
     msg = tool
     if inp_line: msg += ' — ' + inp_line
 
-    # Claude Code uses vertical list: Down arrow = \x1b[B
     suggestions = d.get('permission_suggestions', [])
     if suggestions:
         options = [
@@ -30,12 +29,15 @@ try:
             {'label': 'Deny', 'key': '\x1b[B\n'},
         ]
 
-    print(json.dumps({'name': '$N', 'status': 'pending', 'message': msg, 'options': options}))
+    print(msg)
+    print(json.dumps(options))
 except:
-    print(json.dumps({'name': '$N', 'status': 'pending', 'message': 'waiting for approval', 'options': []}))
-")
+    print('waiting for approval')
+    print('[]')
+" 2>/dev/null)
 
-curl -s -X POST http://127.0.0.1:9100/api/report \
-  -H "Content-Type: application/json" \
-  -d "$BODY" > /dev/null 2>&1
+MSG=$(echo "$PARSED" | head -1)
+OPTIONS=$(echo "$PARSED" | tail -1)
+
+armada report pending "$MSG" --options "$OPTIONS"
 exit 0

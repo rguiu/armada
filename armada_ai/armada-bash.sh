@@ -21,10 +21,7 @@ mkdir -p "$ARMADA_RESULT_DIR/$ARMADA_NODE"
 
 armada_report() {
     local status="$1" message="${2:-}"
-    curl -s -X POST "$ARMADA_API/api/report" \
-        -H "Content-Type: application/json" \
-        -d "{\"name\":\"$ARMADA_NODE\",\"status\":\"$status\",\"message\":\"$message\"}" \
-        > /dev/null 2>&1 || true
+    command armada report "$status" "$message" 2>/dev/null || true
 }
 
 armada_report_active() {
@@ -48,7 +45,7 @@ armada_report_result() {
 # ── Auto-report on command execution ──
 # Trap DEBUG fires before every command — auto-reports active status
 _armada_last_msg=""
-trap '_armada_cmd="$BASH_COMMAND"; if [[ "$_armada_cmd" =~ ^(sleep|curl|python3|[[:\space:]]*$) ]]; then true; elif [[ ! "$_armada_cmd" =~ ^_armada_ ]] && [[ ! "$_armada_cmd" =~ ^armada_report ]] && [[ ! "$_armada_cmd" =~ ^armada-node- ]]; then _short="${_armada_cmd:0:50}"; if [ "$_short" != "$_armada_last_msg" ]; then _armada_last_msg="$_short"; armada_report_active "$_short" & fi; fi' DEBUG
+trap '_armada_cmd="$BASH_COMMAND"; if [[ "$_armada_cmd" =~ ^(sleep|curl|armada|python3|[[:\space:]]*$) ]]; then true; elif [[ ! "$_armada_cmd" =~ ^_armada_ ]] && [[ ! "$_armada_cmd" =~ ^armada_report ]] && [[ ! "$_armada_cmd" =~ ^armada-node- ]]; then _short="${_armada_cmd:0:50}"; if [ "$_short" != "$_armada_last_msg" ]; then _armada_last_msg="$_short"; armada_report_active "$_short" & fi; fi' DEBUG
 
 # ── Child Node Spawning ──
 

@@ -29,6 +29,7 @@ dependencies = [
     "uvicorn>=0.20",
     "websockets>=10.0",
     "qrcode>=7.0",
+    "mcp>=1.0",
     "tomli>=1.0; python_version < '3.11'",
 ]
 
@@ -68,6 +69,7 @@ omit = [
     "armada_ai/cli.py",
     "armada_ai/health.py",
     "armada_ai/tmux.py",
+    "armada_ai/mcp_server.py",
     "armada_ai/templates/*",
     "armada_ai/bin/*",
     "armada_ai/hooks/*",

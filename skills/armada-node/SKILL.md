@@ -1,11 +1,11 @@
 ---
 name: armada-node
-description: Use when ARMADA_NODE_NAME environment variable is set (running inside an Armada tmux window). Also use when the user wants to spawn parallel workers, delegate tasks concurrently, run multiple things at once, do background computation, split work across nodes, sum results from workers, or farm out tasks. This skill teaches mandatory per-step status reporting AND spawning/managing child nodes via the Armada API.
+description: Use when ARMADA_NODE_NAME environment variable is set (running inside an Armada tmux window). Also use when the user wants to spawn parallel workers, delegate tasks concurrently, run multiple things at once, do background computation, split work across nodes, sum results from workers, or farm out tasks. This skill teaches mandatory per-step status reporting AND spawning/managing child nodes via MCP tools.
 ---
 
 # Armada Node Skill
 
-This skill equips an agent to act as a managed node in an Armada cluster. The agent reports its status on every turn and can spawn child nodes.
+This skill equips an agent to act as a managed node in an Armada cluster. The agent reports its status on every turn and can spawn child nodes using MCP tools.
 
 The agent discovers its node name from the `ARMADA_NODE_NAME` environment variable, which is set automatically when the tmux window is created.
 
@@ -23,162 +23,150 @@ armada start
 
 ---
 
-Your node name is available in the `ARMADA_NODE_NAME` environment variable. Use it in all status reports.
+## Available MCP Tools
+
+All Armada operations are available as MCP tools. Use these instead of curl commands:
+
+| Tool | Purpose |
+|------|---------|
+| `get_my_info` | Get your own node ID, name, agent_type, project |
+| `spawn_node` | Spawn a child node (inherits agent_type and project automatically) |
+| `send_task` | Send a command to a child node (auto-waits 2s for tmux init) |
+| `kill_node` | Kill a node and all its descendants |
+| `get_tree` | Get the full node tree with status |
+| `get_node` | Get details for a specific node |
+| `list_nodes` | List all live nodes |
+| `report_status` | Report your own status (active, idle, pending, error) |
+| `list_projects` | List all project labels |
 
 ## Status Reporting — MANDATORY
 
-**You MUST post a status report BEFORE and AFTER every significant action.** This is not optional. Your activity log is the primary way the Armada dashboard monitors you. A silent node looks dead.
+**You MUST report status BEFORE and AFTER every significant action.** This is not optional. Your activity log is the primary way the Armada dashboard monitors you. A silent node looks dead.
 
 ### Before every action (mark yourself active):
 
-```bash
-N=${ARMADA_NODE_NAME:-unknown}
-curl -s -X POST http://127.0.0.1:9100/api/report \
-  -H "Content-Type: application/json" \
-  -d '{"name":"'"$N"'","status":"active","message":"<what you are about to do>"}'
+```
+report_status(status="active", message="<what you are about to do>")
 ```
 
 ### After every action (mark yourself idle with results):
 
-```bash
-N=${ARMADA_NODE_NAME:-unknown}
-curl -s -X POST http://127.0.0.1:9100/api/report \
-  -H "Content-Type: application/json" \
-  -d '{"name":"'"$N"'","status":"idle","message":"<what you just did>"}'
+```
+report_status(status="idle", message="<what you just did>")
 ```
 
 ### When waiting for user input (mark yourself pending):
 
-The Armada pending plugin handles permission requests automatically — do NOT manually report `pending` for tool permission waits (the plugin sends options/buttons with those reports). Only report `pending` manually for non-permission waits: questions you ask the user, confirmations you need, or any prompt where you are waiting for a text response (not a permission dialog).
+The Armada pending plugin handles permission requests automatically — do NOT manually report `pending` for tool permission waits. Only report `pending` manually for non-permission waits: questions you ask the user, confirmations you need, or any prompt where you are waiting for a text response.
 
-```bash
-N=${ARMADA_NODE_NAME:-unknown}
-curl -s -X POST http://127.0.0.1:9100/api/report \
-  -H "Content-Type: application/json" \
-  -d '{"name":"'"$N"'","status":"pending","message":"<what you need from the user>"}'
+```
+report_status(status="pending", message="<what you need from the user>")
 ```
 
 This makes your node pulse yellow in the dashboard so the user knows you need attention.
 
 ### Report at EVERY step. Examples:
 
-- `"spawning 3 workers"` → spawn them → `"spawned apple-1 (id=5), apple-2 (id=6), apple-3 (id=7)"`
-- `"assigning tasks to workers"` → send commands → `"sent tasks to all 3 workers"`
-- `"polling workers: 0/3 done"` → poll → `"polling workers: 3/3 idle"`
-- `"reading results"` → read → `"results: 5, 7, 9 → sum=21"`
-- `"cleaning up workers"` → kill → `"killed 3 workers, done"`
+- `"spawning 3 workers"` then spawn them then `"spawned worker-1 (7), worker-2 (8), worker-3 (9)"`
+- `"sending tasks to workers"` then send commands then `"tasks sent to all 3 workers"`
+- `"polling workers: 0/3 done"` then poll then `"polling workers: 3/3 idle"`
+- `"reading results"` then read then `"results: 5, 7, 9 -- sum=21"`
+- `"cleaning up workers"` then kill then `"killed 3 workers, done"`
 
 **Never use generic messages like "working" or "processing". Always say exactly what you are doing.**
 
-If spawning, report after each `curl` to the spawn endpoint. If polling, report the count (e.g. "1/3 idle so far"). The dashboard should tell a story. Keep each message under 10 words but be specific.
+Keep each message under 10 words but be specific.
 
-## Finding Your Node ID and Agent Type
+## Getting Your Node Info
 
-Your node ID is needed for spawning children. Your agent type is inherited by children by default.
-```bash
-N=${ARMADA_NODE_NAME:-unknown}
-MY_ID=$(curl -s http://127.0.0.1:9100/api/nodes | \
-  python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='$N']")
-MY_AGENT=$(curl -s http://127.0.0.1:9100/api/nodes/$MY_ID | \
-  python3 -c "import sys,json;print(json.load(sys.stdin)['node']['agent_type'])")
+Use the `get_my_info` tool to discover your own ID, agent_type, project, and parent:
+
+```
+get_my_info()
+# Returns: {"id": 5, "name": "my-node", "agent_type": "opencode", "project_label_id": "my-project", ...}
 ```
 
 ## Spawning Child Nodes
 
-**RULE: Children ALWAYS inherit the parent's `agent_type`.** Use `$MY_AGENT` (detected in "Finding Your Node ID and Agent Type") for every child you spawn. Do NOT choose a different agent type on your own — only use a different value if the user explicitly requests it (e.g. "use bash workers").
+**RULE: Children ALWAYS inherit the parent's `agent_type`.** The `spawn_node` tool handles this automatically — you do NOT need to detect or pass agent_type. Only override if the user explicitly requests a different agent type.
 
-### Spawn a child node
-
-```bash
-curl -s -X POST http://127.0.0.1:9100/api/nodes \
-  -H "Content-Type: application/json" \
-  -d '{"name":"WORKER_NAME","parent_id":'"$MY_ID"',"project_label_id":"my-project","agent_type":"'"$MY_AGENT"'"}'
+```
+spawn_node(name="worker-1")
+spawn_node(name="worker-2")
+spawn_node(name="reviewer", agent_type="bash")  # ONLY if user explicitly asks for bash
 ```
 
-**Send tasks via the `/send` endpoint — never use raw tmux commands:**
+The tool automatically sets `parent_id` to your node and inherits your `project_label_id`.
 
-```bash
-curl -s -X POST "http://127.0.0.1:9100/api/nodes/WORKER_ID/send" \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"armada-node-report active \"doing the work\" && <work> && armada-node-result \"value\""}'
+## Sending Tasks to Workers
+
+Use `send_task` to send commands to a worker's terminal. It automatically waits 2 seconds for tmux to initialize:
+
+```
+send_task(node_id=7, command="run the test suite and report results")
+send_task(node_id=8, command="review the authentication module")
 ```
 
-**Always wait ~2 seconds after spawning before sending commands** (tmux windows need time to initialize):
-```bash
-sleep 2
-curl -s -X POST "http://127.0.0.1:9100/api/nodes/$W/send" -H "Content-Type: application/json" -d "{\"command\":\"...\"}"
+## Checking Workers
+
+```
+get_tree()            # full tree with status per node
+get_node(node_id=7)   # details + reports for one node
 ```
 
-### Bash override (ONLY when the user explicitly requests it)
+## Killing Workers
 
-If — and only if — the user explicitly asks for bash workers, override with `"agent_type":"bash"`:
-
-```bash
-curl -s -X POST http://127.0.0.1:9100/api/nodes \
-  -H "Content-Type: application/json" \
-  -d '{"name":"worker-1","parent_id":'"$MY_ID"',"project_label_id":"my-project","agent_type":"bash"}'
 ```
-
-Bash workers have these tools pre-installed:
-- `armada-node-report active "msg"` — mark itself as working
-- `armada-node-result <value>` — save a result value and go idle
-
-Bash workers write results to `/tmp/armada-results/<worker-name>/result`.
+kill_node(node_id=7)  # kills node and all its descendants
+```
 
 ## Reading Child Results
 
-Bash workers write results to `/tmp/armada-results/<name>/result`.
+Bash workers write results to `/tmp/armada-results/<name>/result`:
 ```bash
 cat /tmp/armada-results/worker-1/result
 ```
 
 ## Complete Orchestration Example
 
-To run 3 parallel workers and sum their results:
+To run 3 parallel workers using MCP tools:
 
-```bash
-# 1. Get your own ID and agent type
-MY_ID=$(curl -s http://127.0.0.1:9100/api/nodes | python3 -c "import sys,json;[print(n['id']) for n in json.load(sys.stdin) if n['name']=='\$ARMADA_NODE_NAME']")
-MY_AGENT=$(curl -s http://127.0.0.1:9100/api/nodes/\$MY_ID | python3 -c "import sys,json;print(json.load(sys.stdin)['node']['agent_type'])")
-
-# 2. Find your project label
-PROJ=$(curl -s http://127.0.0.1:9100/api/nodes/\$MY_ID | python3 -c "import sys,json;print(json.load(sys.stdin)['node'].get('project_label_id',''))")
-
-# 3. Spawn 3 workers (inheriting parent's agent type)
-W1=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-1\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"$MY_AGENT\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-W2=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-2\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"$MY_AGENT\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-W3=$(curl -s -X POST http://127.0.0.1:9100/api/nodes -H "Content-Type: application/json" -d "{\"name\":\"apple-3\",\"parent_id\":$MY_ID,\"project_label_id\":\"$PROJ\",\"agent_type\":\"$MY_AGENT\"}" | python3 -c "import sys,json;print(json.load(sys.stdin)['id'])")
-
-# 4. Assign work (wait 2s for tmux windows, then use /send)
-sleep 2
-curl -s -X POST "http://127.0.0.1:9100/api/nodes/\$W1/send" \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"armada-node-report active picking && sleep 60 && N=$((RANDOM % 11 + 10)) && armada-node-result $N && echo done"}'
-curl -s -X POST "http://127.0.0.1:9100/api/nodes/\$W2/send" \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"armada-node-report active picking && sleep 60 && N=$((RANDOM % 11 + 10)) && armada-node-result $N && echo done"}'
-curl -s -X POST "http://127.0.0.1:9100/api/nodes/\$W3/send" \
-  -H 'Content-Type: application/json' \
-  -d '{"command":"armada-node-report active picking && sleep 60 && N=$((RANDOM % 11 + 10)) && armada-node-result $N && echo done"}'
-
-# 5. Wait for all workers to go idle (poll until done)
-for i in \$(seq 1 60); do
-  S1=\$(curl -s http://127.0.0.1:9100/api/nodes/\$W1 | python3 -c "import sys,json;print(json.load(sys.stdin)['node']['status'])")
-  S2=\$(curl -s http://127.0.0.1:9100/api/nodes/\$W2 | python3 -c "import sys,json;print(json.load(sys.stdin)['node']['status'])")
-  S3=\$(curl -s http://127.0.0.1:9100/api/nodes/\$W3 | python3 -c "import sys,json;print(json.load(sys.stdin)['node']['status'])")
-  if [ "\$S1" = "idle" ] && [ "\$S2" = "idle" ] && [ "\$S3" = "idle" ]; then break; fi
-  sleep 5
-done
-
-# 6. Read results and sum
-A=\$(cat /tmp/armada-results/apple-1/result 2>/dev/null || echo 0)
-B=\$(cat /tmp/armada-results/apple-2/result 2>/dev/null || echo 0)
-C=\$(cat /tmp/armada-results/apple-3/result 2>/dev/null || echo 0)
-SUM=\$((A + B + C))
-echo "I have \$SUM apples"
-
-# 7. Clean up
-curl -s -X DELETE http://127.0.0.1:9100/api/nodes/\$W1
-curl -s -X DELETE http://127.0.0.1:9100/api/nodes/\$W2
-curl -s -X DELETE http://127.0.0.1:9100/api/nodes/\$W3
 ```
+# 1. Report what you're doing
+report_status(status="active", message="spawning 3 workers")
+
+# 2. Spawn 3 workers (agent_type and project inherited automatically)
+w1 = spawn_node(name="apple-1")  # returns {"id": 7, ...}
+w2 = spawn_node(name="apple-2")  # returns {"id": 8, ...}
+w3 = spawn_node(name="apple-3")  # returns {"id": 9, ...}
+
+report_status(status="active", message="spawned 3 workers, sending tasks")
+
+# 3. Send tasks (auto-waits 2s before sending)
+send_task(node_id=7, command="pick a random number and report it")
+send_task(node_id=8, command="pick a random number and report it")
+send_task(node_id=9, command="pick a random number and report it")
+
+report_status(status="active", message="tasks sent, polling workers")
+
+# 4. Poll until all workers are idle
+# Use get_tree() or get_node() to check status periodically
+
+# 5. Read results
+# cat /tmp/armada-results/apple-1/result etc.
+
+# 6. Clean up
+kill_node(node_id=7)
+kill_node(node_id=8)
+kill_node(node_id=9)
+
+report_status(status="idle", message="done, total = 42")
+```
+
+## Guidelines
+
+- Always spawn workers through the `spawn_node` MCP tool
+- Workers auto-load armada skills and start reporting immediately
+- Check the dashboard (http://127.0.0.1:9100) to visualize your tree
+- Keep the tree clean — kill workers when they finish
+- Workers inherit the project label automatically

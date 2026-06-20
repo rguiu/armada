@@ -136,8 +136,15 @@ def main():
     elif args[0] == "demodb":
         _demodb_cmd(args[1:])
 
+    elif args[0] == "mcp":
+        from .mcp_server import main as mcp_main
+        mcp_main()
+
+    elif args[0] == "report":
+        _report_cmd(args[1:])
+
     else:
-        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|demodb|watch] [--lan] [--qr] [--keep-token]")
+        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|demodb|watch|mcp|report] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
         print("  attach       Attach to a node: armada attach <name> [--split] (no args = debug mode)")
@@ -153,6 +160,8 @@ def main():
         print("  projects     List, add, or remove projects")
         print("  demodb       Seed a demo database for screen recordings")
         print("  watch        Interactive live dashboard with select, attach, and alerts")
+        print("  mcp          Start the Armada MCP server (stdio mode, for AI agents)")
+        print("  report       Report node status: armada report <status> <message> [--options '<json>']")
         print("  --lan        Bind to / use LAN IP (for other devices on network)")
         print("  --qr         Show QR code (with token command)")
         print("  --no-browser Don't open the dashboard in a browser")
@@ -1325,6 +1334,55 @@ def _attach_split(search: str, quiet: bool = False):
     if not quiet:
         print(msg)
     return True, msg
+
+
+def _report_cmd(subargs: list[str]):
+    """Report node status: armada report <status> <message> [--options '<json>']"""
+    import json
+    import urllib.request
+    import urllib.error
+
+    node_name = os.environ.get("ARMADA_NODE_NAME", "")
+    if not node_name:
+        return
+
+    options_json = ""
+    filtered = []
+    i = 0
+    while i < len(subargs):
+        if subargs[i] == "--options" and i + 1 < len(subargs):
+            options_json = subargs[i + 1]
+            i += 2
+        else:
+            filtered.append(subargs[i])
+            i += 1
+
+    if len(filtered) < 1:
+        print("Usage: armada report <status> <message> [--options '<json>']", file=sys.stderr)
+        sys.exit(1)
+
+    status = filtered[0]
+    message = " ".join(filtered[1:]) if len(filtered) > 1 else ""
+
+    api_base = os.environ.get("ARMADA_API", f"http://127.0.0.1:{constants.DEFAULT_PORT}")
+    body: dict = {"name": node_name, "status": status, "message": message}
+    if options_json:
+        try:
+            body["options"] = json.loads(options_json)
+        except json.JSONDecodeError:
+            pass
+
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        f"{api_base}/api/report",
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
 
 
 def _demodb_cmd(subargs: list[str]):
