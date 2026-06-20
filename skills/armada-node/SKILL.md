@@ -163,6 +163,47 @@ kill_node(node_id=9)
 report_status(status="idle", message="done, total = 42")
 ```
 
+## Messaging
+
+Nodes can send structured messages to each other using the task mailbox MCP tools. Messages are delivered automatically via tmux when the recipient is idle.
+
+| Tool | Purpose |
+|------|---------|
+| `send_message(to_node_id, payload, msg_type?)` | Send a message to another node's inbox |
+| `read_inbox(status?)` | Read your pending messages |
+| `ack_message(message_id)` | Mark a message as done |
+| `broadcast(payload, msg_type?)` | Send a message to all your children |
+| `post_to_queue(payload, msg_type?)` | Post a task to the shared work queue |
+| `claim_from_queue()` | Claim the next available task from the queue |
+
+### Sending messages
+
+```
+send_message(to_node_id=5, payload="review the auth module", msg_type="task")
+```
+
+### Reading your inbox
+
+```
+read_inbox()                    # pending messages only
+read_inbox(status="all")        # all messages
+```
+
+### Acknowledging messages
+
+After processing a message, mark it done:
+```
+ack_message(message_id=42)
+```
+
+### Work queue
+
+Post tasks that any idle agent can pick up:
+```
+post_to_queue(payload="run integration tests")
+claim_from_queue()  # claims the next available task
+```
+
 ## Guidelines
 
 - Always spawn workers through the `spawn_node` MCP tool

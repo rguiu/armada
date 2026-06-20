@@ -95,6 +95,22 @@ kill_node(node_id=7)  # kills node and all its descendants
 5. **Kill** workers when done to keep the tree clean
 6. **Report** your own completion
 
+## Messaging
+
+Send structured messages to children instead of using `send_task` for everything. Messages are delivered automatically when the recipient is idle.
+
+```
+send_message(to_node_id=7, payload="review the auth module", msg_type="task")
+broadcast(payload="stop and report results", msg_type="message")
+read_inbox()
+ack_message(message_id=42)
+```
+
+Post tasks to the shared work queue for any idle agent to claim:
+```
+post_to_queue(payload="run integration tests")
+```
+
 ## Guidelines
 
 - Always spawn workers through the `spawn_node` MCP tool
