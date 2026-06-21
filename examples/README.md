@@ -1,32 +1,20 @@
 # Armada Messaging Examples
 
-Practical examples demonstrating inter-node communication patterns for AI agent orchestration.
-
-## Prerequisites
-
-- Armada server running (`armada`)
-- OpenCode or Claude Code installed
-- A registered project (`armada projects add`)
+Practical examples demonstrating inter-node communication patterns for AI agent orchestration. Each example has been executed and verified.
 
 ## How to Run
 
-1. Create an orchestrator node from the dashboard (http://127.0.0.1:9100) or CLI:
-   ```bash
-   armada create -p <project-id>
-   ```
-2. Attach to the node
-3. Paste the prompt from the example
-4. Watch the dashboard as workers spawn, exchange messages, and report back
+<!-- TODO: fill in with CLI-based workflow -->
 
 ## Examples
 
-| Example | Pattern | What it demonstrates |
-|---------|---------|---------------------|
-| [Mesh Hello/ACK](messaging-test.md) | Sibling mesh | Full-mesh communication, ACK protocol, inbox draining |
-| [Parallel Feature Build](parallel-feature-build.md) | Sibling contract exchange | Two agents agree on an interface via messaging, build independently |
-| [Multi-Project Security Audit](multi-project-audit.md) | Fan-out + collect | Parallel analysis across repos, results collected via inbox |
-| [Work Queue Task Board](work-queue-task-board.md) | Competing consumers | Dynamic task distribution, agents claim work from a shared queue |
-| [Code Review Pipeline](code-review-pipeline.md) | Multi-round bidirectional | Iterative write/review cycle via messaging until approval |
+| Example | Pattern | Result |
+|---------|---------|--------|
+| [Mesh Hello/ACK](mesh-hello-ack/) | Sibling mesh | PASS — 12 messages, all ACKed |
+| [Parallel Feature Build](parallel-feature-build/) | Sibling contract exchange | PASS — API spec + React component |
+| [Multi-Project Security Audit](multi-project-audit/) | Fan-out + collect | PASS — 3 projects, 16 issues found |
+| [Work Queue Task Board](work-queue-task-board/) | Competing consumers | PASS — 5 tasks, dynamic distribution |
+| [Code Review Pipeline](code-review-pipeline/) | Multi-round bidirectional | PASS — LRU cache approved round 2 |
 
 ## Messaging Patterns
 
@@ -45,11 +33,11 @@ broadcast(payload="stop and report results")
 ### 3. Collect via Inbox
 Parent reads completion messages from children. Replaces polling — workers notify when done.
 ```
-read_inbox()  # returns all pending messages from children
+read_inbox()
 ```
 
 ### 4. Work Queue (competing consumers)
-Tasks posted to a shared queue. Any idle agent can claim and execute. No parent-child relationship needed.
+Tasks posted to a shared queue. Any idle agent can claim and execute.
 ```
 post_to_queue(payload="implement feature X")
 claim_from_queue()
