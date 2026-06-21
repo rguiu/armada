@@ -69,6 +69,7 @@ def install_skills_to_user() -> list[str]:
 
     _install_global_plugins(home)
     _install_global_claude_hooks(home)
+    _install_global_mcp(home)
     return installed
 
 
@@ -127,6 +128,28 @@ def _install_global_claude_hooks(home: Path):
             dst.chmod(0o755)
 
 
+def _install_global_mcp(home: Path):
+    mcp_entry = {"command": "armada", "args": ["mcp"]}
+
+    oc_mcp = home / ".config" / "opencode" / "mcp.json"
+    oc_mcp.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        cfg = json.loads(oc_mcp.read_text()) if oc_mcp.exists() else {}
+    except (json.JSONDecodeError, IOError):
+        cfg = {}
+    cfg.setdefault("mcpServers", {})["armada"] = mcp_entry
+    oc_mcp.write_text(json.dumps(cfg, indent=2))
+
+    cl_mcp = home / ".claude" / "mcp.json"
+    cl_mcp.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        cfg = json.loads(cl_mcp.read_text()) if cl_mcp.exists() else {}
+    except (json.JSONDecodeError, IOError):
+        cfg = {}
+    cfg.setdefault("mcpServers", {})["armada"] = mcp_entry
+    cl_mcp.write_text(json.dumps(cfg, indent=2))
+
+
 def deploy_claude_hooks(cwd: str):
     """Install Claude Code hooks for status reporting into a project."""
     hooks_dst = Path(cwd) / ".claude" / "hooks"
@@ -178,11 +201,13 @@ def agent_hook_instructions(agent_name: str) -> str:
     workspace = tmux_session.agent_workspace(agent_name)
     return f"""You are node "{agent_name}". You are being monitored by Armada.
 
-REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using curl:
+REPORT YOUR STATUS BEFORE AND AFTER EVERY ACTION using the `report_status` MCP tool:
 
-- Before any work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"active","message":"<short description of what you are about to do>"}}'`
-- When waiting for user input or permission: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"pending","message":"<what you are waiting for>"}}'`
-- After completing work: `curl -s -X POST http://127.0.0.1:9100/api/report -H "Content-Type: application/json" -d '{{"name":"{agent_name}","status":"idle","message":"<what you just did>"}}'`
+- Before any work: `report_status(status="active", message="<short description>")`
+- When waiting for user input: `report_status(status="pending", message="<what you need>")`
+- After completing work: `report_status(status="idle", message="<what you did>")`
+
+Use the Armada MCP tools for all node operations: `spawn_node`, `send_task`, `kill_node`, `get_tree`, `get_node`, `get_my_info`.
 
 Keep messages under 10 words. Be specific: "spawning 3 workers", "polling children", "reading results", "summing apples", not generic "working".
 
@@ -203,6 +228,45 @@ def save_agent_hook(agent_name: str) -> str:
     return path
 
 
+def _deploy_mcp_opencode(cwd: str):
+    """Add Armada MCP server config to opencode.json."""
+    config_path = Path(cwd) / "opencode.json"
+    try:
+        if config_path.exists():
+            cfg = json.loads(config_path.read_text())
+        else:
+            cfg = {}
+    except (json.JSONDecodeError, IOError):
+        cfg = {}
+
+    cfg.setdefault("$schema", "https://opencode.ai/config.json")
+    mcp_servers = cfg.setdefault("mcpServers", {})
+    mcp_servers["armada"] = {
+        "command": "armada",
+        "args": ["mcp"],
+    }
+    config_path.write_text(json.dumps(cfg, indent=2))
+
+
+def _deploy_mcp_claude(cwd: str):
+    """Add Armada MCP server config for Claude Code."""
+    config_path = Path(cwd) / ".mcp.json"
+    try:
+        if config_path.exists():
+            cfg = json.loads(config_path.read_text())
+        else:
+            cfg = {}
+    except (json.JSONDecodeError, IOError):
+        cfg = {}
+
+    mcp_servers = cfg.setdefault("mcpServers", {})
+    mcp_servers["armada"] = {
+        "command": "armada",
+        "args": ["mcp"],
+    }
+    config_path.write_text(json.dumps(cfg, indent=2))
+
+
 def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
     """Install skills and agent-specific hooks/plugins for a new node."""
     from .. import logs
@@ -218,6 +282,11 @@ def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
         except Exception as e:
             logs.log_event("_server", "deploy_error",
                            {"step": "pending_plugin", "cwd": cwd, "error": str(e)})
+        try:
+            _deploy_mcp_opencode(cwd)
+        except Exception as e:
+            logs.log_event("_server", "deploy_error",
+                           {"step": "mcp_opencode", "cwd": cwd, "error": str(e)})
 
     if agent_type == "claude":
         try:
@@ -225,5 +294,10 @@ def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
         except Exception as e:
             logs.log_event("_server", "deploy_error",
                            {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
+        try:
+            _deploy_mcp_claude(cwd)
+        except Exception as e:
+            logs.log_event("_server", "deploy_error",
+                           {"step": "mcp_claude", "cwd": cwd, "error": str(e)})
 
     save_agent_hook(agent_name)

@@ -9,15 +9,9 @@ build/
 .opencode/
 .claude/
 /bin
-PLAN.md
-/prep-demo.sh
-/demo.gif
-/demo.tape
-/demo.sh
-/demos
-/demo-script.md
 .coverage
 coverage.xml
 PUBLISHING.md
 RELEASING.md
 SESSION_LOG.md
+.planning/
