@@ -230,24 +230,31 @@ def save_agent_hook(agent_name: str) -> str:
 
 
 def _deploy_mcp_opencode(cwd: str):
-    """Add Armada MCP server config to opencode.json."""
-    config_path = Path(cwd) / "opencode.json"
+    """Add Armada MCP server config for OpenCode via .opencode/mcp.json."""
+    project = Path(cwd)
+    mcp_path = project / ".opencode" / "mcp.json"
+    mcp_path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        if config_path.exists():
-            cfg = json.loads(config_path.read_text())
-        else:
-            cfg = {}
+        cfg = json.loads(mcp_path.read_text()) if mcp_path.exists() else {}
     except (json.JSONDecodeError, IOError):
         cfg = {}
 
-    cfg.setdefault("$schema", "https://opencode.ai/config.json")
-    mcp_servers = cfg.setdefault("mcpServers", {})
     armada_bin = shutil.which("armada") or "armada"
-    mcp_servers["armada"] = {
+    cfg["armada"] = {
         "command": armada_bin,
         "args": ["mcp"],
     }
-    config_path.write_text(json.dumps(cfg, indent=2))
+    mcp_path.write_text(json.dumps(cfg, indent=2))
+
+    oc_config = project / "opencode.json"
+    if oc_config.exists():
+        try:
+            oc_cfg = json.loads(oc_config.read_text())
+            if "mcpServers" in oc_cfg:
+                del oc_cfg["mcpServers"]
+                oc_config.write_text(json.dumps(oc_cfg, indent=2))
+        except (json.JSONDecodeError, IOError):
+            pass
 
 
 def _deploy_mcp_claude(cwd: str):
