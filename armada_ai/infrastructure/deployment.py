@@ -129,7 +129,8 @@ def _install_global_claude_hooks(home: Path):
 
 
 def _install_global_mcp(home: Path):
-    mcp_entry = {"command": "armada", "args": ["mcp"]}
+    armada_bin = shutil.which("armada") or "armada"
+    mcp_entry = {"command": armada_bin, "args": ["mcp"]}
 
     oc_mcp = home / ".config" / "opencode" / "mcp.json"
     oc_mcp.parent.mkdir(parents=True, exist_ok=True)
@@ -241,8 +242,9 @@ def _deploy_mcp_opencode(cwd: str):
 
     cfg.setdefault("$schema", "https://opencode.ai/config.json")
     mcp_servers = cfg.setdefault("mcpServers", {})
+    armada_bin = shutil.which("armada") or "armada"
     mcp_servers["armada"] = {
-        "command": "armada",
+        "command": armada_bin,
         "args": ["mcp"],
     }
     config_path.write_text(json.dumps(cfg, indent=2))
@@ -260,8 +262,9 @@ def _deploy_mcp_claude(cwd: str):
         cfg = {}
 
     mcp_servers = cfg.setdefault("mcpServers", {})
+    armada_bin = shutil.which("armada") or "armada"
     mcp_servers["armada"] = {
-        "command": "armada",
+        "command": armada_bin,
         "args": ["mcp"],
     }
     config_path.write_text(json.dumps(cfg, indent=2))
