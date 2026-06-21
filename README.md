@@ -24,6 +24,8 @@ Armada gives you fleet management for coding agents: persistent tmux sessions, a
 - **Persistent sessions** — built on tmux: reconnect, multiplex, survive disconnects. No custom runtime to maintain.
 - **Web dashboard** — manage agents from your browser, phone, or tablet. Scan the QR code to open on other devices.
 - **Delegation** — agents can spawn child workers, delegate tasks, and run in parallel.
+- **MCP Server** — agents interact with Armada through typed MCP tools instead of raw API calls. Agent type, project, and parent are inherited automatically.
+- **Task Mailbox** — structured inter-node messaging with event-driven delivery. Nodes send messages, broadcast to children, and post to a shared work queue.
 - **One command** — `armada` starts the server and opens the dashboard.
 
 ## Installation
@@ -82,8 +84,9 @@ Armada supports both Claude Code and OpenCode as first-class agents. Each integr
 
 OpenCode is an open-source AI coding agent. Armada's OpenCode integration uses:
 
-- **Plugin system** — an `armada-pending` plugin hooks into OpenCode's event loop (tool start/stop, permission requests, step completion). Agents automatically report `active`, `idle`, or `pending` status to Armada.
-- **Skills** — `armada-node` and `armada-worker` skill files teach agents how to report status, spawn children, and send results.
+- **MCP Server** — an Armada MCP server provides typed tools (`spawn_node`, `send_message`, `report_status`, etc.) directly in the agent's tool palette. Auto-configured via `opencode.json`.
+- **Plugin system** — an `armada-pending` plugin hooks into OpenCode's event loop (tool start/stop, permission requests). Agents automatically report status to Armada.
+- **Skills** — `armada-node` and `armada-worker` skill files teach agents orchestration and messaging patterns.
 
 To use OpenCode: install it, make sure `opencode` is on your PATH, and run `armada setup`. When creating a node, select "opencode" as the agent type.
 
@@ -91,14 +94,14 @@ To use OpenCode: install it, make sure `opencode` is on your PATH, and run `arma
 
 Claude Code is Anthropic's official CLI agent. Armada's Claude Code integration uses:
 
-- **Hook system** — four shell hooks (`claude-pre-tool.sh`, `claude-post-tool.sh`, `claude-stop.sh`, `claude-permission.sh`) fire on tool use, idle transitions, and permission requests. These curl the Armada API to report status.
+- **Hook system** — four shell hooks fire on tool use, idle transitions, and permission requests. These use the `armada report` CLI to report status.
 - **Skills** — the same skill files are installed to `~/.claude/skills/` and auto-activate when `ARMADA_NODE_NAME` is set.
 
 To use Claude Code: install it via `npm install -g @anthropic-ai/claude-code`, make sure `claude` is on your PATH, and run `armada setup`. When creating a node, select "claude" as the agent type.
 
 ### Bash
 
-Bare shell nodes without an agent. Useful for running scripts or manual commands. Armada provides a bash wrapper (`armada-bash.sh`) with functions like `armada_report_active`, `armada_spawn`, and `armada_kill_child`.
+Bare shell nodes without an agent. Useful for running scripts or manual commands. Armada provides a bash wrapper (`armada-bash.sh`) with functions like `armada_report_active`, `armada_spawn`, and `armada_kill_child`. Status reporting uses the `armada report` CLI.
 
 ### Which one should you use?
 
@@ -127,7 +130,7 @@ Either works. Pick based on which agent you already have installed.
 | `armada projects` | List projects |
 | `armada projects add <id> <name> <path>` | Register a project |
 | `armada projects rm <id>` | Remove a project |
-| `armada setup` | Install skills to user profile |
+| `armada setup` | Install skills and MCP config to user profile |
 | `armada version` | Print the Armada version |
 | `armada token` | Print the auth token |
 | `armada token --qr` | Print token as scannable QR code |
@@ -136,6 +139,8 @@ Either works. Pick based on which agent you already have installed.
 | `armada service install` | Install as system service (launchd/systemd) |
 | `armada status` | Show server health and agent counts |
 | `armada doctor` | Clean up stale tmux sessions and DB state |
+| `armada mcp` | Start the Armada MCP server (stdio mode, for AI agents) |
+| `armada report <status> <msg>` | Report node status (used by hooks and scripts) |
 | `armada --lan` | Bind server to LAN IP (access from other devices) |
 
 ## CLI Watch Dashboard
@@ -179,20 +184,53 @@ Forms for creating nodes and projects use keyboard navigation: `Tab`/`↑↓` to
 
 ## Agent Delegation
 
-Agents can delegate work to child nodes using built-in skills:
+Agents can delegate work to child nodes using MCP tools:
 
 ```
 Orchestrator
 ├── Reviewer  — reviews the code
 └── Tests     — writes and runs tests
+                └── sends "job completed" message back to Orchestrator
 ```
 
 1. Start Armada: `armada`
 2. Register a project and create an orchestrator node (agent type: "opencode" or "claude")
-3. The orchestrator spawns child workers, delegates tasks, and monitors results
-4. The dashboard updates in real time as each worker reports `active`/`idle`
+3. The orchestrator uses `spawn_node("reviewer")` and `send_task(node_id, "review the auth module")` — agent type and project are inherited automatically
+4. Workers send completion messages back to the parent via `send_message(to_node_id=parent_id, payload="job completed", msg_type="result")`
+5. The orchestrator collects results via `read_inbox()` and cleans up with `kill_node()`
 
-Skills (`armada-node`, `armada-worker`, `armada-orchestrator`) teach agents how to spawn children, delegate work, and report results back to the dashboard.
+Skills (`armada-node`, `armada-worker`, `armada-orchestrator`) teach agents the full workflow including messaging patterns.
+
+## MCP Server
+
+Armada includes an MCP (Model Context Protocol) server that exposes all operations as typed tools for AI agents. Instead of constructing curl commands, agents call tools with automatic defaults:
+
+| Tool | Purpose |
+|------|---------|
+| `spawn_node(name)` | Spawn a child node (inherits agent_type, project, parent) |
+| `send_task(node_id, command)` | Send command to node (auto-waits for tmux init) |
+| `kill_node(node_id)` | Kill node and descendants |
+| `get_tree()` | Full node hierarchy with status |
+| `get_node(node_id)` | Node details and reports |
+| `report_status(status, message)` | Report own status |
+| `send_message(to_node_id, payload)` | Send message to another node |
+| `read_inbox()` | Read pending messages |
+| `broadcast(payload)` | Send message to all children |
+| `post_to_queue(payload)` | Post task to shared work queue |
+| `claim_from_queue()` | Claim next available queue task |
+
+The MCP server is auto-configured when nodes are created. Run manually with `armada mcp`.
+
+## Inter-Node Messaging
+
+Nodes communicate through a task mailbox system with event-driven delivery:
+
+- **Direct messages** — any node can send structured messages to any other node
+- **Broadcast** — fan-out a message to all children with one call
+- **Work queue** — post tasks to a shared queue for any idle agent to claim
+- **Event-driven delivery** — no polling; the server pushes messages via tmux when the recipient goes idle
+- **ACK** — messages track `pending → delivered → done` lifecycle
+- **Completion notifications** — workers automatically notify their parent when a task is done
 
 ## Architecture
 
@@ -209,10 +247,16 @@ SQLite (WAL) + FastAPI REST server, daemonized. Each node is a tmux session — 
 | `POST` | `/api/nodes/:id/send` | Send command to worker |
 | `POST` | `/api/nodes/:id/attach` | Open terminal attached to node |
 | `POST` | `/api/report` | Agent status report (`active`/`idle`/`pending`/`error`) |
+| `POST` | `/api/nodes/:id/messages` | Send message to node |
+| `GET` | `/api/nodes/:id/messages` | Read node inbox |
+| `PATCH` | `/api/messages/:id` | Acknowledge message (mark done) |
+| `POST` | `/api/nodes/:id/broadcast` | Broadcast to all children |
+| `POST` | `/api/queue` | Post task to shared work queue |
+| `GET` | `/api/queue` | List unclaimed queue tasks |
+| `POST` | `/api/queue/:id/claim` | Claim a queue task |
 | `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
 | `GET` | `/health` | Health check (no auth) |
 | `GET` | `/metrics` | Prometheus metrics |
-| `GET` | `/api/qr?url=` | SVG QR code |
 
 Full API docs at `http://127.0.0.1:9100/docs` (FastAPI Swagger UI).
 
