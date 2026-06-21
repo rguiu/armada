@@ -90,10 +90,28 @@ kill_node(node_id=7)  # kills node and all its descendants
 
 1. **Analyze** the task and break it into parallel workstreams
 2. **Spawn** a worker node per workstream with descriptive names
-3. **Send** tasks to each worker via `send_task`
-4. **Monitor** their status via `get_tree` or `get_node`
+3. **Send** tasks to each worker via `send_task` — instruct them to `send_message` back when done
+4. **Collect** completion messages via `read_inbox()` — children send `msg_type="result"` when finished
 5. **Kill** workers when done to keep the tree clean
 6. **Report** your own completion
+
+## Messaging
+
+Send structured messages to children instead of using `send_task` for everything. Messages are delivered automatically when the recipient is idle.
+
+```
+send_message(to_node_id=7, payload="review the auth module", msg_type="task")
+broadcast(payload="stop and report results", msg_type="message")
+read_inbox()        # collect completion messages from children
+ack_message(message_id=42)
+```
+
+**Children notify parent when done.** Workers automatically send a completion message (`msg_type="result"`) to their parent when they finish. Use `read_inbox()` to collect these instead of polling node status.
+
+Post tasks to the shared work queue for any idle agent to claim:
+```
+post_to_queue(payload="run integration tests")
+```
 
 ## Guidelines
 

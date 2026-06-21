@@ -40,6 +40,17 @@ get_hourly_stats = _db.get_hourly_stats
 get_stats_summary = _db.get_stats_summary
 _sync_projects_from_json = _db._sync_projects_from_json
 
+create_message = _db.create_message
+get_message = _db.get_message
+get_messages_for_node = _db.get_messages_for_node
+get_pending_messages_for_node = _db.get_pending_messages_for_node
+mark_message_delivered = _db.mark_message_delivered
+mark_message_done = _db.mark_message_done
+create_broadcast = _db.create_broadcast
+get_queue_tasks = _db.get_queue_tasks
+claim_queue_task = _db.claim_queue_task
+expire_stale_claims = _db.expire_stale_claims
+
 
 def __getattr__(name: str):
     """Forward attribute access to constants for DB_PATH/DB_DIR/PROJECTS_FILE."""

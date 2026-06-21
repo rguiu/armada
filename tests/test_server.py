@@ -1146,3 +1146,157 @@ class TestNewEndpoints:
     def test_patch_rename_bad_node(self, client):
         r = client.patch("/api/nodes/9999", json={"action": "rename", "name": "x"})
         assert r.status_code == 404
+
+
+class TestMessaging:
+
+    def test_send_message(self, temp_db, client):
+        _mkproj(temp_db, "mp", "MsgProj")
+        nid = temp_db.create_node("receiver", "#111", project_label_id="mp")
+        r = client.post(f"/api/nodes/{nid}/messages", json={
+            "payload": '{"body": "hello"}',
+            "type": "message",
+        })
+        assert r.status_code == 201
+        data = r.json()
+        assert data["to_node_id"] == nid
+        assert data["status"] == "delivered"
+        assert data["type"] == "message"
+
+    def test_send_message_with_from(self, temp_db, client):
+        _mkproj(temp_db, "mp", "MsgProj")
+        sender = temp_db.create_node("sender", "#111", project_label_id="mp")
+        receiver = temp_db.create_node("receiver", "#222", project_label_id="mp")
+        r = client.post(f"/api/nodes/{receiver}/messages", json={
+            "payload": "review this code",
+            "type": "task",
+            "from_node_id": sender,
+        })
+        assert r.status_code == 201
+        data = r.json()
+        assert data["from_node_id"] == sender
+        assert data["from_node_name"] == "sender"
+
+    def test_send_message_404(self, client):
+        r = client.post("/api/nodes/9999/messages", json={"payload": "hi"})
+        assert r.status_code == 404
+
+    def test_send_message_no_payload(self, temp_db, client):
+        nid = temp_db.create_node("n", "#111")
+        r = client.post(f"/api/nodes/{nid}/messages", json={"type": "task"})
+        assert r.status_code == 400
+
+    def test_read_inbox(self, temp_db, client):
+        _mkproj(temp_db, "mp", "MsgProj")
+        nid = temp_db.create_node("inbox-node", "#111", project_label_id="mp")
+        temp_db.create_message(None, nid, "task", "do something")
+        temp_db.create_message(None, nid, "task", "do another thing")
+        r = client.get(f"/api/nodes/{nid}/messages")
+        assert r.status_code == 200
+        assert len(r.json()) == 2
+
+    def test_read_inbox_filter_status(self, temp_db, client):
+        nid = temp_db.create_node("filter-node", "#111")
+        mid = temp_db.create_message(None, nid, "task", "task1")
+        temp_db.mark_message_done(mid)
+        temp_db.create_message(None, nid, "task", "task2")
+        r = client.get(f"/api/nodes/{nid}/messages?status=pending")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
+        r = client.get(f"/api/nodes/{nid}/messages?status=all")
+        assert r.status_code == 200
+        assert len(r.json()) == 2
+
+    def test_read_inbox_404(self, client):
+        r = client.get("/api/nodes/9999/messages")
+        assert r.status_code == 404
+
+    def test_ack_message(self, temp_db, client):
+        nid = temp_db.create_node("ack-node", "#111")
+        mid = temp_db.create_message(None, nid, "task", "do it")
+        r = client.patch(f"/api/messages/{mid}", json={"status": "done"})
+        assert r.status_code == 200
+        msg = temp_db.get_message(mid)
+        assert msg.status == "done"
+        assert msg.done_at is not None
+
+    def test_ack_message_404(self, client):
+        r = client.patch("/api/messages/9999", json={"status": "done"})
+        assert r.status_code == 404
+
+    def test_ack_message_invalid_status(self, temp_db, client):
+        nid = temp_db.create_node("bad-ack", "#111")
+        mid = temp_db.create_message(None, nid, "task", "x")
+        r = client.patch(f"/api/messages/{mid}", json={"status": "pending"})
+        assert r.status_code == 400
+
+    def test_broadcast(self, temp_db, client):
+        _mkproj(temp_db, "bp", "BroadProj")
+        parent = temp_db.create_node("parent", "#111", project_label_id="bp")
+        c1 = temp_db.create_node("child-1", "#222", parent_id=parent, project_label_id="bp")
+        c2 = temp_db.create_node("child-2", "#333", parent_id=parent, project_label_id="bp")
+        r = client.post(f"/api/nodes/{parent}/broadcast", json={
+            "payload": "stop working",
+            "type": "message",
+        })
+        assert r.status_code == 201
+        data = r.json()
+        assert data["messages_created"] == 2
+        msgs1 = temp_db.get_messages_for_node(c1, status="all")
+        msgs2 = temp_db.get_messages_for_node(c2, status="all")
+        assert len(msgs1) == 1
+        assert len(msgs2) == 1
+        assert msgs1[0].payload == "stop working"
+
+    def test_broadcast_404(self, client):
+        r = client.post("/api/nodes/9999/broadcast", json={"payload": "x"})
+        assert r.status_code == 404
+
+    def test_post_to_queue(self, temp_db, client):
+        r = client.post("/api/queue", json={
+            "payload": '{"task": "review auth"}',
+            "type": "task",
+        })
+        assert r.status_code == 201
+        data = r.json()
+        assert data["to_node_id"] is None
+        assert data["status"] == "pending"
+
+    def test_list_queue(self, temp_db, client):
+        temp_db.create_message(None, None, "task", "task1")
+        temp_db.create_message(None, None, "task", "task2")
+        r = client.get("/api/queue")
+        assert r.status_code == 200
+        assert len(r.json()) == 2
+
+    def test_claim_queue_task(self, temp_db, client):
+        mid = temp_db.create_message(None, None, "task", "do this")
+        nid = temp_db.create_node("claimer", "#111")
+        r = client.post(f"/api/queue/{mid}/claim", json={"node_id": nid})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "claimed"
+        assert data["claimed_by"] == nid
+
+    def test_claim_already_claimed(self, temp_db, client):
+        mid = temp_db.create_message(None, None, "task", "do this")
+        n1 = temp_db.create_node("claimer1", "#111")
+        n2 = temp_db.create_node("claimer2", "#222")
+        client.post(f"/api/queue/{mid}/claim", json={"node_id": n1})
+        r = client.post(f"/api/queue/{mid}/claim", json={"node_id": n2})
+        assert r.status_code == 409
+
+    def test_claim_404(self, client):
+        r = client.post("/api/queue/9999/claim", json={"node_id": 1})
+        assert r.status_code == 404
+
+    def test_claim_not_queue_task(self, temp_db, client):
+        nid = temp_db.create_node("target", "#111")
+        mid = temp_db.create_message(None, nid, "message", "direct msg")
+        r = client.post(f"/api/queue/{mid}/claim", json={"node_id": nid})
+        assert r.status_code == 400
+
+    def test_claim_no_node_id(self, temp_db, client):
+        mid = temp_db.create_message(None, None, "task", "do this")
+        r = client.post(f"/api/queue/{mid}/claim", json={})
+        assert r.status_code == 400

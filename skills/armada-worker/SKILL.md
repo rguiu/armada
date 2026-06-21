@@ -33,6 +33,18 @@ report_status(status="idle", message="<what you just completed>")
 
 Be specific. Good messages: "reading config file", "running tests", "generating report". Bad: "working".
 
+## Notify Parent on Completion — MANDATORY
+
+**When you finish your assigned task, send a completion message to your parent node.**
+
+```
+my_info = get_my_info()
+send_message(to_node_id=my_info.parent_id, payload="job completed: <summary of what you did>", msg_type="result")
+report_status(status="idle", message="done, notified parent")
+```
+
+This lets the orchestrator know you're done without polling.
+
 ## Guidelines
 
 - Focus on the task your parent node assigned you

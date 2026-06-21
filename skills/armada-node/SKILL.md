@@ -134,6 +134,7 @@ To run 3 parallel workers using MCP tools:
 ```
 # 1. Report what you're doing
 report_status(status="active", message="spawning 3 workers")
+my_info = get_my_info()  # get your own ID for children to message back
 
 # 2. Spawn 3 workers (agent_type and project inherited automatically)
 w1 = spawn_node(name="apple-1")  # returns {"id": 7, ...}
@@ -142,26 +143,76 @@ w3 = spawn_node(name="apple-3")  # returns {"id": 9, ...}
 
 report_status(status="active", message="spawned 3 workers, sending tasks")
 
-# 3. Send tasks (auto-waits 2s before sending)
-send_task(node_id=7, command="pick a random number and report it")
-send_task(node_id=8, command="pick a random number and report it")
-send_task(node_id=9, command="pick a random number and report it")
+# 3. Send tasks — instruct children to message back when done
+send_task(node_id=7, command="pick a random number. When done, send_message(to_node_id=<parent_id>, payload='done: <result>', msg_type='result')")
+send_task(node_id=8, command="...")
+send_task(node_id=9, command="...")
 
-report_status(status="active", message="tasks sent, polling workers")
+report_status(status="active", message="tasks sent, waiting for results")
 
-# 4. Poll until all workers are idle
-# Use get_tree() or get_node() to check status periodically
+# 4. Read inbox for completion messages from children
+# Children send_message back with msg_type="result" when they finish
+results = read_inbox()  # returns completion messages from children
 
-# 5. Read results
-# cat /tmp/armada-results/apple-1/result etc.
-
-# 6. Clean up
+# 5. Once all children report back, clean up
 kill_node(node_id=7)
 kill_node(node_id=8)
 kill_node(node_id=9)
 
 report_status(status="idle", message="done, total = 42")
 ```
+
+## Messaging
+
+Nodes can send structured messages to each other using the task mailbox MCP tools. Messages are delivered automatically via tmux when the recipient is idle.
+
+| Tool | Purpose |
+|------|---------|
+| `send_message(to_node_id, payload, msg_type?)` | Send a message to another node's inbox |
+| `read_inbox(status?)` | Read your pending messages |
+| `ack_message(message_id)` | Mark a message as done |
+| `broadcast(payload, msg_type?)` | Send a message to all your children |
+| `post_to_queue(payload, msg_type?)` | Post a task to the shared work queue |
+| `claim_from_queue()` | Claim the next available task from the queue |
+
+### Sending messages
+
+```
+send_message(to_node_id=5, payload="review the auth module", msg_type="task")
+```
+
+### Reading your inbox
+
+```
+read_inbox()                    # pending messages only
+read_inbox(status="all")        # all messages
+```
+
+### Acknowledging messages
+
+After processing a message, mark it done:
+```
+ack_message(message_id=42)
+```
+
+### Work queue
+
+Post tasks that any idle agent can pick up:
+```
+post_to_queue(payload="run integration tests")
+claim_from_queue()  # claims the next available task
+```
+
+### Notify parent on completion
+
+**When you finish your assigned task, always send a completion message to your parent node.** This lets the orchestrator know you're done without polling.
+
+```
+my_info = get_my_info()  # returns {"parent_id": 5, ...}
+send_message(to_node_id=my_info.parent_id, payload="job completed: <summary of results>", msg_type="result")
+```
+
+The parent collects these messages with `read_inbox()` to know when all children are done.
 
 ## Guidelines
 

@@ -129,7 +129,8 @@ def _install_global_claude_hooks(home: Path):
 
 
 def _install_global_mcp(home: Path):
-    mcp_entry = {"command": "armada", "args": ["mcp"]}
+    armada_bin = shutil.which("armada") or "armada"
+    mcp_entry = {"command": armada_bin, "args": ["mcp"]}
 
     oc_mcp = home / ".config" / "opencode" / "mcp.json"
     oc_mcp.parent.mkdir(parents=True, exist_ok=True)
@@ -229,7 +230,7 @@ def save_agent_hook(agent_name: str) -> str:
 
 
 def _deploy_mcp_opencode(cwd: str):
-    """Add Armada MCP server config to opencode.json."""
+    """Add Armada MCP server config to opencode.json under the 'mcp' key."""
     config_path = Path(cwd) / "opencode.json"
     try:
         if config_path.exists():
@@ -240,10 +241,13 @@ def _deploy_mcp_opencode(cwd: str):
         cfg = {}
 
     cfg.setdefault("$schema", "https://opencode.ai/config.json")
-    mcp_servers = cfg.setdefault("mcpServers", {})
-    mcp_servers["armada"] = {
-        "command": "armada",
-        "args": ["mcp"],
+    if "mcpServers" in cfg:
+        del cfg["mcpServers"]
+    armada_bin = shutil.which("armada") or "armada"
+    mcp = cfg.setdefault("mcp", {})
+    mcp["armada"] = {
+        "type": "local",
+        "command": [armada_bin, "mcp"],
     }
     config_path.write_text(json.dumps(cfg, indent=2))
 
@@ -260,8 +264,9 @@ def _deploy_mcp_claude(cwd: str):
         cfg = {}
 
     mcp_servers = cfg.setdefault("mcpServers", {})
+    armada_bin = shutil.which("armada") or "armada"
     mcp_servers["armada"] = {
-        "command": "armada",
+        "command": armada_bin,
         "args": ["mcp"],
     }
     config_path.write_text(json.dumps(cfg, indent=2))
