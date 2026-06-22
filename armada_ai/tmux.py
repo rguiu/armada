@@ -4,6 +4,7 @@ import time as _time            # noqa: F401  used by tests
 
 from .infrastructure.tmux_session import (  # noqa: F401  re-exported
     ARMADA_SESSION,
+    NodeWindowResult,
     agent_session, agent_target, agent_workspace,
     has_tmux, tmux,
     ensure_armada_session, create_node_window, kill_node_window,
@@ -11,6 +12,7 @@ from .infrastructure.tmux_session import (  # noqa: F401  re-exported
     send_keys, send_raw_keys, send_initial_prompt,
     cleanup_stale_sessions,
     rename_node_session, get_session_id,
+    pane_alive,
 )
 from .infrastructure.deployment import (  # noqa: F401  re-exported
     install_skills_to_project as install_skills,

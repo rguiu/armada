@@ -300,7 +300,7 @@ def _auto_restart_node(node):
             name=name, colour=node.colour,
             working_dir=working_dir, agent_type=node.agent_type,
         )
-        pane_id, session_id = result if result is not None else (None, None)
+        pane_id, session_id = result.pane_id, result.session_id
         if pane_id:
             nid = db.create_node(
                 name=name, colour=node.colour, parent_id=None,
@@ -484,17 +484,18 @@ async def create_node(request: Request):
     agent_name = agent_name.replace(".", "-")
 
     # Deploy skills/hooks before creating tmux window
-    deployment.deploy_for_agent_type(agent_name, req.agent_type, path)
+    await asyncio.to_thread(deployment.deploy_for_agent_type, agent_name, req.agent_type, path)
 
-    result = tmux.create_node_window(
+    result = await asyncio.to_thread(
+        tmux.create_node_window,
         name=agent_name, colour=colour, working_dir=path,
         agent_type=req.agent_type,
     )
-    if result is None or (isinstance(result, tuple) and len(result) == 3):
-        reason = result[2] if isinstance(result, tuple) else "unknown error"
+    if not result or not result.ok:
+        error_detail = result.error if result else "create_node_window returned None"
         raise HTTPException(status_code=500,
-            detail=f"Failed to create tmux session: {reason}")
-    pane_id, session_id = result
+            detail=f"Failed to create tmux session: {error_detail}")
+    pane_id, session_id = result.pane_id, result.session_id
 
     node_id = db.create_node(
         name=agent_name, colour=colour, parent_id=req.parent_id,
@@ -567,7 +568,10 @@ async def send_to_node(node_id: int, request: Request):
     if not tmux.window_exists(node.name):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    ok = tmux.send_raw_keys(node.name, command) if raw else tmux.send_keys(node.name, command)
+    if raw:
+        ok = await asyncio.to_thread(tmux.send_raw_keys, node.name, command)
+    else:
+        ok = await asyncio.to_thread(tmux.send_keys, node.name, command)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to send command")
 

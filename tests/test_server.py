@@ -133,12 +133,21 @@ class TestNodeCRUD:
         assert "not found" in r.json()["detail"]
 
     def test_create_node_tmux_failure(self, temp_db, client):
-        """When tmux create_node_window returns None, should return 500."""
+        """When tmux create_node_window returns an error result, should return 500."""
         _mkproj(temp_db, "real", "Real Project")
         import armada_ai.tmux as tmux_mod
         orig = tmux_mod.create_node_window.return_value
+
+        class _FailResult:
+            pane_id = None
+            session_id = None
+            error = "tmux not found in PATH"
+            @property
+            def ok(self):
+                return False
+
         try:
-            tmux_mod.create_node_window.return_value = None
+            tmux_mod.create_node_window.return_value = _FailResult()
             r = client.post("/api/nodes", json={
                 "project_label_id": "real",
                 "agent_type": "bash",
