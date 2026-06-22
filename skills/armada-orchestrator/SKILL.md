@@ -5,118 +5,96 @@ description: Use for ANY task involving multiple workers, parallel execution, co
 
 # Armada Orchestrator Skill
 
-For orchestrator nodes that manage a tree of workers. This node spawns children via MCP tools, delegates tasks, monitors progress, and cleans up when done.
+You are the ROOT orchestrator — the entry point that spawns children. Use this when the user requests parallel work from outside Armada.
 
-Your node name comes from the `ARMADA_NODE_NAME` environment variable.
+Your job: break the task into parallel workstreams, spawn child nodes, delegate, collect results, clean up.
 
-## Installation
-
-Armada automatically copies this skill to `.opencode/skills/` or `.claude/skills/` when a node is created.
-
----
-
-## Available MCP Tools
-
-All Armada operations are available as MCP tools. Use these instead of curl commands:
+## Available MCP Tools (Complete Reference)
 
 | Tool | Purpose |
 |------|---------|
-| `get_my_info` | Get your own node ID, name, agent_type, project |
-| `spawn_node` | Spawn a child node (inherits agent_type and project automatically) |
-| `send_task` | Send a command to a child node (auto-waits 2s for tmux init) |
+| `get_my_info` | Get your own node ID, name, agent_type, project, parent_id |
+| `spawn_node` | Spawn a child node (inherits agent_type and project) |
+| `send_task` | Send a command to a child node's terminal (auto-waits 2s) |
 | `kill_node` | Kill a node and all its descendants |
-| `get_tree` | Get the full node tree with status |
-| `get_node` | Get details for a specific node |
+| `get_tree` | Full node tree with status per node |
+| `get_node` | Details + reports for one node |
 | `list_nodes` | List all live nodes |
-| `report_status` | Report your own status (active, idle, pending, error) |
+| `report_status` | Report your own status (active/idle/pending/error) |
 | `list_projects` | List all project labels |
+| `send_message` | Send a message to a specific node's inbox |
+| `read_inbox` | Read your pending messages (or all with status="all") |
+| `ack_message` | Mark a message as done |
+| `broadcast` | Send a message to ALL your children |
+| `post_to_queue` | Post a task to the shared work queue |
+| `claim_from_queue` | Claim the next available task from the queue |
 
 ## Status Reporting — MANDATORY
 
-**You MUST report status BEFORE and AFTER every significant action.**
-
-Before any action:
+Report BEFORE and AFTER every action:
 ```
-report_status(status="active", message="<what you are about to do>")
-```
-
-After completing:
-```
-report_status(status="idle", message="<what you just did>")
+report_status(status="active", message="spawning 3 workers")
+# ... do work ...
+report_status(status="idle", message="spawned worker-1, worker-2, worker-3")
 ```
 
-**Report at every step.** Examples:
-- `"spawning 3 workers"` / `"spawned worker-1 (7), worker-2 (8), worker-3 (9)"`
-- `"sending tasks to workers"` / `"tasks sent to all 3 workers"`
-- `"polling workers: 0/3 done"` / `"all 3 workers idle"`
-- `"reading results"` / `"results: worker-1=42, worker-2=17, worker-3=8"`
-- `"killing workers"` / `"killed 3 workers, cleanup complete"`
+Keep messages under 10 words. Be specific, never generic.
 
-Never say just "working" — always describe exactly what step you're on. Keep messages under 10 words.
+## Orchestration Pattern
+
+1. **Spawn** workers with descriptive names
+2. **Send tasks** — instruct each child to `send_message` back with `msg_type="result"` when done
+3. **Poll inbox** — call `read_inbox()` in a loop until all children report back
+4. **Ack** each result message
+5. **Kill** workers
+6. **Report** your own completion
 
 ## Spawning Workers
 
-**RULE: Children ALWAYS inherit the parent's `agent_type`.** The `spawn_node` tool handles this automatically — you do NOT need to detect or pass agent_type. Only override if the user explicitly requests a different agent type.
-
+Children inherit your `agent_type` and `project_label_id` automatically:
 ```
-spawn_node(name="worker-1")
-spawn_node(name="reviewer", agent_type="opencode")  # only if user explicitly asks
-```
-
-Use descriptive worker names: `test-writer`, `api-designer`, `code-reviewer`.
-
-## Sending Tasks to Workers
-
-Use `send_task` to send commands to a worker's terminal. It automatically waits 2 seconds for tmux to initialize.
-
-```
-send_task(node_id=7, command="run the test suite and report results")
+spawn_node(name="test-runner")
+spawn_node(name="reviewer")
 ```
 
-## Checking Workers
+Only override agent_type if explicitly requested by the user.
+
+## Sending Tasks
 
 ```
-get_tree()       # full tree with status per node
-get_node(node_id=7)  # details + reports for one node
+send_task(node_id=7, command="Run the test suite. When done: send_message(to_node_id=5, payload='results: ...', msg_type='result')")
 ```
 
-## Killing Workers
+Always tell children your node ID so they can message back. Get it from `get_my_info()`.
+
+## Collecting Results — Polling Pattern
+
+`read_inbox()` is NOT blocking. You must poll:
+
+```
+# Poll until all N children have reported back
+results = []
+while len(results) < N:
+    report_status(status="active", message=f"waiting: {len(results)}/{N} done")
+    messages = read_inbox()
+    for msg in messages:
+        results.append(msg)
+        ack_message(message_id=msg["id"])
+    if len(results) < N:
+        # Wait before next poll (use a brief pause)
+        pass  # agent naturally has latency between tool calls
+```
+
+## Result Mechanism
+
+**Always use messaging** (`send_message` with `msg_type="result"`) for collecting results from children.
+
+`/tmp/armada-results/` is a legacy mechanism for bash-only nodes. Do not rely on it for AI agent nodes.
+
+## Cleanup
 
 ```
 kill_node(node_id=7)  # kills node and all its descendants
 ```
 
-## Orchestration Pattern
-
-1. **Analyze** the task and break it into parallel workstreams
-2. **Spawn** a worker node per workstream with descriptive names
-3. **Send** tasks to each worker via `send_task` — instruct them to `send_message` back when done
-4. **Collect** completion messages via `read_inbox()` — children send `msg_type="result"` when finished
-5. **Kill** workers when done to keep the tree clean
-6. **Report** your own completion
-
-## Messaging
-
-Send structured messages to children instead of using `send_task` for everything. Messages are delivered automatically when the recipient is idle.
-
-```
-send_message(to_node_id=7, payload="review the auth module", msg_type="task")
-broadcast(payload="stop and report results", msg_type="message")
-read_inbox()        # collect completion messages from children
-ack_message(message_id=42)
-```
-
-**Children notify parent when done.** Workers automatically send a completion message (`msg_type="result"`) to their parent when they finish. Use `read_inbox()` to collect these instead of polling node status.
-
-Post tasks to the shared work queue for any idle agent to claim:
-```
-post_to_queue(payload="run integration tests")
-```
-
-## Guidelines
-
-- Always spawn workers through the `spawn_node` MCP tool
-- Workers auto-load armada skills and start reporting immediately
-- Check the dashboard (http://127.0.0.1:9100) to visualize your tree
-- Keep the tree clean — kill workers when they finish
-- Workers inherit the project label automatically
+Always kill workers when done to keep the tree clean.

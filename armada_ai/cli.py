@@ -79,6 +79,8 @@ def main():
 
     if not args or args[0] in ("start", "serve"):
         from .server import start_server, _ensure_token
+        if not args:
+            print("Starting Armada server... (use 'armada --help' for other commands)")
         _ensure_token(keep=True)
         _print_startup_info(lan=lan, qr=qr)
         start_server(daemon=True, open_browser=not no_browser, lan=lan, keep_token=keep_token)
@@ -130,6 +132,12 @@ def main():
     elif args[0] == "projects":
         _projects_cmd(args[1:])
 
+    elif args[0] == "logs":
+        _logs_cmd(args[1:])
+
+    elif args[0] == "restart":
+        _restart_cmd(args[1:])
+
     elif args[0] == "watch":
         _watch_cmd(args[1:])
 
@@ -144,7 +152,7 @@ def main():
         _report_cmd(args[1:])
 
     else:
-        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|demodb|watch|mcp|report] [--lan] [--qr] [--keep-token]")
+        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|create|logs|restart|demodb|watch|mcp|report] [--lan] [--qr] [--keep-token]")
         print("  start        Start the Armada server daemon + open dashboard")
         print("  stop         Stop the Armada server")
         print("  attach       Attach to a node: armada attach <name> [--split] (no args = debug mode)")
@@ -157,6 +165,8 @@ def main():
         print("  service      Install as system service (launchd/systemd)")
         print("  nodes        List all agents in a table")
         print("  create       Create a new agent node")
+        print("  logs         Tail a node's log: armada logs <name> [-f] [-n 20]")
+        print("  restart      Kill + recreate a node: armada restart <name-or-id>")
         print("  projects     List, add, or remove projects")
         print("  demodb       Seed a demo database for screen recordings")
         print("  watch        Interactive live dashboard with select, attach, and alerts")
@@ -427,7 +437,7 @@ def _doctor(nuke: bool = False):
         live_nodes = conn.execute(
             "SELECT id, name FROM nodes WHERE status != 'dead'"
         ).fetchall()
-        running_names = _tmux_mod.running_window_names() if 'running' in dir() else []
+        running_names = _tmux_mod.running_window_names()
         stale = [(row["id"], row["name"]) for row in live_nodes if row["name"] not in running_names]
         if stale:
             for nid, name in stale:
@@ -507,6 +517,20 @@ def _api_post(path: str, body: dict | None = None):
     return json.loads(resp.read())
 
 
+def _api_delete(path: str):
+    import json
+    import urllib.request
+    token = _read_token()
+    req = urllib.request.Request(
+        f"http://127.0.0.1:9100{path}",
+        method="DELETE",
+    )
+    if token:
+        req.add_header("Authorization", f"Bearer {token}")
+    resp = urllib.request.urlopen(req, timeout=5)
+    return json.loads(resp.read())
+
+
 def _nodes_cmd(subargs: list[str]):
     watch = "--watch" in subargs
     if not watch:
@@ -537,6 +561,7 @@ def _print_nodes():
                 "status": n["status"],
                 "project": n.get("project_label_name", "") or "",
                 "message": n.get("latest_message", "") or "",
+                "total_cost": n.get("total_cost", 0) or 0,
                 "depth": depth,
             })
             if n.get("children"):
@@ -548,10 +573,15 @@ def _print_nodes():
         print("No agents. Create one with the dashboard or API.")
         return
 
+    show_cost = any(r["total_cost"] > 0 for r in rows)
+
     for r in rows:
         indent = "  " * r["depth"]
+        cost_str = ""
+        if show_cost:
+            cost_str = f"  \033[36m${r['total_cost']:.2f}\033[0m"
         print(f"  {r['icon']} {indent}\033[1m{r['name']}\033[0m  "
-              f"\033[2m{r['status']}\033[0m  {r['project']}")
+              f"\033[2m{r['status']}\033[0m  {r['project']}{cost_str}")
         if r["message"]:
             print(f"     {indent}\033[2m{r['message'][:80]}\033[0m")
 
@@ -582,6 +612,10 @@ def _focus_iterm():
         pass
 
 
+def _escape_applescript(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _focus_attached_node(name):
     """Focus the iTerm tab/window already attached to the given node name."""
     import subprocess
@@ -590,12 +624,13 @@ def _focus_attached_node(name):
         _focus_iterm()
         return
 
+    safe_name = _escape_applescript(name)
     script = f'''
     tell application "iTerm"
         repeat with w in windows
             repeat with t in tabs of w
                 repeat with s in sessions of t
-                    if name of s contains "{name}" then
+                    if name of s contains "{safe_name}" then
                         select w
                         select t
                         select s
@@ -1383,6 +1418,150 @@ def _report_cmd(subargs: list[str]):
         urllib.request.urlopen(req, timeout=5)
     except Exception:
         pass
+
+
+def _logs_cmd(subargs: list[str]):
+    import time
+    import json
+    from datetime import datetime
+
+    follow = "--follow" in subargs or "-f" in subargs
+    flags_to_strip = {"--follow", "-f"}
+
+    # Parse --limit / -n
+    limit = 20
+    clean_args = []
+    i = 0
+    while i < len(subargs):
+        if subargs[i] in ("--limit", "-n"):
+            if i + 1 < len(subargs):
+                try:
+                    limit = int(subargs[i + 1])
+                except ValueError:
+                    print(f"Invalid limit: {subargs[i + 1]}", file=sys.stderr)
+                    sys.exit(1)
+                i += 2
+                continue
+        elif subargs[i] not in flags_to_strip:
+            clean_args.append(subargs[i])
+        i += 1
+
+    if not clean_args:
+        print("Usage: armada logs <node-name> [-f|--follow] [-n|--limit N]", file=sys.stderr)
+        sys.exit(1)
+
+    node_name = clean_args[0]
+    log_path = os.path.join(constants.LOGS_DIR, f"{node_name}.jsonl")
+
+    if not os.path.exists(log_path):
+        print(f"No log file found for node '{node_name}'.", file=sys.stderr)
+        print(f"  Expected: {log_path}", file=sys.stderr)
+        # List available nodes
+        if os.path.isdir(constants.LOGS_DIR):
+            available = [f[:-6] for f in os.listdir(constants.LOGS_DIR)
+                        if f.endswith(".jsonl") and not f.startswith("_")]
+            if available:
+                print(f"  Available nodes: {', '.join(sorted(available))}", file=sys.stderr)
+        sys.exit(1)
+
+    def _format_entry(entry: dict) -> str:
+        ts = entry.get("ts", 0)
+        dt = datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+        etype = entry.get("type", "?")
+        data = entry.get("data", {})
+        # Build a concise message from data
+        if etype == "report":
+            msg = f"{data.get('status', '')} {data.get('message', '')}".strip()
+        elif etype == "create":
+            msg = f"agent_type={data.get('agent_type', '?')} project={data.get('project', '?')}"
+        elif etype == "send":
+            msg = data.get("command", "")
+        elif etype == "output":
+            msg = data.get("content", "")[:100]
+        elif etype == "health":
+            msg = "dead=true" if data.get("dead") else "alive"
+        else:
+            msg = json.dumps(data) if data else ""
+        return f"\033[2m{dt}\033[0m  \033[1m{etype:<10}\033[0m  {msg}"
+
+    # Read last N lines
+    try:
+        with open(log_path) as f:
+            lines = f.readlines()
+    except IOError as e:
+        print(f"Error reading log: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    tail_lines = lines[-limit:]
+    for line in tail_lines:
+        try:
+            entry = json.loads(line)
+            print(_format_entry(entry))
+        except json.JSONDecodeError:
+            continue
+
+    if not follow:
+        return
+
+    # Follow mode: watch for new lines
+    try:
+        with open(log_path) as f:
+            # Seek to end
+            f.seek(0, 2)
+            while True:
+                line = f.readline()
+                if line:
+                    try:
+                        entry = json.loads(line)
+                        print(_format_entry(entry))
+                    except json.JSONDecodeError:
+                        pass
+                else:
+                    time.sleep(0.5)
+    except KeyboardInterrupt:
+        pass
+
+
+def _restart_cmd(subargs: list[str]):
+    if not subargs:
+        print("Usage: armada restart <node-name-or-id>", file=sys.stderr)
+        sys.exit(1)
+
+    search = subargs[0]
+    node = _find_node(search)
+    if not node:
+        sys.exit(1)
+
+    node_id = node["id"]
+    node_name = node["name"]
+    project_label_id = node.get("project_label_id", "")
+    agent_type = node.get("agent_type", "auto")
+
+    # Kill the node
+    print(f"Killing {node_name} (id={node_id})...")
+    try:
+        _api_delete(f"/api/nodes/{node_id}")
+    except Exception as e:
+        print(f"Failed to kill node: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Recreate with same config
+    print(f"Recreating with project={project_label_id} agent_type={agent_type}...")
+    body = {
+        "project_label_id": project_label_id,
+        "agent_type": agent_type,
+    }
+    try:
+        result = _api_post("/api/nodes", body)
+        print(f"Created new node: {result['name']} (id={result['id']})")
+    except Exception as e:
+        resp = ""
+        try:
+            resp = str(e.read(), "utf-8")[:200]
+        except Exception:
+            pass
+        print(f"Failed to create node: {e}\n{resp}", file=sys.stderr)
+        sys.exit(1)
 
 
 def _demodb_cmd(subargs: list[str]):

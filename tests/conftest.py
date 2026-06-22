@@ -10,7 +10,14 @@ _mock_tmux = MagicMock()
 _mock_tmux._has_tmux.return_value = True
 _mock_tmux.window_exists.return_value = True
 _mock_tmux.send_keys.return_value = True
-_mock_tmux.create_node_window.return_value = "%0"
+class _FakeNodeWindowResult:
+    pane_id = "%0"
+    session_id = "armada-test"
+    error = None
+    @property
+    def ok(self):
+        return True
+_mock_tmux.create_node_window.return_value = _FakeNodeWindowResult()
 _mock_tmux.kill_node_window.return_value = None
 _mock_tmux.ensure_armada_session.return_value = None
 _mock_tmux.install_skills.return_value = "/tmp/skills"

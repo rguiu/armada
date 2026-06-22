@@ -57,6 +57,9 @@ TOKEN = ""  # backward compat: set during startup
 SERVER_START_TS = 0.0
 
 _ws_clients: set[WebSocket] = set()
+_restart_lock = threading.Lock()
+_restarting_nodes: set[str] = set()
+_create_lock: asyncio.Lock | None = None
 
 
 # --- WebSocket broadcast ---
@@ -290,17 +293,21 @@ def _mark_node_dead(node_id: int):
 
 def _auto_restart_node(node):
     name = node.name
-    restart_count = db.get_restart_count_for_name(name)
-    if restart_count >= constants.MAX_RESTARTS:
-        logs.log_event(name, "restart_limit", {"count": restart_count}, level="error")
-        return
+    with _restart_lock:
+        if name in _restarting_nodes:
+            return
+        _restarting_nodes.add(name)
     try:
+        restart_count = db.get_restart_count_for_name(name)
+        if restart_count >= constants.MAX_RESTARTS:
+            logs.log_event(name, "restart_limit", {"count": restart_count}, level="error")
+            return
         working_dir = db.get_project_label_path(node.project_label_id) or os.getcwd()
         result = tmux.create_node_window(
             name=name, colour=node.colour,
             working_dir=working_dir, agent_type=node.agent_type,
         )
-        pane_id, session_id = result if result is not None else (None, None)
+        pane_id, session_id = result.pane_id, result.session_id
         if pane_id:
             nid = db.create_node(
                 name=name, colour=node.colour, parent_id=None,
@@ -317,6 +324,9 @@ def _auto_restart_node(node):
             }, level="warn")
     except Exception as e:
         logs.log_event(name, "restart_failed", {"error": str(e)}, level="error")
+    finally:
+        with _restart_lock:
+            _restarting_nodes.discard(name)
 
 
 # --- Exception handlers ---
@@ -459,12 +469,21 @@ async def create_node(request: Request):
     if not req.project_label_id:
         raise HTTPException(status_code=400, detail="A project must be selected")
 
-    existing_names = db.existing_names()
-    validation_error = req.validate_name(existing_names)
-    if isinstance(validation_error, str):
-        if "already exists" in validation_error:
-            raise HTTPException(status_code=409, detail=validation_error)
-        raise HTTPException(status_code=400, detail=validation_error)
+    global _create_lock
+    if _create_lock is None:
+        _create_lock = asyncio.Lock()
+    async with _create_lock:
+        existing_names = db.existing_names()
+        validation_error = req.validate_name(existing_names)
+        if isinstance(validation_error, str):
+            if "already exists" in validation_error:
+                raise HTTPException(status_code=409, detail=validation_error)
+            raise HTTPException(status_code=400, detail=validation_error)
+
+        colour = naming.next_colour(db.active_colours())
+        agent_name = req.name or naming.generate_sequential_name(
+            req.project_label_id, existing_names)
+        agent_name = agent_name.replace(".", "-")
 
     path = db.get_project_label_path(req.project_label_id)
     if not path:
@@ -478,30 +497,33 @@ async def create_node(request: Request):
         if not parent:
             raise HTTPException(status_code=400, detail="Parent node not found")
 
-    colour = naming.next_colour(db.active_colours())
-    agent_name = req.name or naming.generate_sequential_name(
-        req.project_label_id, existing_names)
-    agent_name = agent_name.replace(".", "-")
-
     # Deploy skills/hooks before creating tmux window
-    deployment.deploy_for_agent_type(agent_name, req.agent_type, path)
+    await asyncio.to_thread(deployment.deploy_for_agent_type, agent_name, req.agent_type, path)
 
-    result = tmux.create_node_window(
+    result = await asyncio.to_thread(
+        tmux.create_node_window,
         name=agent_name, colour=colour, working_dir=path,
         agent_type=req.agent_type,
     )
-    if result is None or (isinstance(result, tuple) and len(result) == 3):
-        reason = result[2] if isinstance(result, tuple) else "unknown error"
+    if not result or not result.ok:
+        error_detail = result.error if result else "create_node_window returned None"
         raise HTTPException(status_code=500,
-            detail=f"Failed to create tmux session: {reason}")
-    pane_id, session_id = result
+            detail=f"Failed to create tmux session: {error_detail}")
+    pane_id, session_id = result.pane_id, result.session_id
 
-    node_id = db.create_node(
-        name=agent_name, colour=colour, parent_id=req.parent_id,
-        project_label_id=req.project_label_id, tmux_pane_id=pane_id,
-        tmux_session_id=session_id,
-        agent_type=req.agent_type,
-    )
+    try:
+        node_id = db.create_node(
+            name=agent_name, colour=colour, parent_id=req.parent_id,
+            project_label_id=req.project_label_id, tmux_pane_id=pane_id,
+            tmux_session_id=session_id,
+            agent_type=req.agent_type,
+        )
+    except Exception:
+        try:
+            tmux.kill_node_window(agent_name)
+        except Exception:
+            pass
+        raise
 
     db.add_status_report(node_id, "idle",
         f"node created (agent={req.agent_type}, project={req.project_label_id or 'cwd'})")
@@ -524,15 +546,24 @@ def delete_node(node_id: int):
         raise HTTPException(status_code=404, detail="Node not found")
 
     import sqlite3 as _sqlite3
-    for _attempt in range(10):
+    killed = []
+    try:
+        for _attempt in range(10):
+            try:
+                killed = db.kill_node(node_id)
+                break
+            except _sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and _attempt < 9:
+                    _time.sleep(0.1 * (_attempt + 1))
+                    continue
+                raise
+    except Exception:
+        # DB exhausted retries — still kill the tmux session
         try:
-            killed = db.kill_node(node_id)
-            break
-        except _sqlite3.OperationalError as e:
-            if "locked" in str(e).lower() and _attempt < 9:
-                _time.sleep(0.1 * (_attempt + 1))
-                continue
-            raise
+            tmux.kill_node_window(node.name)
+        except Exception:
+            pass
+        raise
     for entry in killed:
         try:
             content = tmux.capture_pane_content(entry["name"])
@@ -567,7 +598,10 @@ async def send_to_node(node_id: int, request: Request):
     if not tmux.window_exists(node.name):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
-    ok = tmux.send_raw_keys(node.name, command) if raw else tmux.send_keys(node.name, command)
+    if raw:
+        ok = await asyncio.to_thread(tmux.send_raw_keys, node.name, command)
+    else:
+        ok = await asyncio.to_thread(tmux.send_keys, node.name, command)
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to send command")
 

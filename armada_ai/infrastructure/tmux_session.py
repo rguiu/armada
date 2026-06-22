@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .. import constants
@@ -19,7 +20,21 @@ from .. import logs
 ARMADA_SESSION = "armada"
 
 _zdotdirs: dict[str, str] = {}
+_zdotdirs_lock = threading.Lock()
 _SKILLS_SRC = Path(__file__).parent.parent.parent / "skills"
+_prompt_semaphore = threading.Semaphore(3)
+
+
+@dataclass
+class NodeWindowResult:
+    """Result of create_node_window: success has pane_id+session_id, failure has error."""
+    pane_id: str | None = None
+    session_id: str | None = None
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return self.pane_id is not None
 
 
 def agent_session(name: str) -> str:
@@ -68,7 +83,7 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
         if agent_bin:
             return (
                 f"{sanitize_prefix}"
-                f"cd '{safe_dir}' && "
+                f"cd {safe_dir} && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
                 f"export ARMADA_WORKSPACE='{safe_workspace}' && "
@@ -77,7 +92,7 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
         else:
             return (
                 f"{sanitize_prefix}"
-                f"cd '{safe_dir}' && "
+                f"cd {safe_dir} && "
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
                 f"export ARMADA_WORKSPACE='{safe_workspace}' && "
@@ -86,11 +101,12 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
     else:
         tools_dir = Path(__file__).parent / "bin"
         zdotdir = tempfile.mkdtemp(prefix="_armada_zsh_")
-        _zdotdirs[name] = zdotdir
+        with _zdotdirs_lock:
+            _zdotdirs[name] = zdotdir
         _write_zsh_startup(zdotdir, tools_dir)
         return (
             f"{sanitize_prefix}"
-            f"cd '{safe_dir}' && "
+            f"cd {safe_dir} && "
             f"printf '\\033]2;{name}\\033\\\\' && "
             f"export ARMADA_NODE_NAME='{safe_name}' && "
             f"export ARMADA_WORKSPACE='{safe_workspace}' && "
@@ -102,11 +118,11 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
 
 def create_node_window(name: str, colour: str, working_dir: str,
                        agent_type: str = "auto",
-                       ) -> tuple[str, str] | tuple[None, None, str]:
+                       ) -> NodeWindowResult:
     if not has_tmux():
         reason = "tmux not found in PATH"
         logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
-        return None, None, reason
+        return NodeWindowResult(error=reason)
 
     ensure_armada_session()
 
@@ -119,7 +135,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
     if shell_cmd is None:
         reason = "failed to build shell command"
         logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
-        return None, None, reason
+        return NodeWindowResult(error=reason)
 
     result = tmux("new-session", "-d", "-s", session, shell_cmd)
     if result.returncode != 0:
@@ -128,7 +144,7 @@ def create_node_window(name: str, colour: str, working_dir: str,
     if result.returncode != 0:
         reason = f"tmux new-session failed: {result.stderr.strip()}" if result.stderr.strip() else f"tmux new-session exited with code {result.returncode}"
         logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
-        return None, None, reason
+        return NodeWindowResult(error=reason)
 
     pane_id = None
     for _ in range(5):
@@ -155,10 +171,11 @@ def create_node_window(name: str, colour: str, working_dir: str,
         reason = "pane not ready after session created (tmux may be overloaded)"
         logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
         tmux("kill-session", "-t", session)
-        _zdotdirs.pop(name, None)
-        return None, None, reason
+        with _zdotdirs_lock:
+            _zdotdirs.pop(name, None)
+        return NodeWindowResult(error=reason)
 
-    return pane_id, session_id
+    return NodeWindowResult(pane_id=pane_id, session_id=session_id)
 
 
 def kill_node_window(name: str):
@@ -292,10 +309,8 @@ def _flush_raw_buf(target, buf):
 
 
 def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
-    sentinel = threading.Semaphore(3)
-
     def _send():
-        if not sentinel.acquire(blocking=False):
+        if not _prompt_semaphore.acquire(blocking=False):
             send_keys(name, prompt)
             return
         try:
@@ -316,7 +331,8 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
                 result = tmux("capture-pane", "-t", target, "-p")
                 if result.returncode == 0:
                     content = result.stdout
-                    if ">" in content or "❯" in content or "cost" in content.lower():
+                    last_line = content.rstrip().rsplit("\n", 1)[-1] if content.strip() else ""
+                    if ">" in last_line or "❯" in last_line or "cost" in content.lower():
                         time.sleep(0.5)
                         send_keys(name, prompt)
                         return
@@ -330,7 +346,7 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
                 logs.log_event("_server", "prompt_fallback_error",
                                {"node": name, "error": str(e2)})
         finally:
-            sentinel.release()
+            _prompt_semaphore.release()
 
     threading.Thread(target=_send, daemon=True).start()
 
@@ -349,14 +365,15 @@ def cleanup_stale_sessions():
 
     if has_tmux():
         running = running_window_names()
-        stale = [n for n in list(_zdotdirs) if n not in running]
-        for name in stale:
-            zdotdir = _zdotdirs.pop(name, None)
-            if zdotdir:
-                try:
-                    shutil.rmtree(zdotdir, ignore_errors=True)
-                except Exception:
-                    pass
+        with _zdotdirs_lock:
+            stale = [n for n in list(_zdotdirs) if n not in running]
+            for name in stale:
+                zdotdir = _zdotdirs.pop(name, None)
+                if zdotdir:
+                    try:
+                        shutil.rmtree(zdotdir, ignore_errors=True)
+                    except Exception:
+                        pass
 
     tmp = tempfile.gettempdir()
     now = time.time()

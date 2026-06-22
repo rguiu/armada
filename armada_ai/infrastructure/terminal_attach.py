@@ -18,6 +18,10 @@ def _hex_to_rgb(hex_colour: str) -> tuple[int, int, int]:
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
 
 
+def _escape_applescript(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def attach_to_node(name: str, colour: str = "#8b949e",
                    session_id: str | None = None) -> str | None:
     """Open a terminal attached to the named tmux session.
@@ -60,6 +64,7 @@ def _try_iterm_attach(name: str, colour: str, session_id: str | None = None) -> 
         f.write(f"tmux attach-session -t '{session}' || {{ echo 'Failed to attach to tmux session: {session}'; read -p \"Press Enter to close...\"; }}\n")
 
     try:
+        safe_name = _escape_applescript(name)
         applescript = (
             f'tell application "iTerm"\n'
             f'  activate\n'
@@ -67,14 +72,14 @@ def _try_iterm_attach(name: str, colour: str, session_id: str | None = None) -> 
             f'    tell current window\n'
             f'      set newTab to (create tab with default profile)\n'
             f'      tell current session of newTab\n'
-            f'        set name to "{name}"\n'
+            f'        set name to "{safe_name}"\n'
             f'        write text "source {attach_file} && rm -f {attach_file}"\n'
             f'      end tell\n'
             f'    end tell\n'
             f'  on error\n'
             f'    set newWindow to (create window with default profile)\n'
             f'    tell current session of newWindow\n'
-            f'      set name to "{name}"\n'
+            f'      set name to "{safe_name}"\n'
             f'      write text "source {attach_file} && rm -f {attach_file}"\n'
             f'    end tell\n'
             f'  end try\n'
@@ -116,7 +121,7 @@ def _try_terminal_attach(name: str, session_id: str | None = None) -> str | None
         return f"Terminal: {result.stderr.strip()}"
     except FileNotFoundError:
         _remove(attach_file)
-        return None
+        return "osascript not available"
     except Exception as e:
         _remove(attach_file)
         return f"Terminal error: {e}"
@@ -135,10 +140,10 @@ def _try_linux_attach(name: str, colour: str = "#8b949e",
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
         f.write(f"{tmux_cmd} || {{ echo 'Failed to attach'; read; }}\n")
-    os.chmod(attach_file, 0o755)
+    os.chmod(attach_file, 0o700)
 
     def _cleanup():
-        time.sleep(10)
+        time.sleep(30)
         _remove(attach_file)
     threading.Thread(target=_cleanup, daemon=True).start()
 
