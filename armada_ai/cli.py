@@ -79,6 +79,8 @@ def main():
 
     if not args or args[0] in ("start", "serve"):
         from .server import start_server, _ensure_token
+        if not args:
+            print("Starting Armada server... (use 'armada --help' for other commands)")
         _ensure_token(keep=True)
         _print_startup_info(lan=lan, qr=qr)
         start_server(daemon=True, open_browser=not no_browser, lan=lan, keep_token=keep_token)
