@@ -490,10 +490,11 @@ async def create_node(request: Request):
         name=agent_name, colour=colour, working_dir=path,
         agent_type=req.agent_type,
     )
-    pane_id, session_id = result if result is not None else (None, None)
-    if pane_id is None:
+    if result is None or (isinstance(result, tuple) and len(result) == 3):
+        reason = result[2] if isinstance(result, tuple) else "unknown error"
         raise HTTPException(status_code=500,
-            detail="Failed to create tmux window. Is tmux installed and running?")
+            detail=f"Failed to create tmux session: {reason}")
+    pane_id, session_id = result
 
     node_id = db.create_node(
         name=agent_name, colour=colour, parent_id=req.parent_id,
