@@ -101,9 +101,12 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
 
 
 def create_node_window(name: str, colour: str, working_dir: str,
-                       agent_type: str = "auto") -> tuple[str, str] | tuple[None, None]:
+                       agent_type: str = "auto",
+                       ) -> tuple[str, str] | tuple[None, None, str]:
     if not has_tmux():
-        return None, None
+        reason = "tmux not found in PATH"
+        logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
+        return None, None, reason
 
     ensure_armada_session()
 
@@ -113,10 +116,19 @@ def create_node_window(name: str, colour: str, working_dir: str,
         tmux("kill-session", "-t", session)
 
     shell_cmd = _build_shell_command(name, colour, working_dir, agent_type)
+    if shell_cmd is None:
+        reason = "failed to build shell command"
+        logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
+        return None, None, reason
 
     result = tmux("new-session", "-d", "-s", session, shell_cmd)
     if result.returncode != 0:
-        return None, None
+        time.sleep(1)
+        result = tmux("new-session", "-d", "-s", session, shell_cmd)
+    if result.returncode != 0:
+        reason = f"tmux new-session failed: {result.stderr.strip()}" if result.stderr.strip() else f"tmux new-session exited with code {result.returncode}"
+        logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
+        return None, None, reason
 
     pane_id = None
     for _ in range(5):
@@ -140,8 +152,11 @@ def create_node_window(name: str, colour: str, working_dir: str,
         tmux("set-option", "-t", session, "automatic-rename", "off")
         tmux("set-option", "-t", session, "allow-rename", "off")
     else:
+        reason = "pane not ready after session created (tmux may be overloaded)"
+        logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
         tmux("kill-session", "-t", session)
         _zdotdirs.pop(name, None)
+        return None, None, reason
 
     return pane_id, session_id
 
