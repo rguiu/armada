@@ -496,12 +496,17 @@ async def create_node(request: Request):
             detail=f"Failed to create tmux session: {reason}")
     pane_id, session_id = result
 
-    node_id = db.create_node(
-        name=agent_name, colour=colour, parent_id=req.parent_id,
-        project_label_id=req.project_label_id, tmux_pane_id=pane_id,
-        tmux_session_id=session_id,
-        agent_type=req.agent_type,
-    )
+    try:
+        node_id = db.create_node(
+            name=agent_name, colour=colour, parent_id=req.parent_id,
+            project_label_id=req.project_label_id, tmux_pane_id=pane_id,
+            tmux_session_id=session_id,
+            agent_type=req.agent_type,
+        )
+    except Exception:
+        tmux.kill_node_window(agent_name)
+        raise HTTPException(status_code=500,
+            detail="Failed to register node in database (tmux session cleaned up)")
 
     db.add_status_report(node_id, "idle",
         f"node created (agent={req.agent_type}, project={req.project_label_id or 'cwd'})")
@@ -524,15 +529,25 @@ def delete_node(node_id: int):
         raise HTTPException(status_code=404, detail="Node not found")
 
     import sqlite3 as _sqlite3
-    for _attempt in range(10):
+    killed = None
+    try:
+        for _attempt in range(10):
+            try:
+                killed = db.kill_node(node_id)
+                break
+            except _sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and _attempt < 9:
+                    _time.sleep(0.1 * (_attempt + 1))
+                    continue
+                raise
+    except Exception:
         try:
-            killed = db.kill_node(node_id)
-            break
-        except _sqlite3.OperationalError as e:
-            if "locked" in str(e).lower() and _attempt < 9:
-                _time.sleep(0.1 * (_attempt + 1))
-                continue
-            raise
+            tmux.kill_node_window(node.name)
+        except Exception:
+            pass
+        raise HTTPException(status_code=500,
+            detail="Database locked — tmux session killed but DB state may be stale")
+
     for entry in killed:
         try:
             content = tmux.capture_pane_content(entry["name"])
