@@ -241,8 +241,13 @@ def _deploy_mcp_opencode(cwd: str):
         cfg = {}
 
     cfg.setdefault("$schema", "https://opencode.ai/config.json")
+    # Migrate legacy mcpServers entries into mcp (preserving existing ones)
     if "mcpServers" in cfg:
-        del cfg["mcpServers"]
+        legacy = cfg.pop("mcpServers")
+        mcp = cfg.setdefault("mcp", {})
+        for k, v in legacy.items():
+            if k not in mcp:
+                mcp[k] = v
     armada_bin = shutil.which("armada") or "armada"
     mcp = cfg.setdefault("mcp", {})
     mcp["armada"] = {
