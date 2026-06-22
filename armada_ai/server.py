@@ -59,6 +59,7 @@ SERVER_START_TS = 0.0
 _ws_clients: set[WebSocket] = set()
 _restart_lock = threading.Lock()
 _restarting_nodes: set[str] = set()
+_create_lock: asyncio.Lock | None = None
 
 
 # --- WebSocket broadcast ---
@@ -468,12 +469,21 @@ async def create_node(request: Request):
     if not req.project_label_id:
         raise HTTPException(status_code=400, detail="A project must be selected")
 
-    existing_names = db.existing_names()
-    validation_error = req.validate_name(existing_names)
-    if isinstance(validation_error, str):
-        if "already exists" in validation_error:
-            raise HTTPException(status_code=409, detail=validation_error)
-        raise HTTPException(status_code=400, detail=validation_error)
+    global _create_lock
+    if _create_lock is None:
+        _create_lock = asyncio.Lock()
+    async with _create_lock:
+        existing_names = db.existing_names()
+        validation_error = req.validate_name(existing_names)
+        if isinstance(validation_error, str):
+            if "already exists" in validation_error:
+                raise HTTPException(status_code=409, detail=validation_error)
+            raise HTTPException(status_code=400, detail=validation_error)
+
+        colour = naming.next_colour(db.active_colours())
+        agent_name = req.name or naming.generate_sequential_name(
+            req.project_label_id, existing_names)
+        agent_name = agent_name.replace(".", "-")
 
     path = db.get_project_label_path(req.project_label_id)
     if not path:
@@ -486,11 +496,6 @@ async def create_node(request: Request):
         parent = db.get_node(req.parent_id)
         if not parent:
             raise HTTPException(status_code=400, detail="Parent node not found")
-
-    colour = naming.next_colour(db.active_colours())
-    agent_name = req.name or naming.generate_sequential_name(
-        req.project_label_id, existing_names)
-    agent_name = agent_name.replace(".", "-")
 
     # Deploy skills/hooks before creating tmux window
     await asyncio.to_thread(deployment.deploy_for_agent_type, agent_name, req.agent_type, path)

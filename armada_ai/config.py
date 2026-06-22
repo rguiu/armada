@@ -163,7 +163,7 @@ def _yaml_lines(key: str, value, indent: int) -> list[str]:
     else:
         val_str = str(value)
         if any(c in val_str for c in ": #{}[]&*!|>'\"%@`"):
-            val_str = f'"{val_str}"'
+            val_str = '"' + val_str.replace("\\", "\\\\").replace('"', '\\"') + '"'
         return [f"{prefix}{key}: {val_str}"]
 
 
@@ -176,7 +176,7 @@ def _yaml_value(value) -> str:
         return "null"
     val_str = str(value)
     if any(c in val_str for c in ": #{}[]&*!|>'\"%@`"):
-        return f'"{val_str}"'
+        return '"' + val_str.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return val_str
 
 

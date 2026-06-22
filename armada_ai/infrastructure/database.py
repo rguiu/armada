@@ -171,11 +171,12 @@ def _migrate():
                 conn.commit()
             except sqlite3.OperationalError:
                 pass
-    try:
-        conn.execute("ALTER TABLE status_reports ADD COLUMN options TEXT DEFAULT ''")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass
+    with _write_lock:
+        try:
+            conn.execute("ALTER TABLE status_reports ADD COLUMN options TEXT DEFAULT ''")
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass
 
 
 # --- Project Labels ---
@@ -266,6 +267,7 @@ def create_node(name: str, colour: str, parent_id: int | None = None,
 def kill_node(node_id: int) -> list[dict]:
     killed = []
     def _do():
+        killed.clear()
         conn = _get_conn()
         stack = [node_id]
         while stack:
@@ -292,6 +294,7 @@ def kill_node(node_id: int) -> list[dict]:
 def hide_node(node_id: int) -> list[dict]:
     hidden = []
     def _do():
+        hidden.clear()
         conn = _get_conn()
         stack = [node_id]
         while stack:

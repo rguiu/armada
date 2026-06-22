@@ -121,7 +121,7 @@ def _try_terminal_attach(name: str, session_id: str | None = None) -> str | None
         return f"Terminal: {result.stderr.strip()}"
     except FileNotFoundError:
         _remove(attach_file)
-        return None
+        return "osascript not available"
     except Exception as e:
         _remove(attach_file)
         return f"Terminal error: {e}"

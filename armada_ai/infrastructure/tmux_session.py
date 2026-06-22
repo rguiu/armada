@@ -20,6 +20,7 @@ from .. import logs
 ARMADA_SESSION = "armada"
 
 _zdotdirs: dict[str, str] = {}
+_zdotdirs_lock = threading.Lock()
 _SKILLS_SRC = Path(__file__).parent.parent.parent / "skills"
 _prompt_semaphore = threading.Semaphore(3)
 
@@ -100,7 +101,8 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
     else:
         tools_dir = Path(__file__).parent / "bin"
         zdotdir = tempfile.mkdtemp(prefix="_armada_zsh_")
-        _zdotdirs[name] = zdotdir
+        with _zdotdirs_lock:
+            _zdotdirs[name] = zdotdir
         _write_zsh_startup(zdotdir, tools_dir)
         return (
             f"{sanitize_prefix}"
@@ -169,7 +171,8 @@ def create_node_window(name: str, colour: str, working_dir: str,
         reason = "pane not ready after session created (tmux may be overloaded)"
         logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})
         tmux("kill-session", "-t", session)
-        _zdotdirs.pop(name, None)
+        with _zdotdirs_lock:
+            _zdotdirs.pop(name, None)
         return NodeWindowResult(error=reason)
 
     return NodeWindowResult(pane_id=pane_id, session_id=session_id)
@@ -361,14 +364,15 @@ def cleanup_stale_sessions():
 
     if has_tmux():
         running = running_window_names()
-        stale = [n for n in list(_zdotdirs) if n not in running]
-        for name in stale:
-            zdotdir = _zdotdirs.pop(name, None)
-            if zdotdir:
-                try:
-                    shutil.rmtree(zdotdir, ignore_errors=True)
-                except Exception:
-                    pass
+        with _zdotdirs_lock:
+            stale = [n for n in list(_zdotdirs) if n not in running]
+            for name in stale:
+                zdotdir = _zdotdirs.pop(name, None)
+                if zdotdir:
+                    try:
+                        shutil.rmtree(zdotdir, ignore_errors=True)
+                    except Exception:
+                        pass
 
     tmp = tempfile.gettempdir()
     now = time.time()
