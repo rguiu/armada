@@ -400,7 +400,14 @@ def _doctor(nuke: bool = False):
     if nuke:
         print("\n--nuke: Killing all armada tmux sessions and resetting state...")
         try:
-            subprocess.run(["tmux", "kill-server"], capture_output=True, timeout=5)
+            result = subprocess.run(["tmux", "list-sessions", "-F", "#{session_name}"],
+                                    capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                for session in result.stdout.strip().split("\n"):
+                    if session.startswith("armada"):
+                        subprocess.run(["tmux", "kill-session", "-t", session],
+                                       capture_output=True, timeout=5)
+                        print(f"  Killed session: {session}")
         except Exception:
             pass
         db_path = constants.DB_PATH
