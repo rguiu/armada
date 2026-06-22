@@ -13,6 +13,11 @@ import time
 from . import tmux_session
 
 
+def _escape_applescript(s: str) -> str:
+    """Escape a string for safe interpolation into AppleScript double-quoted strings."""
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _hex_to_rgb(hex_colour: str) -> tuple[int, int, int]:
     h = hex_colour.lstrip("#")
     return int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
@@ -52,12 +57,13 @@ def attach_to_node(name: str, colour: str = "#8b949e",
 def _try_iterm_attach(name: str, colour: str, session_id: str | None = None) -> str | None:
     r, g, b = _hex_to_rgb(colour)
     session = session_id or tmux_session.agent_session(name)
+    safe_name = _escape_applescript(name)
     attach_file = os.path.join(tempfile.gettempdir(), f"_armada_attach_{os.getpid()}.sh")
     with open(attach_file, "w") as f:
         f.write(f"printf '\\033]6;1;bg;red;brightness;{r}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
-        f.write(f"tmux attach-session -t '{session}' || {{ echo 'Failed to attach to tmux session: {session}'; read -p \"Press Enter to close...\"; }}\n")
+        f.write(f"tmux attach-session -t '{session}' || {{ echo 'Failed to attach to tmux session'; read -p \"Press Enter to close...\"; }}\n")
 
     try:
         applescript = (
@@ -67,14 +73,14 @@ def _try_iterm_attach(name: str, colour: str, session_id: str | None = None) -> 
             f'    tell current window\n'
             f'      set newTab to (create tab with default profile)\n'
             f'      tell current session of newTab\n'
-            f'        set name to "{name}"\n'
+            f'        set name to "{safe_name}"\n'
             f'        write text "source {attach_file} && rm -f {attach_file}"\n'
             f'      end tell\n'
             f'    end tell\n'
             f'  on error\n'
             f'    set newWindow to (create window with default profile)\n'
             f'    tell current session of newWindow\n'
-            f'      set name to "{name}"\n'
+            f'      set name to "{safe_name}"\n'
             f'      write text "source {attach_file} && rm -f {attach_file}"\n'
             f'    end tell\n'
             f'  end try\n'
@@ -95,13 +101,12 @@ def _try_iterm_attach(name: str, colour: str, session_id: str | None = None) -> 
 
 
 def _try_terminal_attach(name: str, session_id: str | None = None) -> str | None:
+    session = session_id or tmux_session.agent_session(name)
+    attach_file = os.path.join(tempfile.gettempdir(),
+                               f"_armada_term_attach_{os.getpid()}.sh")
     try:
-        session = session_id or tmux_session.agent_session(name)
-        tmux_cmd = f"tmux attach-session -t '{session}'"
-        attach_file = os.path.join(tempfile.gettempdir(),
-                                   f"_armada_term_attach_{os.getpid()}.sh")
         with open(attach_file, "w") as f:
-            f.write(f"{tmux_cmd} || {{ echo 'Failed to attach'; read; }}\n")
+            f.write(f"tmux attach-session -t '{session}' || {{ echo 'Failed to attach'; read; }}\n")
         applescript = (
             f'tell application "Terminal"\n'
             f'  activate\n'
@@ -116,7 +121,7 @@ def _try_terminal_attach(name: str, session_id: str | None = None) -> str | None
         return f"Terminal: {result.stderr.strip()}"
     except FileNotFoundError:
         _remove(attach_file)
-        return None
+        return "osascript not available"
     except Exception as e:
         _remove(attach_file)
         return f"Terminal error: {e}"
@@ -135,7 +140,7 @@ def _try_linux_attach(name: str, colour: str = "#8b949e",
         f.write(f"printf '\\033]6;1;bg;green;brightness;{g}\\a'\n")
         f.write(f"printf '\\033]6;1;bg;blue;brightness;{b}\\a'\n")
         f.write(f"{tmux_cmd} || {{ echo 'Failed to attach'; read; }}\n")
-    os.chmod(attach_file, 0o755)
+    os.chmod(attach_file, 0o700)
 
     def _cleanup():
         time.sleep(10)

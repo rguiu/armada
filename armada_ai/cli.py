@@ -582,6 +582,10 @@ def _focus_iterm():
         pass
 
 
+def _escape_applescript(s: str) -> str:
+    return s.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _focus_attached_node(name):
     """Focus the iTerm tab/window already attached to the given node name."""
     import subprocess
@@ -590,12 +594,13 @@ def _focus_attached_node(name):
         _focus_iterm()
         return
 
+    safe_name = _escape_applescript(name)
     script = f'''
     tell application "iTerm"
         repeat with w in windows
             repeat with t in tabs of w
                 repeat with s in sessions of t
-                    if name of s contains "{name}" then
+                    if name of s contains "{safe_name}" then
                         select w
                         select t
                         select s
