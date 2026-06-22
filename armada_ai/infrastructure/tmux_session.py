@@ -331,7 +331,8 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
                 result = tmux("capture-pane", "-t", target, "-p")
                 if result.returncode == 0:
                     content = result.stdout
-                    if ">" in content or "❯" in content or "cost" in content.lower():
+                    last_line = content.rstrip().rsplit("\n", 1)[-1] if content.strip() else ""
+                    if ">" in last_line or "❯" in last_line or "cost" in content.lower():
                         time.sleep(0.5)
                         send_keys(name, prompt)
                         return

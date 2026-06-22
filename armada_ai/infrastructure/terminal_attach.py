@@ -143,7 +143,7 @@ def _try_linux_attach(name: str, colour: str = "#8b949e",
     os.chmod(attach_file, 0o700)
 
     def _cleanup():
-        time.sleep(10)
+        time.sleep(30)
         _remove(attach_file)
     threading.Thread(target=_cleanup, daemon=True).start()
 
