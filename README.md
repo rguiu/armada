@@ -7,7 +7,7 @@
   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝     ╚═╝╚═╝  ╚═╝╚═════╝ ╚═╝  ╚═╝
 ```
 
-> Live supervision for your coding agents. Real-time status, persistent sessions, any device.
+> Persistent sessions and live supervision for coding agents.
 
 [![PyPI](https://img.shields.io/pypi/v/armada-ai)](https://pypi.org/project/armada-ai/)
 [![Test PyPI](https://img.shields.io/badge/testpypi-v0.2.2-blue.svg)](https://test.pypi.org/project/armada-ai/)
@@ -16,17 +16,18 @@
 
 ## What is Armada?
 
-Start a Claude Code or OpenCode agent on your laptop, close it, and pick up where you left off — from any device on your network.
+Armada runs coding agents in persistent tmux sessions and lets you monitor and control them from a dashboard or CLI.
 
-Armada gives you fleet management for coding agents: persistent tmux sessions, a web dashboard, and real-time status visibility. Know instantly which agents are working, waiting for approval, or stuck.
+Each agent runs in its own session and maintains state across reconnects, restarts, and devices. You can start agents from your laptop, disconnect and reconnect later, monitor execution in real time, and manage multiple agents at once.
 
-- **Agent status** — every agent reports `idle`, `active`, `pending`, or `error`. See which agents are blocked or waiting for input at a glance.
-- **Persistent sessions** — built on tmux: reconnect, multiplex, survive disconnects. No custom runtime to maintain.
-- **Web dashboard** — manage agents from your browser, phone, or tablet. Scan the QR code to open on other devices.
-- **Delegation** — agents can spawn child workers, delegate tasks, and run in parallel.
-- **MCP Server** — agents interact with Armada through typed MCP tools instead of raw API calls. Agent type, project, and parent are inherited automatically.
-- **Task Mailbox** — structured inter-node messaging with event-driven delivery. Nodes send messages, broadcast to children, and post to a shared work queue.
-- **One command** — `armada` starts the server and opens the dashboard.
+### Key Features
+
+- **Persistent agent sessions** — every agent runs inside a tmux session and survives disconnects. No custom runtime.
+- **Live status tracking** — see which agents are active, idle, pending, or error in real time.
+- **Web + terminal control** — manage agents via the dashboard or `armada watch`.
+- **Multi-agent workflows** — spawn workers and coordinate execution across a tree of agents.
+- **Message system** — structured communication between nodes with event-driven delivery.
+- **MCP integration** — agents interact with Armada through typed MCP tools instead of raw API calls.
 
 ## Installation
 
@@ -80,13 +81,52 @@ Open `http://127.0.0.1:9100`.
 
 1. **Register a project** — sidebar Projects → **+ Add**. Give it an ID, name, and directory path.
 2. **Create a node** — click **+ Node**, pick a project, choose an agent type (OpenCode, Claude Code, or Bash), optionally add an initial prompt.
-3. **Attach** — select the node and click **Attach**. Opens in iTerm2 (macOS) for full TUI, or in-browser via xterm.js.
+3. **Attach** — select the node and click **Attach**. Opens the agent session in iTerm2 (macOS) for full TUI, or xterm.js in-browser.
 4. **Monitor** — the dashboard updates every 10 seconds. See status, activity logs, and task history.
 5. **Connect other devices** — scan the QR code in the sidebar to open the dashboard on your phone or tablet.
 
 ![Armada Dashboard](img/armada.png)
 
 ![CLI Demo](img/armada1.gif)
+
+## CLI Watch Dashboard
+
+`armada watch` is a live terminal dashboard for managing agents without a browser:
+
+```
+$ armada watch
+
+ Nodes   Projects   |  3 active  1 pending  12 idle  |  23 agents
+
+ ● HOOK20           ▣ idle   PGLease            unknown needs external_directory
+ ○ HOOK18             idle   PGLease            server restarted — reconnected
+ ○ H1                 idle   Armada
+ ○ Armada-006         idle   Armada
+ ● Armada-005         active Armada             running bash
+
+ ⚠ Pending: HOOK20
+
+ ┃ [↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit ┃
+```
+
+<details>
+<summary>Full keybindings and forms</summary>
+
+| Key | Action |
+|---|---|
+| `↑` `↓` | Navigate agent list |
+| `Enter` | Attach to selected node (focuses existing pane) |
+| `a` | Split-attach (experimental — opens a new tmux pane for the node) |
+| `n` | New node (interactive form) |
+| `k` | Kill selected node |
+| `d` | Delete selected node |
+| `Tab` | Switch to Projects view |
+| `q` | Quit |
+
+> **Note:** `a` (split-attach) is experimental and may not work reliably in all terminal environments. It is not shown in the bottom bar but remains available as a hidden shortcut.
+
+Forms for creating nodes and projects use keyboard navigation: `Tab`/`↑↓` to move between fields, `←→` to cycle options, type freely in text fields, `Enter` on `[Save]` to submit, `Esc` to cancel.
+</details>
 
 ## Agent Types: Claude Code vs OpenCode
 
@@ -155,45 +195,6 @@ Either works. Pick based on which agent you already have installed.
 | `armada report <status> <msg>` | Report node status (used by hooks and scripts) |
 | `armada --lan` | Bind server to LAN IP (access from other devices) |
 
-## CLI Watch Dashboard
-
-`armada watch` is a live terminal dashboard for managing agents without a browser:
-
-```
-$ armada watch
-
- Nodes   Projects   |  3 active  1 pending  12 idle  |  23 agents
-
- ● HOOK20           ▣ idle   PGLease            unknown needs external_directory
- ○ HOOK18             idle   PGLease            server restarted — reconnected
- ○ H1                 idle   Armada
- ○ Armada-006         idle   Armada
- ● Armada-005         active Armada             running bash
-
- ⚠ Pending: HOOK20
-
- ┃ [↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit ┃
-```
-
-<details>
-<summary>Full keybindings and forms</summary>
-
-| Key | Action |
-|---|---|
-| `↑` `↓` | Navigate agent list |
-| `Enter` | Attach to selected node (focuses existing pane) |
-| `a` | Split-attach (experimental — opens a new tmux pane for the node) |
-| `n` | New node (interactive form) |
-| `k` | Kill selected node |
-| `d` | Delete selected node |
-| `Tab` | Switch to Projects view |
-| `q` | Quit |
-
-> **Note:** `a` (split-attach) is experimental and may not work reliably in all terminal environments. It is not shown in the bottom bar but remains available as a hidden shortcut.
-
-Forms for creating nodes and projects use keyboard navigation: `Tab`/`↑↓` to move between fields, `←→` to cycle options, type freely in text fields, `Enter` on `[Save]` to submit, `Esc` to cancel.
-</details>
-
 ## Agent Delegation
 
 Agents can delegate work to child nodes using MCP tools:
@@ -246,7 +247,7 @@ Nodes communicate through a task mailbox system with event-driven delivery:
 
 ## Architecture
 
-SQLite (WAL) + FastAPI REST server, daemonized. Each node is a tmux session — no custom agent runtime, just tmux providing persistence, reconnection, and multiplexing. Nodes report status via `POST /api/report`. The dashboard refreshes over a persistent WebSocket.
+Armada uses a FastAPI server with SQLite (WAL). Each node is backed by a tmux session — no custom agent runtime, just tmux providing persistence, reconnection, and multiplexing. Nodes report status via `POST /api/report`. The dashboard refreshes over a persistent WebSocket.
 
 ## API Endpoints
 
