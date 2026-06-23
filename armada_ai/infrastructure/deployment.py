@@ -12,7 +12,9 @@ from . import tmux_session
 
 
 SKILL_NAMES = ("armada-node", "armada-worker", "armada-orchestrator")
-_SKILLS_SRC = Path(__file__).parent.parent.parent / "skills"
+_SKILLS_SRC_PKG = Path(__file__).parent.parent / "skills"
+_SKILLS_SRC_REPO = Path(__file__).parent.parent.parent / "skills"
+_SKILLS_SRC = _SKILLS_SRC_PKG if _SKILLS_SRC_PKG.is_dir() else _SKILLS_SRC_REPO
 _HOOKS_SRC = Path(__file__).parent.parent / "hooks"
 _PLUGIN_SRC_DIR = Path(__file__).parent.parent.parent / ".opencode" / "plugins"
 
@@ -278,7 +280,11 @@ def _deploy_mcp_claude(cwd: str):
 
 
 def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
-    """Install skills and agent-specific hooks/plugins for a new node."""
+    """Install skills and agent-specific hooks/plugins for a new node.
+
+    MCP config is NOT deployed per-project — it's installed globally at user
+    level during 'armada setup' (via install_skills_to_user -> _install_global_mcp).
+    """
     from .. import logs
     try:
         install_skills_to_project(cwd)
@@ -292,11 +298,6 @@ def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
         except Exception as e:
             logs.log_event("_server", "deploy_error",
                            {"step": "pending_plugin", "cwd": cwd, "error": str(e)})
-        try:
-            _deploy_mcp_opencode(cwd)
-        except Exception as e:
-            logs.log_event("_server", "deploy_error",
-                           {"step": "mcp_opencode", "cwd": cwd, "error": str(e)})
 
     if agent_type == "claude":
         try:
@@ -304,10 +305,5 @@ def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
         except Exception as e:
             logs.log_event("_server", "deploy_error",
                            {"step": "claude_hooks", "cwd": cwd, "error": str(e)})
-        try:
-            _deploy_mcp_claude(cwd)
-        except Exception as e:
-            logs.log_event("_server", "deploy_error",
-                           {"step": "mcp_claude", "cwd": cwd, "error": str(e)})
 
     save_agent_hook(agent_name)

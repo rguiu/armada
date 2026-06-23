@@ -78,6 +78,14 @@ def main():
     args = [a for a in args if a not in flags]
 
     if not args or args[0] in ("start", "serve"):
+        import shutil
+        if not shutil.which("tmux"):
+            print("Error: tmux is not installed.", file=sys.stderr)
+            print("Install it with:", file=sys.stderr)
+            print("  macOS:  brew install tmux", file=sys.stderr)
+            print("  Ubuntu: sudo apt install tmux", file=sys.stderr)
+            print("  Fedora: sudo dnf install tmux", file=sys.stderr)
+            sys.exit(1)
         from .server import start_server, _ensure_token
         if not args:
             print("Starting Armada server... (use 'armada --help' for other commands)")
@@ -324,11 +332,14 @@ def _config(subargs: list[str]):
 
 
 def _setup_skills():
-    from . import tmux
+    from .infrastructure.deployment import install_skills_to_user, deploy_claude_hooks
 
-    skill_dir = os.path.join(os.path.dirname(__file__), "..", "skills")
+    # Check bundled skills first (pip install), then repo root (dev)
+    skill_dir = os.path.join(os.path.dirname(__file__), "skills")
     if not os.path.isdir(skill_dir):
-        print("Skills directory not found. Run from the armada repo root.", file=sys.stderr)
+        skill_dir = os.path.join(os.path.dirname(__file__), "..", "skills")
+    if not os.path.isdir(skill_dir):
+        print("Skills directory not found. Is armada-ai installed correctly?", file=sys.stderr)
         sys.exit(1)
 
     skill_dir = os.path.abspath(skill_dir)
@@ -340,12 +351,12 @@ def _setup_skills():
         os.environ["ARMADA_AUTH_TOKEN"] = token
         print("  ARMADA_AUTH_TOKEN set")
 
-    installed = tmux.install_skills(skill_dir)
-    print(f"  {installed} file(s) installed")
+    installed = install_skills_to_user()
+    print(f"  Skills installed to: {', '.join(installed)}")
 
     claude_hooks = os.path.expanduser("~/.claude/hooks")
     if os.path.isdir(claude_hooks):
-        tmux.deploy_claude_hooks(skill_dir)
+        deploy_claude_hooks(os.path.expanduser("~"))
         print(f"  Claude Code hooks deployed to {claude_hooks}")
     else:
         print("  Claude Code hooks directory not found (skip)")

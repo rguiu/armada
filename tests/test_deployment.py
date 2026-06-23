@@ -163,49 +163,41 @@ class TestDeployForAgentType:
     """Tests for deploy_for_agent_type."""
 
     @patch.object(deployment, "save_agent_hook", return_value="/tmp/hook.md")
-    @patch.object(deployment, "_deploy_mcp_opencode")
     @patch.object(deployment, "install_skills_to_project")
     @patch.object(deployment, "_deploy_pending_plugin")
-    def test_opencode_agent_deploys_opencode_mcp(
-        self, mock_plugin, mock_skills, mock_mcp_oc, mock_hook
+    def test_opencode_agent_deploys_plugin_not_mcp(
+        self, mock_plugin, mock_skills, mock_hook
     ):
-        """For opencode agent_type, calls _deploy_mcp_opencode."""
+        """For opencode agent_type, deploys pending plugin but NOT per-project MCP."""
         cwd = tempfile.mkdtemp()
         deployment.deploy_for_agent_type("node-1", "opencode", cwd)
 
         mock_skills.assert_called_once_with(cwd)
         mock_plugin.assert_called_once_with(cwd)
-        mock_mcp_oc.assert_called_once_with(cwd)
         mock_hook.assert_called_once_with("node-1")
 
     @patch.object(deployment, "save_agent_hook", return_value="/tmp/hook.md")
-    @patch.object(deployment, "_deploy_mcp_claude")
     @patch.object(deployment, "deploy_claude_hooks")
     @patch.object(deployment, "install_skills_to_project")
-    def test_claude_agent_deploys_claude_mcp(
-        self, mock_skills, mock_hooks, mock_mcp_cl, mock_save
+    def test_claude_agent_deploys_hooks_not_mcp(
+        self, mock_skills, mock_hooks, mock_save
     ):
-        """For claude agent_type, calls _deploy_mcp_claude and deploy_claude_hooks."""
+        """For claude agent_type, deploys hooks but NOT per-project MCP."""
         cwd = tempfile.mkdtemp()
         deployment.deploy_for_agent_type("node-2", "claude", cwd)
 
         mock_skills.assert_called_once_with(cwd)
         mock_hooks.assert_called_once_with(cwd)
-        mock_mcp_cl.assert_called_once_with(cwd)
         mock_save.assert_called_once_with("node-2")
 
     @patch.object(deployment, "save_agent_hook", return_value="/tmp/hook.md")
-    @patch.object(deployment, "_deploy_mcp_opencode")
-    @patch.object(deployment, "_deploy_mcp_claude")
     @patch.object(deployment, "install_skills_to_project")
     def test_unknown_agent_type_only_installs_skills(
-        self, mock_skills, mock_mcp_cl, mock_mcp_oc, mock_save
+        self, mock_skills, mock_save
     ):
-        """For an unknown agent_type, only installs skills (no MCP deploy)."""
+        """For an unknown agent_type, only installs skills."""
         cwd = tempfile.mkdtemp()
         deployment.deploy_for_agent_type("node-3", "unknown", cwd)
 
         mock_skills.assert_called_once_with(cwd)
-        mock_mcp_oc.assert_not_called()
-        mock_mcp_cl.assert_not_called()
         mock_save.assert_called_once_with("node-3")
