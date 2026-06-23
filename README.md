@@ -58,6 +58,18 @@ bash install.sh
 ```
 </details>
 
+<details>
+<summary>Test PyPI (pre-release)</summary>
+
+Test PyPI may contain typosquat packages that hijack dependency names. Install in two steps to keep dependencies on real PyPI:
+
+```bash
+pip install --index-url https://pypi.org/simple/ fastapi uvicorn websockets qrcode mcp 'tomli>=1.0'
+pip install --index-url https://test.pypi.org/simple/ --no-deps armada-ai
+armada setup
+```
+</details>
+
 ## Quick Start
 
 ```bash
