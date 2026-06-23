@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "armada-ai"
-version = "0.3.1"
+version = "0.3.3"
 description = "Terminal orchestration for Open Code and Claude Code agents"
 readme = "README.md"
 license = "MIT"
@@ -25,11 +25,11 @@ classifiers = [
     "Topic :: System :: Clustering",
 ]
 dependencies = [
-    "fastapi>=0.100",
-    "uvicorn>=0.20",
-    "websockets>=10.0",
-    "qrcode>=7.0",
-    "mcp>=1.0",
+    "fastapi>=0.100,<1.0",
+    "uvicorn>=0.20,<1.0",
+    "websockets>=10.0,<15.0",
+    "qrcode>=7.0,<10.0",
+    "mcp>=1.0,<2.0",
     "tomli>=1.0; python_version < '3.11'",
 ]
 
