@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "armada-ai"
-version = "0.3.3"
+version = "0.3.4"
 description = "Terminal orchestration for Open Code and Claude Code agents"
 readme = "README.md"
 license = "MIT"

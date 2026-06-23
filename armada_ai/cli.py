@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 import signal
 import socket
 import subprocess
@@ -332,6 +333,18 @@ def _config(subargs: list[str]):
 
 
 def _setup_skills():
+    if not shutil.which("tmux"):
+        print("tmux is not installed. Armada requires tmux to manage agent sessions.", file=sys.stderr)
+        print("Install it with:", file=sys.stderr)
+        if platform.system() == "Darwin":
+            print("  brew install tmux", file=sys.stderr)
+        elif platform.system() == "Linux":
+            print("  sudo apt install tmux   (Ubuntu/Debian)", file=sys.stderr)
+            print("  sudo dnf install tmux   (Fedora)", file=sys.stderr)
+        else:
+            print("  See https://github.com/tmux/tmux/wiki/Installing", file=sys.stderr)
+        sys.exit(1)
+
     from .infrastructure.deployment import install_skills_to_user, deploy_claude_hooks
 
     # Check bundled skills first (pip install), then repo root (dev)
