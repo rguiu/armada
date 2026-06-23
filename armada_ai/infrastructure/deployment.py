@@ -12,7 +12,9 @@ from . import tmux_session
 
 
 SKILL_NAMES = ("armada-node", "armada-worker", "armada-orchestrator")
-_SKILLS_SRC = Path(__file__).parent.parent.parent / "skills"
+_SKILLS_SRC_PKG = Path(__file__).parent.parent / "skills"
+_SKILLS_SRC_REPO = Path(__file__).parent.parent.parent / "skills"
+_SKILLS_SRC = _SKILLS_SRC_PKG if _SKILLS_SRC_PKG.is_dir() else _SKILLS_SRC_REPO
 _HOOKS_SRC = Path(__file__).parent.parent / "hooks"
 _PLUGIN_SRC_DIR = Path(__file__).parent.parent.parent / ".opencode" / "plugins"
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "armada-ai"
-version = "0.3.0"
+version = "0.3.1"
 description = "Terminal orchestration for Open Code and Claude Code agents"
 readme = "README.md"
 license = "MIT"
@@ -57,7 +57,7 @@ include = ["armada_ai", "armada_ai.*"]
 "tests" = ["*"]
 
 [tool.setuptools.package-data]
-"armada_ai" = ["templates/**", "static/**", "hooks/**", "bin/**", "armada-bash.sh"]
+"armada_ai" = ["templates/**", "static/**", "hooks/**", "bin/**", "skills/**", "armada-bash.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

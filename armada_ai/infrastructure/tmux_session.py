@@ -21,7 +21,9 @@ ARMADA_SESSION = "armada"
 
 _zdotdirs: dict[str, str] = {}
 _zdotdirs_lock = threading.Lock()
-_SKILLS_SRC = Path(__file__).parent.parent.parent / "skills"
+_SKILLS_SRC_PKG = Path(__file__).parent.parent / "skills"
+_SKILLS_SRC_REPO = Path(__file__).parent.parent.parent / "skills"
+_SKILLS_SRC = _SKILLS_SRC_PKG if _SKILLS_SRC_PKG.is_dir() else _SKILLS_SRC_REPO
 _prompt_semaphore = threading.Semaphore(3)
 
 
@@ -78,12 +80,15 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
     os.makedirs(workspace, exist_ok=True)
     safe_workspace = workspace.replace("'", "'\\''")
 
+    direnv_hook = 'eval "$(direnv export bash 2>/dev/null)"; ' if shutil.which("direnv") else ""
+
     if agent_type in ("opencode", "claude"):
         agent_bin = shutil.which(agent_type)
         if agent_bin:
             return (
                 f"{sanitize_prefix}"
                 f"cd {safe_dir} && "
+                f"{direnv_hook}"
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
                 f"export ARMADA_WORKSPACE='{safe_workspace}' && "
@@ -93,6 +98,7 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
             return (
                 f"{sanitize_prefix}"
                 f"cd {safe_dir} && "
+                f"{direnv_hook}"
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
                 f"export ARMADA_WORKSPACE='{safe_workspace}' && "
@@ -107,6 +113,7 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
         return (
             f"{sanitize_prefix}"
             f"cd {safe_dir} && "
+            f"{direnv_hook}"
             f"printf '\\033]2;{name}\\033\\\\' && "
             f"export ARMADA_NODE_NAME='{safe_name}' && "
             f"export ARMADA_WORKSPACE='{safe_workspace}' && "
