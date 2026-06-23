@@ -16,18 +16,18 @@
 
 ## What is Armada?
 
-Armada runs coding agents in persistent tmux sessions and lets you monitor and control them from a dashboard or CLI.
+Armada runs coding agents in persistent tmux sessions and lets you monitor and control them from a terminal dashboard or web UI.
 
-Each agent runs in its own session and maintains state across reconnects, restarts, and devices. You can start agents from your laptop, disconnect and reconnect later, monitor execution in real time, and manage multiple agents at once.
+Each agent runs in its own session and maintains state across reconnects, restarts, and devices.
 
-### Key Features
+## Key Features
 
-- **Persistent agent sessions** — every agent runs inside a tmux session and survives disconnects. No custom runtime.
-- **Live status tracking** — see which agents are active, idle, pending, or error in real time.
-- **Web + terminal control** — manage agents via the dashboard or `armada watch`.
-- **Multi-agent workflows** — spawn workers and coordinate execution across a tree of agents.
-- **Message system** — structured communication between nodes with event-driven delivery.
-- **MCP integration** — agents interact with Armada through typed MCP tools instead of raw API calls.
+- **Persistent agent sessions** — every agent runs inside a tmux session and survives disconnects
+- **Live status tracking** — see `active`, `idle`, `pending`, `error` in real time
+- **Terminal + web control** — manage agents via `armada nodes --watch` or the web dashboard
+- **Multi-agent workflows** — spawn child workers, delegate tasks, coordinate execution
+- **Message system** — structured communication between agents with event-driven delivery
+- **MCP integration** — agents interact with Armada through typed tools, not curl commands
 
 ## Installation
 
@@ -35,7 +35,7 @@ Each agent runs in its own session and maintains state across reconnects, restar
 
 ```bash
 pip install armada-ai
-armada setup                # install agent skills for OpenCode and Claude Code
+armada setup                # install agent skills and MCP config
 ```
 
 `armada` is now available. You can also install from source or run via Docker — see below.
@@ -59,18 +59,6 @@ bash install.sh
 ```
 </details>
 
-<details>
-<summary>Test PyPI (pre-release)</summary>
-
-Test PyPI may contain typosquat packages that hijack dependency names. Install in two steps to keep dependencies on real PyPI:
-
-```bash
-pip install --index-url https://pypi.org/simple/ fastapi uvicorn websockets qrcode mcp 'tomli>=1.0'
-pip install --index-url https://test.pypi.org/simple/ --no-deps armada-ai
-armada setup
-```
-</details>
-
 ## Quick Start
 
 ```bash
@@ -81,20 +69,18 @@ Open `http://127.0.0.1:9100`.
 
 1. **Register a project** — sidebar Projects → **+ Add**. Give it an ID, name, and directory path.
 2. **Create a node** — click **+ Node**, pick a project, choose an agent type (OpenCode, Claude Code, or Bash), optionally add an initial prompt.
-3. **Attach** — select the node and click **Attach**. Opens the agent session in iTerm2 (macOS) for full TUI, or xterm.js in-browser.
-4. **Monitor** — the dashboard updates every 10 seconds. See status, activity logs, and task history.
+3. **Attach** — select the node and click **Attach**. Opens the agent session in iTerm2 (macOS) or in-browser via xterm.js.
+4. **Monitor** — see status, activity logs, and task history in real time.
 5. **Connect other devices** — scan the QR code in the sidebar to open the dashboard on your phone or tablet.
 
 ![Armada Dashboard](img/armada.png)
 
-![CLI Demo](img/armada1.gif)
+## CLI Dashboard
 
-## CLI Watch Dashboard
-
-`armada watch` is a live terminal dashboard for managing agents without a browser:
+`armada nodes --watch` is a live terminal dashboard for managing agents without a browser:
 
 ```
-$ armada watch
+$ armada nodes --watch
 
  Nodes   Projects   |  3 active  1 pending  12 idle  |  23 agents
 
@@ -109,6 +95,8 @@ $ armada watch
  ┃ [↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit ┃
 ```
 
+![CLI Demo](img/armada1.gif)
+
 <details>
 <summary>Full keybindings and forms</summary>
 
@@ -116,46 +104,40 @@ $ armada watch
 |---|---|
 | `↑` `↓` | Navigate agent list |
 | `Enter` | Attach to selected node (focuses existing pane) |
-| `a` | Split-attach (experimental — opens a new tmux pane for the node) |
+| `a` | Split-attach (experimental) |
 | `n` | New node (interactive form) |
 | `k` | Kill selected node |
 | `d` | Delete selected node |
 | `Tab` | Switch to Projects view |
 | `q` | Quit |
 
-> **Note:** `a` (split-attach) is experimental and may not work reliably in all terminal environments. It is not shown in the bottom bar but remains available as a hidden shortcut.
-
 Forms for creating nodes and projects use keyboard navigation: `Tab`/`↑↓` to move between fields, `←→` to cycle options, type freely in text fields, `Enter` on `[Save]` to submit, `Esc` to cancel.
 </details>
 
-## Agent Types: Claude Code vs OpenCode
+## Agent Types
 
-Armada supports both Claude Code and OpenCode as first-class agents. Each integrates differently:
+Armada supports Claude Code, OpenCode, and Bash as agent types.
 
 ### OpenCode
 
-OpenCode is an open-source AI coding agent. Armada's OpenCode integration uses:
-
-- **MCP Server** — an Armada MCP server provides typed tools (`spawn_node`, `send_message`, `report_status`, etc.) directly in the agent's tool palette. Auto-configured via `opencode.json`.
-- **Plugin system** — an `armada-pending` plugin hooks into OpenCode's event loop (tool start/stop, permission requests). Agents automatically report status to Armada.
+- **MCP Server** — typed tools (`spawn_node`, `send_message`, `report_status`, etc.) directly in the agent's tool palette. Auto-configured via `opencode.json`.
+- **Plugin system** — an `armada-pending` plugin hooks into OpenCode's event loop. Agents automatically report status.
 - **Skills** — `armada-node` and `armada-worker` skill files teach agents orchestration and messaging patterns.
 
-To use OpenCode: install it, make sure `opencode` is on your PATH, and run `armada setup`. When creating a node, select "opencode" as the agent type.
+To use: install OpenCode, make sure `opencode` is on your PATH, run `armada setup`.
 
 ### Claude Code
-
-Claude Code is Anthropic's official CLI agent. Armada's Claude Code integration uses:
 
 - **Hook system** — four shell hooks fire on tool use, idle transitions, and permission requests. These use the `armada report` CLI to report status.
 - **Skills** — the same skill files are installed to `~/.claude/skills/` and auto-activate when `ARMADA_NODE_NAME` is set.
 
-To use Claude Code: install it via `npm install -g @anthropic-ai/claude-code`, make sure `claude` is on your PATH, and run `armada setup`. When creating a node, select "claude" as the agent type.
+To use: install via `npm install -g @anthropic-ai/claude-code`, make sure `claude` is on your PATH, run `armada setup`.
 
 ### Bash
 
-Bare shell nodes without an agent. Useful for running scripts or manual commands. Armada provides a bash wrapper (`armada-bash.sh`) with functions like `armada_report_active`, `armada_spawn`, and `armada_kill_child`. Status reporting uses the `armada report` CLI.
+Bare shell nodes without an agent. Useful for running scripts or manual commands. Armada provides a bash wrapper with status reporting functions.
 
-### Which one should you use?
+### Which one?
 
 | | OpenCode | Claude Code |
 |---|---|---|
@@ -166,34 +148,6 @@ Bare shell nodes without an agent. Useful for running scripts or manual commands
 | **Best for** | Open-source workflows, custom plugins | Anthropic ecosystem, official support |
 
 Either works. Pick based on which agent you already have installed.
-
-## Commands
-
-| Command | Description |
-|---|---|
-| `armada` | Start daemon + open dashboard |
-| `armada --no-browser` | Start server without opening browser |
-| `armada start` | Start daemon in background |
-| `armada stop` | Stop the daemon |
-| `armada watch` | Interactive terminal dashboard (htop-style) |
-| `armada create -p <project>` | Create a new agent node |
-| `armada nodes` | List all agents in a table |
-| `armada attach <name>` | Attach to a node by name (iTerm2) |
-| `armada projects` | List projects |
-| `armada projects add <id> <name> <path>` | Register a project |
-| `armada projects rm <id>` | Remove a project |
-| `armada setup` | Install skills and MCP config to user profile |
-| `armada version` | Print the Armada version |
-| `armada token` | Print the auth token |
-| `armada token --qr` | Print token as scannable QR code |
-| `armada config` | Show or set configuration |
-| `armada config set <key> <val>` | Change a config value (`default_agent`, `port`, etc.) |
-| `armada service install` | Install as system service (launchd/systemd) |
-| `armada status` | Show server health and agent counts |
-| `armada doctor` | Clean up stale tmux sessions and DB state |
-| `armada mcp` | Start the Armada MCP server (stdio mode, for AI agents) |
-| `armada report <status> <msg>` | Report node status (used by hooks and scripts) |
-| `armada --lan` | Bind server to LAN IP (access from other devices) |
 
 ## Agent Delegation
 
@@ -207,16 +161,16 @@ Orchestrator
 ```
 
 1. Start Armada: `armada`
-2. Register a project and create an orchestrator node (agent type: "opencode" or "claude")
-3. The orchestrator uses `spawn_node("reviewer")` and `send_task(node_id, "review the auth module")` — agent type and project are inherited automatically
-4. Workers send completion messages back to the parent via `send_message(to_node_id=parent_id, payload="job completed", msg_type="result")`
+2. Register a project and create an orchestrator node
+3. The orchestrator uses `spawn_node("reviewer")` and `send_task(node_id, "review the auth module")`
+4. Workers send completion messages back via `send_message(to_node_id=parent_id, payload="job completed", msg_type="result")`
 5. The orchestrator collects results via `read_inbox()` and cleans up with `kill_node()`
 
-Skills (`armada-node`, `armada-worker`, `armada-orchestrator`) teach agents the full workflow including messaging patterns.
+See [examples/](examples/) for tested workflows: parallel feature builds, multi-project security audits, work queues, and code review pipelines.
 
 ## MCP Server
 
-Armada includes an MCP (Model Context Protocol) server that exposes all operations as typed tools for AI agents. Instead of constructing curl commands, agents call tools with automatic defaults:
+Armada includes an MCP server that exposes operations as typed tools for AI agents:
 
 | Tool | Purpose |
 |------|---------|
@@ -224,7 +178,6 @@ Armada includes an MCP (Model Context Protocol) server that exposes all operatio
 | `send_task(node_id, command)` | Send command to node (auto-waits for tmux init) |
 | `kill_node(node_id)` | Kill node and descendants |
 | `get_tree()` | Full node hierarchy with status |
-| `get_node(node_id)` | Node details and reports |
 | `report_status(status, message)` | Report own status |
 | `send_message(to_node_id, payload)` | Send message to another node |
 | `read_inbox()` | Read pending messages |
@@ -232,22 +185,40 @@ Armada includes an MCP (Model Context Protocol) server that exposes all operatio
 | `post_to_queue(payload)` | Post task to shared work queue |
 | `claim_from_queue()` | Claim next available queue task |
 
-The MCP server is auto-configured when nodes are created. Run manually with `armada mcp`.
+Auto-configured when nodes are created. Run manually with `armada mcp`.
 
 ## Inter-Node Messaging
 
-Nodes communicate through a task mailbox system with event-driven delivery:
+Nodes communicate through a task mailbox with event-driven delivery:
 
 - **Direct messages** — any node can send structured messages to any other node
 - **Broadcast** — fan-out a message to all children with one call
 - **Work queue** — post tasks to a shared queue for any idle agent to claim
 - **Event-driven delivery** — no polling; the server pushes messages via tmux when the recipient goes idle
-- **ACK** — messages track `pending → delivered → done` lifecycle
-- **Completion notifications** — workers automatically notify their parent when a task is done
+- **Completion notifications** — workers notify their parent when a task is done
 
 ## Architecture
 
-Armada uses a FastAPI server with SQLite (WAL). Each node is backed by a tmux session — no custom agent runtime, just tmux providing persistence, reconnection, and multiplexing. Nodes report status via `POST /api/report`. The dashboard refreshes over a persistent WebSocket.
+Armada uses a FastAPI server with SQLite (WAL). Each agent is backed by a tmux session — no custom agent runtime, just tmux providing persistence, reconnection, and multiplexing. Nodes report status via `POST /api/report`. The dashboard refreshes over a persistent WebSocket.
+
+## Commands
+
+| Command | Description |
+|---|---|
+| `armada` | Start daemon + open dashboard |
+| `armada --no-browser` | Start server without opening browser |
+| `armada stop` | Stop the daemon |
+| `armada nodes --watch` | Live terminal dashboard |
+| `armada create -p <project>` | Create a new agent node |
+| `armada nodes` | List all agents |
+| `armada attach <name>` | Attach to a node by name |
+| `armada projects` | List projects |
+| `armada projects add <id> <name> <path>` | Register a project |
+| `armada setup` | Install skills and MCP config |
+| `armada mcp` | Start the MCP server (stdio mode) |
+| `armada report <status> <msg>` | Report node status |
+| `armada doctor` | Clean up stale sessions and DB state |
+| `armada --lan` | Bind to LAN IP (access from other devices) |
 
 ## API Endpoints
 
@@ -258,17 +229,16 @@ Armada uses a FastAPI server with SQLite (WAL). Each node is backed by a tmux se
 | `GET` | `/api/nodes/:id` | Node detail + reports |
 | `DELETE` | `/api/nodes/:id` | Kill node + cascades to children |
 | `POST` | `/api/nodes/:id/send` | Send command to worker |
-| `POST` | `/api/nodes/:id/attach` | Open terminal attached to node |
-| `POST` | `/api/report` | Agent status report (`active`/`idle`/`pending`/`error`) |
+| `POST` | `/api/report` | Agent status report |
 | `POST` | `/api/nodes/:id/messages` | Send message to node |
 | `GET` | `/api/nodes/:id/messages` | Read node inbox |
-| `PATCH` | `/api/messages/:id` | Acknowledge message (mark done) |
+| `PATCH` | `/api/messages/:id` | Acknowledge message |
 | `POST` | `/api/nodes/:id/broadcast` | Broadcast to all children |
-| `POST` | `/api/queue` | Post task to shared work queue |
-| `GET` | `/api/queue` | List unclaimed queue tasks |
+| `POST` | `/api/queue` | Post task to work queue |
+| `GET` | `/api/queue` | List unclaimed tasks |
 | `POST` | `/api/queue/:id/claim` | Claim a queue task |
 | `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
-| `GET` | `/health` | Health check (no auth) |
+| `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics |
 
 Full API docs at `http://127.0.0.1:9100/docs` (FastAPI Swagger UI).
@@ -284,7 +254,7 @@ pytest --cov=armada_ai          # with coverage
 ruff check armada_ai/ tests/    # lint
 ```
 
-CI runs ruff + pytest-cov on Python 3.10–3.13 on push to `main`.
+CI runs ruff + pytest-cov on Python 3.10-3.13 on push to `main`.
 
 ## License
 
