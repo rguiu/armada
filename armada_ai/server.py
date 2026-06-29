@@ -80,7 +80,7 @@ async def _broadcast_tree(hide_dead: bool = False):
     if not _ws_clients:
         return
     await _cleanup_ws_clients()
-    tree = db.build_tree(include_dead=not hide_dead)
+    tree = await asyncio.to_thread(db.build_tree, include_dead=not hide_dead)
     payload = json.dumps({"type": "tree", "data": tree})
     for ws in list(_ws_clients):
         try:
@@ -393,7 +393,7 @@ async def tree_ws(websocket: WebSocket):
     _ws_clients.add(websocket)
     logs.log_ws_connect(client, "/api/ws")
     try:
-        tree = db.build_tree(include_dead=True)
+        tree = await asyncio.to_thread(db.build_tree, include_dead=True)
         await websocket.send_text(json.dumps({"type": "tree", "data": tree}))
         while True:
             await websocket.receive_text()
@@ -473,19 +473,19 @@ async def create_node(request: Request):
     if _create_lock is None:
         _create_lock = asyncio.Lock()
     async with _create_lock:
-        existing_names = db.existing_names()
+        existing_names = await asyncio.to_thread(db.existing_names)
         validation_error = req.validate_name(existing_names)
         if isinstance(validation_error, str):
             if "already exists" in validation_error:
                 raise HTTPException(status_code=409, detail=validation_error)
             raise HTTPException(status_code=400, detail=validation_error)
 
-        colour = naming.next_colour(db.active_colours())
+        colour = naming.next_colour(await asyncio.to_thread(db.active_colours))
         agent_name = req.name or naming.generate_sequential_name(
             req.project_label_id, existing_names)
         agent_name = agent_name.replace(".", "-")
 
-    path = db.get_project_label_path(req.project_label_id)
+    path = await asyncio.to_thread(db.get_project_label_path, req.project_label_id)
     if not path:
         raise HTTPException(status_code=400, detail="Project label not found")
     if not os.path.isdir(path):
@@ -493,7 +493,7 @@ async def create_node(request: Request):
             detail=f"Project path does not exist: {path}")
 
     if req.parent_id:
-        parent = db.get_node(req.parent_id)
+        parent = await asyncio.to_thread(db.get_node, req.parent_id)
         if not parent:
             raise HTTPException(status_code=400, detail="Parent node not found")
 
@@ -512,7 +512,8 @@ async def create_node(request: Request):
     pane_id, session_id = result.pane_id, result.session_id
 
     try:
-        node_id = db.create_node(
+        node_id = await asyncio.to_thread(
+            db.create_node,
             name=agent_name, colour=colour, parent_id=req.parent_id,
             project_label_id=req.project_label_id, tmux_pane_id=pane_id,
             tmux_session_id=session_id,
@@ -525,7 +526,7 @@ async def create_node(request: Request):
             pass
         raise
 
-    db.add_status_report(node_id, "idle",
+    await asyncio.to_thread(db.add_status_report, node_id, "idle",
         f"node created (agent={req.agent_type}, project={req.project_label_id or 'cwd'})")
     logs.log_create(agent_name, req.agent_type, req.project_label_id)
     metrics.counter_inc("armada_nodes_created_total")
@@ -534,7 +535,7 @@ async def create_node(request: Request):
         delay = 8.0 if req.agent_type in ("opencode", "claude") else 3.0
         tmux.send_initial_prompt(agent_name, req.initial_prompt, delay=delay)
 
-    node = db.get_node(node_id)
+    node = await asyncio.to_thread(db.get_node, node_id)
     await _broadcast_tree()
     return JSONResponse(node.as_summary(), status_code=201)
 
@@ -590,12 +591,12 @@ async def send_to_node(node_id: int, request: Request):
     if not command and not raw:
         raise HTTPException(status_code=400, detail="command is required")
 
-    node = db.get_node(node_id)
+    node = await asyncio.to_thread(db.get_node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
     if node.is_dead():
         raise HTTPException(status_code=410, detail="Node is dead")
-    if not tmux.window_exists(node.name):
+    if not await asyncio.to_thread(tmux.window_exists, node.name):
         raise HTTPException(status_code=410, detail="Node window no longer exists")
 
     if raw:
@@ -613,12 +614,12 @@ async def send_to_node(node_id: int, request: Request):
 async def patch_node(node_id: int, request: Request):
     body = await request.json()
     action = body.get("action")
-    node = db.get_node(node_id)
+    node = await asyncio.to_thread(db.get_node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
 
     if action == "hide":
-        hidden = db.hide_node(node_id)
+        hidden = await asyncio.to_thread(db.hide_node, node_id)
         for entry in hidden:
             try:
                 tmux.kill_node_window(entry["name"])
@@ -631,19 +632,21 @@ async def patch_node(node_id: int, request: Request):
     if action == "reparent":
         new_parent = body.get("parent_id") or None
         if new_parent:
-            if not db.get_node(new_parent):
+            if not await asyncio.to_thread(db.get_node, new_parent):
                 raise HTTPException(status_code=400, detail="Parent node not found")
-        db.reparent_node(node_id, new_parent)
+        await asyncio.to_thread(db.reparent_node, node_id, new_parent)
         await _broadcast_tree()
         return JSONResponse({"ok": True})
     if action == "rename":
         new_name = body.get("name", "").strip()
         if not new_name:
             raise HTTPException(status_code=400, detail="name is required")
-        if new_name in db.existing_names():
+        existing = await asyncio.to_thread(db.existing_names)
+        if new_name in existing:
             raise HTTPException(status_code=409, detail=f"Node '{new_name}' already exists")
-        old_name = db.get_node(node_id).name if db.get_node(node_id) else None
-        db.rename_node(node_id, new_name)
+        current = await asyncio.to_thread(db.get_node, node_id)
+        old_name = current.name if current else None
+        await asyncio.to_thread(db.rename_node, node_id, new_name)
         if old_name:
             tmux.rename_node_session(old_name, new_name)
         await _broadcast_tree()
@@ -712,7 +715,7 @@ async def terminal_ws(websocket: WebSocket, node_id: int):
         await websocket.close(code=4001)
         return
 
-    node = db.get_node(node_id)
+    node = await asyncio.to_thread(db.get_node, node_id)
     if not node:
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "node_not_found")
         await websocket.close(code=4004)
@@ -845,15 +848,15 @@ async def send_message_to_node(node_id: int, request: Request):
     msg_type = body.get("type", "message")
     from_node_id = body.get("from_node_id")
 
-    node = db.get_node(node_id)
+    node = await asyncio.to_thread(db.get_node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
 
-    msg_id = db.create_message(from_node_id, node_id, msg_type, payload)
+    msg_id = await asyncio.to_thread(db.create_message, from_node_id, node_id, msg_type, payload)
     if node.status == AgentStatus.IDLE.value:
         _deliver_pending_messages(node)
     await _broadcast_tree()
-    msg = db.get_message(msg_id)
+    msg = await asyncio.to_thread(db.get_message, msg_id)
     return JSONResponse(msg.as_dict() if msg else {"id": msg_id}, status_code=201)
 
 
@@ -872,10 +875,10 @@ async def update_message(message_id: int, request: Request):
     new_status = body.get("status")
     if new_status not in ("done",):
         raise HTTPException(status_code=400, detail="status must be 'done'")
-    msg = db.get_message(message_id)
+    msg = await asyncio.to_thread(db.get_message, message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Message not found")
-    ok = db.mark_message_done(message_id)
+    ok = await asyncio.to_thread(db.mark_message_done, message_id)
     if not ok:
         raise HTTPException(status_code=409, detail="Message cannot be marked done in its current state")
     return JSONResponse({"ok": True})
@@ -891,12 +894,12 @@ async def broadcast_to_children(node_id: int, request: Request):
         payload = json.dumps(payload)
     msg_type = body.get("type", "message")
 
-    node = db.get_node(node_id)
+    node = await asyncio.to_thread(db.get_node, node_id)
     if not node:
         raise HTTPException(status_code=404, detail="Node not found")
 
-    msg_ids = db.create_broadcast(node_id, msg_type, payload)
-    children = db.get_node_children(node_id)
+    msg_ids = await asyncio.to_thread(db.create_broadcast, node_id, msg_type, payload)
+    children = await asyncio.to_thread(db.get_node_children, node_id)
     for child in children:
         if child.status == AgentStatus.IDLE.value:
             _deliver_pending_messages(child)
@@ -915,8 +918,8 @@ async def post_to_queue(request: Request):
     msg_type = body.get("type", "task")
     from_node_id = body.get("from_node_id")
 
-    msg_id = db.create_message(from_node_id, None, msg_type, payload)
-    msg = db.get_message(msg_id)
+    msg_id = await asyncio.to_thread(db.create_message, from_node_id, None, msg_type, payload)
+    msg = await asyncio.to_thread(db.get_message, msg_id)
     return JSONResponse(msg.as_dict() if msg else {"id": msg_id}, status_code=201)
 
 
@@ -934,16 +937,16 @@ async def claim_queue_task(message_id: int, request: Request):
         raise HTTPException(status_code=400, detail="node_id is required")
     expires = body.get("expires_minutes", 10)
 
-    msg = db.get_message(message_id)
+    msg = await asyncio.to_thread(db.get_message, message_id)
     if not msg:
         raise HTTPException(status_code=404, detail="Task not found")
     if msg.to_node_id is not None:
         raise HTTPException(status_code=400, detail="Not a queue task")
 
-    ok = db.claim_queue_task(message_id, node_id, expires)
+    ok = await asyncio.to_thread(db.claim_queue_task, message_id, node_id, expires)
     if not ok:
         raise HTTPException(status_code=409, detail="Task already claimed")
-    msg = db.get_message(message_id)
+    msg = await asyncio.to_thread(db.get_message, message_id)
     return JSONResponse(msg.as_dict() if msg else {"ok": True})
 
 
@@ -1343,12 +1346,12 @@ async def agent_report(request: Request):
     if validation_error:
         raise HTTPException(status_code=400, detail=validation_error)
 
-    node = db.get_node_by_name(report.name)
+    node = await asyncio.to_thread(db.get_node_by_name, report.name)
     if not node:
         raise HTTPException(status_code=404, detail=f"Unknown node: {report.name}")
 
     options_json = json.dumps(body.get("options", [])) if body.get("options") else ""
-    db.add_status_report(node.id, report.status, report.message, options=options_json)
+    await asyncio.to_thread(db.add_status_report, node.id, report.status, report.message, options=options_json)
     logs.log_report(report.name, report.status, report.message)
     metrics.counter_inc("armada_reports_total")
 
@@ -1360,7 +1363,8 @@ async def agent_report(request: Request):
         metrics.counter_inc("armada_errors_total")
 
     if report.tokens or report.cost:
-        db.accumulate_cost(
+        await asyncio.to_thread(
+            db.accumulate_cost,
             node.id,
             tokens_in=report.tokens.get("input", 0) if report.tokens else 0,
             tokens_out=report.tokens.get("output", 0) if report.tokens else 0,
