@@ -95,7 +95,7 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
 
         if exec_cmd:
             aap_env = (
-                f"export AAP_SESSION_ID='armada-{safe_name}' && "
+                f"export AAP_SESSION_ID='armada-{safe_name}-{int(time.time())}' && "
                 if agent_type.startswith("aap_") else ""
             )
             return (
