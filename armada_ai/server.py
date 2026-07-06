@@ -5,6 +5,7 @@ so existing tests and CLI continue to work unchanged.
 """
 import os
 import sys
+import shutil
 import subprocess
 import threading
 import re
@@ -531,7 +532,7 @@ async def create_node(request: Request):
     metrics.counter_inc("armada_nodes_created_total")
 
     if req.initial_prompt:
-        delay = 8.0 if req.agent_type in ("opencode", "claude") else 3.0
+        delay = 8.0 if req.agent_type in ("opencode", "claude", "aap_opencode", "aap_claude") else 3.0
         tmux.send_initial_prompt(agent_name, req.initial_prompt, delay=delay)
 
     node = db.get_node(node_id)
@@ -1005,6 +1006,19 @@ def project_overview(label_id: str):
         "configs": configs,
         "git": git,
     })
+
+
+@app.get("/api/agent-types")
+def available_agent_types():
+    """Return available agent types based on installed binaries."""
+    types = [
+        {"id": "opencode", "label": "Open Code", "available": shutil.which("opencode") is not None},
+        {"id": "claude", "label": "Claude Code", "available": shutil.which("claude") is not None},
+        {"id": "aap_opencode", "label": "AAP + Open Code", "available": shutil.which("aap") is not None and shutil.which("opencode") is not None},
+        {"id": "aap_claude", "label": "AAP + Claude Code", "available": shutil.which("aap") is not None and shutil.which("claude") is not None},
+        {"id": "bash", "label": "Bash", "available": True},
+    ]
+    return JSONResponse(types)
 
 
 @app.get("/api/skills")

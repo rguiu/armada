@@ -685,6 +685,8 @@ a { color: var(--accent); }
     <select id="node-agent">
       <option value="opencode">Open Code</option>
       <option value="claude">Claude Code</option>
+      <option value="aap_opencode">AAP + Open Code</option>
+      <option value="aap_claude">AAP + Claude Code</option>
       <option value="bash">Bash</option>
     </select>
     <label>Initial Prompt (optional)</label>
@@ -1783,15 +1785,26 @@ async function refreshNodeModalDropdowns() {
 
   const parentEl = document.getElementById('node-parent');
   const labelEl = document.getElementById('node-label');
+  const agentEl = document.getElementById('node-agent');
   const savedParent = parentEl.value;
   const savedLabel = labelEl.value;
+  const savedAgent = agentEl.value;
 
   parentEl.innerHTML = '<option value="">None (root node)</option>' + addNodes(tree);
   labelEl.innerHTML =
     labels.map(l => `<option value="${esc(l.id)}">${esc(l.name)}</option>`).join('');
 
+  try {
+    const agentTypes = await api('/api/agent-types');
+    agentEl.innerHTML = agentTypes
+      .filter(t => t.available)
+      .map(t => `<option value="${esc(t.id)}">${esc(t.label)}</option>`)
+      .join('');
+  } catch(e) {}
+
   if (savedParent) parentEl.value = savedParent;
   if (savedLabel) labelEl.value = savedLabel;
+  if (savedAgent) agentEl.value = savedAgent;
 }
 
 async function refreshAll() {

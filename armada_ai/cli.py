@@ -1070,7 +1070,7 @@ def _watch_add_node(fd, old_settings, projects):
     fields = [
         {"label": "Name", "value": "", "type": "text"},
         {"label": "Project", "value": proj_opts[0] if proj_opts else "", "type": "select", "options": proj_opts, "required": True},
-        {"label": "Agent", "value": "auto", "type": "select", "options": ["auto", "opencode", "claude", "bash"]},
+        {"label": "Agent", "value": "auto", "type": "select", "options": ["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"]},
         {"label": "Parent ID", "value": "", "type": "text"},
         {"label": "Prompt", "value": "", "type": "text"},
         {"label": "[ Save ]", "type": "button"},
@@ -1137,7 +1137,7 @@ def _create_cmd(subargs: list[str]):
     p.add_argument("--name", "-n", help="Node name (auto-generated if omitted)")
     p.add_argument("--project", "-p", required=True, help="Project label ID (required)")
     p.add_argument("--agent", "-a", default="auto",
-                   choices=["auto", "opencode", "claude", "bash"],
+                   choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
                    help="Agent type (default: auto)")
     p.add_argument("--parent", "-P", type=int, help="Parent node ID")
     p.add_argument("--prompt", "-m", help="Initial prompt to send to the agent")

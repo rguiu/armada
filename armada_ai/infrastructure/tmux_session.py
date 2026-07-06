@@ -82,9 +82,22 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
 
     direnv_hook = 'eval "$(direnv export bash 2>/dev/null)"; ' if shutil.which("direnv") else ""
 
-    if agent_type in ("opencode", "claude"):
-        agent_bin = shutil.which(agent_type)
-        if agent_bin:
+    if agent_type in ("opencode", "claude", "aap_opencode", "aap_claude"):
+        if agent_type.startswith("aap_"):
+            underlying = agent_type[4:]  # "claude" or "opencode"
+            aap_bin = shutil.which("aap")
+            agent_bin = aap_bin
+            exec_cmd = f"exec {aap_bin} run {underlying}" if aap_bin else None
+        else:
+            underlying = agent_type
+            agent_bin = shutil.which(agent_type)
+            exec_cmd = f"exec {agent_bin}" if agent_bin else None
+
+        if exec_cmd:
+            aap_env = (
+                f"export AAP_SESSION_ID='armada-{safe_name}' && "
+                if agent_type.startswith("aap_") else ""
+            )
             return (
                 f"{sanitize_prefix}"
                 f"cd {safe_dir} && "
@@ -92,7 +105,8 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
                 f"printf '\\033]2;{name}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
                 f"export ARMADA_WORKSPACE='{safe_workspace}' && "
-                f"exec {agent_bin}"
+                f"{aap_env}"
+                f"{exec_cmd}"
             )
         else:
             return (
@@ -327,7 +341,7 @@ def send_initial_prompt(name: str, prompt: str, delay: float = 3.0):
                 result = tmux("display-message", "-t", target, "-p", "#{pane_current_command}")
                 if result.returncode == 0:
                     cmd = result.stdout.strip().lower()
-                    if cmd in ("node", "claude", "opencode", "deno"):
+                    if cmd in ("node", "claude", "opencode", "deno", "aap"):
                         break
             else:
                 send_keys(name, prompt)
