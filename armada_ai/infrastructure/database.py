@@ -6,6 +6,7 @@ Sub-modules handle specific concerns:
 - db_stats.py    — Status reports, cost accumulation, hourly stats, restart counts
 - db_projects.py — Project labels and JSON sync
 """
+import asyncio
 import os
 import sqlite3
 import threading
@@ -14,8 +15,7 @@ import time
 from .. import constants
 
 _write_lock = threading.Lock()
-_conn: sqlite3.Connection | None = None
-_conn_lock = threading.Lock()
+_local = threading.local()
 _MAX_RETRIES = constants.MAX_RETRIES
 _RETRY_BASE_DELAY = constants.RETRY_BASE_DELAY
 
@@ -27,32 +27,26 @@ def _ensure_dir():
 
 
 def _get_conn() -> sqlite3.Connection:
-    global _conn
-    if _conn is not None:
-        return _conn
-    with _conn_lock:
-        if _conn is not None:
-            return _conn
+    if not hasattr(_local, "conn") or _local.conn is None:
         _ensure_dir()
-        _conn = sqlite3.connect(constants.DB_PATH, timeout=30, check_same_thread=False)
-        _conn.execute("PRAGMA journal_mode=WAL")
-        _conn.execute("PRAGMA foreign_keys=ON")
-        _conn.execute("PRAGMA busy_timeout=30000")
-        _conn.execute("PRAGMA synchronous=NORMAL")
-        _conn.execute("PRAGMA cache_size=-8000")
-        _conn.row_factory = sqlite3.Row
-        return _conn
+        conn = sqlite3.connect(constants.DB_PATH, timeout=30)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-8000")
+        conn.row_factory = sqlite3.Row
+        _local.conn = conn
+    return _local.conn
 
 
 def close_connection():
-    global _conn
-    with _conn_lock:
-        if _conn is not None:
-            try:
-                _conn.close()
-            except Exception:
-                pass
-            _conn = None
+    if hasattr(_local, "conn") and _local.conn is not None:
+        try:
+            _local.conn.close()
+        except Exception:
+            pass
+        _local.conn = None
 
 
 def _retry(fn, *, write: bool = False):
@@ -69,6 +63,10 @@ def _retry(fn, *, write: bool = False):
                 raise
             time.sleep(_RETRY_BASE_DELAY * (attempt + 1))
     raise last_error
+
+
+async def _run_async(fn, *args, **kwargs):
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 # --- Schema init ---

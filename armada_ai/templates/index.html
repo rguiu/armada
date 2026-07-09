@@ -126,8 +126,9 @@ a { color: var(--accent); }
 #project-filters .proj-chip.active { background: #1f6feb33; color: var(--accent); border-color: #1f6feb66; }
 #tree { flex: 1; overflow-y: auto; padding: 8px; }
 #tree .node-item {
-  padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;
-  display: flex; align-items: center; gap: 6px; margin: 1px 0;
+  padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 13px;
+  display: flex; align-items: center; gap: 6px; margin: 2px 0;
+  transition: background 0.12s, outline 0.12s, box-shadow 0.12s;
 }
 #tree .node-item:hover { background: var(--hover); }
 #tree .node-item.selected { background: var(--selected); border: 1px solid var(--accent); }
@@ -186,8 +187,15 @@ a { color: var(--accent); }
   user-select: none; visibility: hidden; padding: 0 2px;
 }
 .node-item:hover .drag-handle { visibility: visible; }
-.node-item.drag-over { background: #1f6feb22; outline: 1px dashed #58a6ff; }
-.node-item.dragging { opacity: 0.4; }
+.node-item.drag-over {
+  background: rgba(88,166,255,0.08);
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  box-shadow: inset 0 0 12px rgba(88,166,255,0.08);
+  border-radius: 6px;
+}
+.node-item.dragging { opacity: 0.35; transform: scale(0.98); }
+.node-item.drag-over > * { pointer-events: none; }
 #tree .no-nodes { padding: 24px 12px; color: var(--text-dim); font-size: 13px; text-align: center; }
 
 /* ── Loading skeleton ── */
@@ -741,6 +749,40 @@ a { color: var(--accent); }
 <script>
 let treeData = [];
 let selectedNodeId = null;
+let _knownNodeIds = new Set();
+
+function _playNotificationSound() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.type = 'sine';
+    o.frequency.setValueAtTime(660, ctx.currentTime);
+    o.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.08);
+    g.gain.setValueAtTime(0.12, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+    o.start(ctx.currentTime);
+    o.stop(ctx.currentTime + 0.2);
+    setTimeout(() => ctx.close(), 250);
+  } catch(_) {}
+}
+
+function _detectNewNodes(tree) {
+  let found = false;
+  const ids = new Set();
+  const walkTree = (nodes) => {
+    if (!nodes) return;
+    nodes.forEach(n => {
+      ids.add(n.id);
+      if (!_knownNodeIds.has(n.id) && n.status !== 'dead') found = true;
+      if (n.children) walkTree(n.children);
+    });
+  };
+  walkTree(tree);
+  _knownNodeIds = ids;
+  return found;
+}
 
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js').catch(() => {});
@@ -2128,9 +2170,11 @@ function connectTreeWs() {
       if (msg.type === 'tree' && msg.data) {
         saveCollapsed();
         const prevFingerprint = _selectedFingerprint;
+        const hasNew = _detectNewNodes(msg.data);
         treeData = msg.data;
         renderTree(treeData, document.getElementById('tree'));
         restoreCollapsed();
+        if (hasNew) _playNotificationSound();
         updatePendingDot();
         updateStats();
         if (selectedNodeId) {
