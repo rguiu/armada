@@ -21,6 +21,8 @@ class AgentType(str, Enum):
     BASH = "bash"
     OPENCODE = "opencode"
     CLAUDE = "claude"
+    AAP_OPENCODE = "aap_opencode"
+    AAP_CLAUDE = "aap_claude"
 
 
 @dataclass(frozen=True)

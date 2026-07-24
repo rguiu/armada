@@ -292,14 +292,14 @@ def deploy_for_agent_type(agent_name: str, agent_type: str, cwd: str):
         logs.log_event("_server", "deploy_error",
                        {"step": "install_skills", "cwd": cwd, "error": str(e)})
 
-    if agent_type == "opencode":
+    if agent_type in ("opencode", "aap_opencode"):
         try:
             _deploy_pending_plugin(cwd)
         except Exception as e:
             logs.log_event("_server", "deploy_error",
                            {"step": "pending_plugin", "cwd": cwd, "error": str(e)})
 
-    if agent_type == "claude":
+    if agent_type in ("claude", "aap_claude"):
         try:
             deploy_claude_hooks(cwd)
         except Exception as e:

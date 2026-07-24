@@ -108,7 +108,7 @@ def spawn_node(
     Args:
         name: Descriptive name for the child node (e.g. "test-writer", "reviewer").
         project_label_id: Project to assign. Defaults to parent's project.
-        agent_type: Agent type ("opencode", "claude", "bash"). Defaults to parent's type.
+        agent_type: Agent type ("opencode", "claude", "aap_opencode", "aap_claude", "bash"). Defaults to parent's type.
         initial_prompt: Optional prompt to send to the agent after creation.
 
     Returns:
