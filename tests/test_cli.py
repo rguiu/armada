@@ -158,8 +158,8 @@ class TestStatus:
         with patch("urllib.request.urlopen", side_effect=ConnectionRefusedError("refused")):
             cli._status()
 
-        out = capsys.readouterr().out
-        assert "not reachable" in out
+        err = capsys.readouterr().err
+        assert "not reachable" in err
 
     def test_status_json(self, capsys):
         health_data = json.dumps({
@@ -358,3 +358,32 @@ class TestProjectsCmd:
 
         err = capsys.readouterr().err
         assert "Failed" in err
+
+
+class TestStyle:
+    """Tests for the small output-styling helpers."""
+
+    def test_style_respects_no_color(self, monkeypatch):
+        monkeypatch.setattr(cli, "_COLOR_MODE", "auto")
+        monkeypatch.setenv("NO_COLOR", "1")
+        assert cli._style("hello", "red") == "hello"
+
+    def test_style_forced_color(self, monkeypatch):
+        monkeypatch.setattr(cli, "_COLOR_MODE", "always")
+        assert cli._style("hello", "red") == "\033[31mhello\033[0m"
+
+    def test_visible_len_ignores_ansi(self, monkeypatch):
+        monkeypatch.setattr(cli, "_COLOR_MODE", "always")
+        assert cli._visible_len(cli._style("abc", "red")) == 3
+
+    def test_table_renders_columns(self, capsys, monkeypatch):
+        monkeypatch.setattr(cli, "_COLOR_MODE", "always")
+        cli._table(
+            ["NAME", "STATUS"],
+            [["short", cli._style("active", "green")],
+             ["long-name", cli._style("idle", "dim")]],
+        )
+        out = capsys.readouterr().out
+        assert "NAME" in out
+        assert "long-name" in out
+        assert "\033[32m" in out

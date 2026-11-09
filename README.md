@@ -240,6 +240,9 @@ armada create -p armada -a claude -m "review the auth module"
 armada logs HOOK20 -f
 ```
 
+Output is colourised automatically on a TTY. Use `--color` to force it, or `--no-color`
+/ `NO_COLOR=1` to disable it. Commands that support `--json` are safe to pipe.
+
 
 ## API Endpoints
 
