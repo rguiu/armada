@@ -1,7 +1,4 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "plugin": [
-    ".opencode/plugins/armada-pending.ts",
-    ".opencode/plugins/armada-pending.js"
-  ]
+  "skills": [".opencode/skills"]
 }

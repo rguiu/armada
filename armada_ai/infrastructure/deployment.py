@@ -16,7 +16,91 @@ _SKILLS_SRC_PKG = Path(__file__).parent.parent / "skills"
 _SKILLS_SRC_REPO = Path(__file__).parent.parent.parent / "skills"
 _SKILLS_SRC = _SKILLS_SRC_PKG if _SKILLS_SRC_PKG.is_dir() else _SKILLS_SRC_REPO
 _HOOKS_SRC = Path(__file__).parent.parent / "hooks"
-_PLUGIN_SRC_DIR = Path(__file__).parent.parent.parent / ".opencode" / "plugins"
+_PLUGIN_SRC_DIR = Path(__file__).parent.parent / "plugins"
+
+_OPENCODE_SCHEMA = "https://opencode.ai/config.json"
+_ARMADA_PLUGIN_FILE = "armada-pending.ts"
+
+
+def _read_json(path: Path) -> dict:
+    try:
+        if path.exists():
+            data = json.loads(path.read_text())
+            if isinstance(data, dict):
+                return data
+    except (json.JSONDecodeError, IOError):
+        pass
+    return {}
+
+
+def _write_json(path: Path, cfg: dict):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(cfg, indent=2) + "\n")
+
+
+def _migrate_opencode_config(cfg: dict) -> dict:
+    """Move deprecated OpenCode v1 keys to their current v2 shape."""
+    cfg.setdefault("$schema", _OPENCODE_SCHEMA)
+
+    # `plugin` was replaced by `plugins`. Local files under .opencode/plugins/
+    # are discovered automatically, so drop stale single-file entries.
+    cfg.pop("plugin", None)
+
+    # `command` was replaced by `commands`.
+    legacy_commands = cfg.pop("command", None)
+    if isinstance(legacy_commands, dict):
+        commands = cfg.setdefault("commands", {})
+        if isinstance(commands, dict):
+            for name, definition in legacy_commands.items():
+                commands.setdefault(name, definition)
+
+    # `skills: { paths: [...] }` -> `skills: [...]` when there are no URLs.
+    skills = cfg.get("skills")
+    if isinstance(skills, dict) and "paths" in skills and "urls" not in skills:
+        cfg["skills"] = list(skills["paths"])
+
+    return cfg
+
+
+def _opencode_mcp_servers(cfg: dict) -> dict:
+    """Return the current `mcp.servers` mapping, migrating legacy entries."""
+    mcp = cfg.setdefault("mcp", {})
+    if not isinstance(mcp, dict):
+        mcp = {}
+        cfg["mcp"] = mcp
+
+    servers = mcp.get("servers")
+    if not isinstance(servers, dict):
+        servers = {}
+        mcp["servers"] = servers
+
+    # Move legacy direct `mcp.<name>` entries first so they take precedence
+    # over the older top-level `mcpServers` block.
+    for name in list(mcp):
+        if name in ("servers", "timeout"):
+            continue
+        value = mcp[name]
+        if isinstance(value, dict) and any(k in value for k in ("type", "command", "url")):
+            servers.setdefault(name, value)
+            del mcp[name]
+
+    legacy = cfg.pop("mcpServers", None)
+    if isinstance(legacy, dict):
+        for name, server in legacy.items():
+            servers.setdefault(name, server)
+
+    return servers
+
+
+def _install_armada_mcp(cfg: dict, armada_bin: str) -> dict:
+    _migrate_opencode_config(cfg)
+    servers = _opencode_mcp_servers(cfg)
+    servers["armada"] = {
+        "type": "local",
+        "command": [armada_bin, "mcp"],
+        "enabled": True,
+    }
+    return cfg
 
 
 def _resolve_agent_config_dir(cwd: str) -> tuple[Path | None, Path | None]:
@@ -76,46 +160,56 @@ def install_skills_to_user() -> list[str]:
 
 
 def _deploy_pending_plugin(cwd: str):
-    """Install armada-pending plugin files into a project."""
-    project = Path(cwd)
-    copies = []
-    for dst_dir_name in ("plugins", "plugin"):
-        dst_dir = project / ".opencode" / dst_dir_name
-        dst_dir.mkdir(parents=True, exist_ok=True)
-        for plugin_file in ("armada-pending.ts", "armada-pending.js"):
-            src = _PLUGIN_SRC_DIR / plugin_file
-            if src.exists():
-                shutil.copy2(src, dst_dir / plugin_file)
-                if plugin_file not in copies:
-                    copies.append(plugin_file)
+    """Install the V2 armada-pending plugin into a project.
 
-    if not copies:
+    OpenCode 2.x discovers direct ``.ts`` files under ``.opencode/plugins/``,
+    so no ``opencode.json`` plugin entry is required.
+    """
+    project = Path(cwd)
+    src = _PLUGIN_SRC_DIR / _ARMADA_PLUGIN_FILE
+    if not src.exists():
         return
 
-    config_path = project / "opencode.json"
+    dst_dir = project / ".opencode" / "plugins"
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst_dir / _ARMADA_PLUGIN_FILE)
+
+    # Remove V1 artifacts left by older Armada versions. Loading both the V1
+    # and V2 implementations would register duplicate plugin instances.
+    for stale in (
+        project / ".opencode" / "plugins" / "armada-pending.js",
+        project / ".opencode" / "plugin" / "armada-pending.ts",
+        project / ".opencode" / "plugin" / "armada-pending.js",
+    ):
+        try:
+            stale.unlink()
+        except FileNotFoundError:
+            pass
+
     try:
-        if config_path.exists():
-            cfg = json.loads(config_path.read_text())
-        else:
-            cfg = {}
-        cfg.setdefault("$schema", "https://opencode.ai/config.json")
-        plugins = cfg.setdefault("plugin", [])
-        for pf in copies:
-            ref = f".opencode/plugins/{pf}"
-            if ref not in plugins:
-                plugins.append(ref)
-        config_path.write_text(json.dumps(cfg, indent=2))
-    except Exception:
+        (project / ".opencode" / "plugin").rmdir()
+    except OSError:
         pass
+
+    config_path = project / "opencode.json"
+    if config_path.exists():
+        cfg = _read_json(config_path)
+        if cfg:
+            _write_json(config_path, _migrate_opencode_config(cfg))
 
 
 def _install_global_plugins(home: Path):
-    for plugin_file in ("armada-pending.ts", "armada-pending.js"):
-        src = _PLUGIN_SRC_DIR / plugin_file
-        if src.exists():
-            dst = home / ".config" / "opencode" / "plugins" / plugin_file
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+    src = _PLUGIN_SRC_DIR / _ARMADA_PLUGIN_FILE
+    if src.exists():
+        dst = home / ".config" / "opencode" / "plugins" / _ARMADA_PLUGIN_FILE
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+    stale = home / ".config" / "opencode" / "plugins" / "armada-pending.js"
+    try:
+        stale.unlink()
+    except FileNotFoundError:
+        pass
 
 
 def _install_global_claude_hooks(home: Path):
@@ -132,24 +226,25 @@ def _install_global_claude_hooks(home: Path):
 
 def _install_global_mcp(home: Path):
     armada_bin = shutil.which("armada") or "armada"
-    mcp_entry = {"command": armada_bin, "args": ["mcp"]}
 
-    oc_mcp = home / ".config" / "opencode" / "mcp.json"
-    oc_mcp.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        cfg = json.loads(oc_mcp.read_text()) if oc_mcp.exists() else {}
-    except (json.JSONDecodeError, IOError):
-        cfg = {}
-    cfg.setdefault("mcpServers", {})["armada"] = mcp_entry
-    oc_mcp.write_text(json.dumps(cfg, indent=2))
+    # OpenCode 2.x reads MCP servers from opencode.json -> mcp.servers.
+    # The old ~/.config/opencode/mcp.json file is not read by current versions.
+    oc_config = home / ".config" / "opencode" / "opencode.json"
+    cfg = _read_json(oc_config)
+    _install_armada_mcp(cfg, armada_bin)
+    _write_json(oc_config, cfg)
 
+    # Claude Code global MCP is handled separately (follow-up).
     cl_mcp = home / ".claude" / "mcp.json"
     cl_mcp.parent.mkdir(parents=True, exist_ok=True)
     try:
         cfg = json.loads(cl_mcp.read_text()) if cl_mcp.exists() else {}
     except (json.JSONDecodeError, IOError):
         cfg = {}
-    cfg.setdefault("mcpServers", {})["armada"] = mcp_entry
+    cfg.setdefault("mcpServers", {})["armada"] = {
+        "command": armada_bin,
+        "args": ["mcp"],
+    }
     cl_mcp.write_text(json.dumps(cfg, indent=2))
 
 
@@ -232,31 +327,11 @@ def save_agent_hook(agent_name: str) -> str:
 
 
 def _deploy_mcp_opencode(cwd: str):
-    """Add Armada MCP server config to opencode.json under the 'mcp' key."""
+    """Add Armada MCP server config to opencode.json under ``mcp.servers``."""
     config_path = Path(cwd) / "opencode.json"
-    try:
-        if config_path.exists():
-            cfg = json.loads(config_path.read_text())
-        else:
-            cfg = {}
-    except (json.JSONDecodeError, IOError):
-        cfg = {}
-
-    cfg.setdefault("$schema", "https://opencode.ai/config.json")
-    # Migrate legacy mcpServers entries into mcp (preserving existing ones)
-    if "mcpServers" in cfg:
-        legacy = cfg.pop("mcpServers")
-        mcp = cfg.setdefault("mcp", {})
-        for k, v in legacy.items():
-            if k not in mcp:
-                mcp[k] = v
-    armada_bin = shutil.which("armada") or "armada"
-    mcp = cfg.setdefault("mcp", {})
-    mcp["armada"] = {
-        "type": "local",
-        "command": [armada_bin, "mcp"],
-    }
-    config_path.write_text(json.dumps(cfg, indent=2))
+    cfg = _read_json(config_path)
+    _install_armada_mcp(cfg, shutil.which("armada") or "armada")
+    _write_json(config_path, cfg)
 
 
 def _deploy_mcp_claude(cwd: str):

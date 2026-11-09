@@ -1038,7 +1038,7 @@ def list_extensions():  # pragma: no cover
     repo_root = Path(__file__).parent.parent
     source_skills = repo_root / "skills"
     source_hooks = repo_root / "armada_ai" / "hooks"
-    source_plugins = repo_root / ".opencode" / "plugins"
+    source_plugins = Path(__file__).parent / "plugins"
 
     extensions = []
 
@@ -1086,10 +1086,10 @@ def list_extensions():  # pragma: no cover
     # Scan MCP configs from project root and global
     mcp_seen = set()
     for candidate in (
-        repo_root / ".opencode" / "mcp.json",
-        repo_root / ".claude" / "mcp.json",
-        repo_root / ".opencode" / "mcp.jsonc",
-        Path.home() / ".config" / "opencode" / "mcp.json",
+        repo_root / "opencode.json",
+        repo_root / ".opencode" / "opencode.json",
+        repo_root / ".mcp.json",
+        Path.home() / ".config" / "opencode" / "opencode.json",
         Path.home() / ".claude" / "mcp.json",
     ):
         if candidate.is_file() and candidate.name not in mcp_seen:
@@ -1098,11 +1098,16 @@ def list_extensions():  # pragma: no cover
             try:
                 data = json.loads(candidate.read_text())
                 servers = data.get("mcpServers", {})
+                mcp_cfg = data.get("mcp")
+                if isinstance(mcp_cfg, dict):
+                    servers = mcp_cfg.get("servers", servers)
+                if not isinstance(servers, dict):
+                    servers = {}
                 desc = ", ".join(list(servers.keys())[:3]) or "MCP config"
             except Exception:
                 desc = "MCP config"
             ext_id = f"mcp-{candidate.stem}"
-            mcp_agent = "opencode" if "opencode" in str(candidate) else "claude" if ".claude" in str(candidate) else "both"
+            mcp_agent = "claude" if ".claude" in str(candidate) or candidate.name == ".mcp.json" else "opencode" if "opencode" in str(candidate) else "both"
             extensions.append({"id": ext_id, "type": "mcp", "name": str(candidate.relative_to(candidate.parent.parent)) if candidate.parent.parent else candidate.name, "description": desc, "agent": mcp_agent})
 
     # Scan custom extensions from ~/.armada/extensions/
@@ -1188,8 +1193,9 @@ def extension_content(extension_id: str):
     elif extension_id.startswith("hook-"):
         paths.append(repo_root / "armada_ai" / "hooks" / f"{extension_id[5:]}.sh")
     elif extension_id.startswith("plugin-"):
+        plugin_dir = Path(__file__).parent / "plugins"
         for suffix in (".ts", ".js"):
-            p = repo_root / ".opencode" / "plugins" / f"{extension_id[7:]}{suffix}"
+            p = plugin_dir / f"{extension_id[7:]}{suffix}"
             if p.exists():
                 paths.append(p)
     else:
@@ -1242,7 +1248,7 @@ async def install_extension_endpoint(request: Request):  # pragma: no cover
         dst_dir = target / ".opencode" / "plugins"
         dst_dir.mkdir(parents=True, exist_ok=True)
         for suffix in (".ts", ".js"):
-            src = repo_root / ".opencode" / "plugins" / f"{plugin_name}{suffix}"
+            src = Path(__file__).parent / "plugins" / f"{plugin_name}{suffix}"
             if not src.exists():
                 src = _Path.home() / ".armada" / "extensions" / "plugins" / f"{plugin_name}{suffix}"
             if src.exists():
