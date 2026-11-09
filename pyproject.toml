@@ -59,6 +59,15 @@ include = ["armada_ai", "armada_ai.*"]
 [tool.setuptools.package-data]
 "armada_ai" = ["templates/**", "static/**", "hooks/**", "bin/**", "skills/**", "armada-bash.sh"]
 
+[tool.ruff]
+line-length = 120
+
+[tool.ruff.lint]
+# Keep lint deterministic across Ruff releases. This is the historical
+# default rule set the project was written against; enabling every new rule
+# that ships in a future Ruff release would make CI red without code changes.
+select = ["E4", "E7", "E9", "F"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
