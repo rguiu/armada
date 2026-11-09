@@ -203,22 +203,46 @@ Armada uses a FastAPI server with SQLite (WAL). Each agent is backed by a tmux s
 
 ## Commands
 
+`armada --help` lists every command, and `armada <command> --help` shows its options.
+Global flags (`--lan`, `--qr`, `--no-browser`, `--keep-token`, `--foreground`)
+can appear before or after the command.
+
 | Command | Description |
 |---|---|
-| `armada` | Start daemon + open dashboard |
-| `armada --no-browser` | Start server without opening browser |
+| `armada` | Start the daemon and open the dashboard (default) |
+| `armada start` | Start the server (`--foreground` to stay attached) |
 | `armada stop` | Stop the daemon |
-| `armada nodes --watch` | Live terminal dashboard |
-| `armada create -p <project>` | Create a new agent node |
-| `armada nodes` | List all agents |
-| `armada attach <name>` | Attach to a node by name |
-| `armada projects` | List projects |
-| `armada projects add <id> <name> <path>` | Register a project |
-| `armada setup` | Install skills and MCP config |
+| `armada status [--json]` | Show server and fleet status |
+| `armada nodes [--watch] [--all] [--json]` | List agents; `--watch` opens the live dashboard |
+| `armada create -p <project> [-n name] [-a agent]` | Create a new agent node |
+| `armada attach <name> [--split]` | Attach to a node by name |
+| `armada restart <name-or-id>` | Kill and recreate a node |
+| `armada logs <name> [-f] [-n 20]` | Tail a node's activity log |
+| `armada projects [list\|add\|rm]` | Manage project labels |
+| `armada config [show\|init\|set]` | Show or edit `~/.armada/config.yaml` |
+| `armada service install` | Install as a launchd/systemd service |
+| `armada setup` | Install skills, hooks, and MCP config |
+| `armada agents [--json]` | Show detected agent CLIs and versions |
 | `armada mcp` | Start the MCP server (stdio mode) |
-| `armada report <status> <msg>` | Report node status |
-| `armada doctor` | Clean up stale sessions and DB state |
-| `armada --lan` | Bind to LAN IP (access from other devices) |
+| `armada report <status> <msg>` | Report node status (used by agent hooks) |
+| `armada doctor [--nuke]` | Clean up stale sessions and DB state |
+| `armada token [--qr] [--lan]` | Print the auth token or a QR code |
+| `armada demodb [seed\|path]` | Seed a demo database for recordings |
+| `armada version` / `armada --version` | Print the Armada version |
+
+Examples:
+
+```bash
+armada --lan --no-browser      # start on the LAN without opening a browser
+armada nodes --watch           # live terminal dashboard
+armada nodes --all --json      # script-friendly agent list, including dead nodes
+armada create -p armada -a claude -m "review the auth module"
+armada logs HOOK20 -f
+```
+
+Output is colourised automatically on a TTY. Use `--color` to force it, or `--no-color`
+/ `NO_COLOR=1` to disable it. Commands that support `--json` are safe to pipe.
+
 
 ## API Endpoints
 

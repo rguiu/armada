@@ -1,12 +1,147 @@
+import argparse
+import json
 import os
-import sys
+import platform
+import re
 import shutil
 import signal
 import socket
 import subprocess
-import platform
+import sys
 
 from . import constants
+
+# --- Output styling -------------------------------------------------------
+
+_COLOR_MODE = "auto"  # auto | always | never
+_RESET = "\033[0m"
+_STYLES = {
+    "bold": "\033[1m",
+    "dim": "\033[2m",
+    "red": "\033[31m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+    "blue": "\033[34m",
+    "magenta": "\033[35m",
+    "cyan": "\033[36m",
+    "grey": "\033[90m",
+}
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _color_enabled(stream=None) -> bool:
+    if _COLOR_MODE == "always":
+        return True
+    if _COLOR_MODE == "never":
+        return False
+    if os.environ.get("NO_COLOR") is not None:
+        return False
+    force = os.environ.get("FORCE_COLOR")
+    if force is not None:
+        return force.strip().lower() not in ("", "0", "false", "no")
+    stream = stream or sys.stdout
+    return bool(getattr(stream, "isatty", lambda: False)())
+
+
+def _style(text: str, *styles: str, stream=None) -> str:
+    if not text or not _color_enabled(stream):
+        return text
+    prefix = "".join(_STYLES[s] for s in styles)
+    return f"{prefix}{text}{_RESET}"
+
+
+def _visible_len(text) -> int:
+    return len(_ANSI_RE.sub("", str(text)))
+
+
+def _header(title: str, subtitle: str = ""):
+    line = f"{_style('⚓', 'bold', 'cyan')} {_style(title, 'bold')}"
+    if subtitle:
+        line += f"  {_style(subtitle, 'dim')}"
+    print(line)
+
+
+def _section(title: str):
+    print(_style(f"▸ {title}", "bold", "cyan"))
+
+
+def _ok(message: str):
+    print(f"  {_style('✓', 'green')} {message}")
+
+
+def _warn(message: str):
+    print(f"  {_style('!', 'yellow')} {message}")
+
+
+def _err(message: str):
+    print(f"{_style('✗', 'red', stream=sys.stderr)} {message}", file=sys.stderr)
+
+
+def _info(message: str):
+    print(f"  {_style('•', 'cyan')} {message}")
+
+
+def _table(headers, rows, aligns=None):
+    headers = [str(h) for h in headers]
+    rows = [[str(c) for c in row] for row in rows]
+    aligns = aligns or ["left"] * len(headers)
+    widths = []
+    for i, header in enumerate(headers):
+        widths.append(max([_visible_len(header)] + [_visible_len(r[i]) for r in rows]))
+
+    def cell(value, index):
+        value = str(value)
+        padding = " " * max(0, widths[index] - _visible_len(value))
+        return padding + value if aligns[index] == "right" else value + padding
+
+    print(("  " + "  ".join(_style(cell(h, i), "bold")
+                            for i, h in enumerate(headers))).rstrip())
+    print(("  " + "  ".join(_style("─" * w, "dim") for w in widths)).rstrip())
+    for row in rows:
+        print("  " + "  ".join(cell(c, i) for i, c in enumerate(row)).rstrip())
+
+
+def _status_marker(status: str) -> tuple[str, str]:
+    return {
+        "active": ("●", "green"),
+        "pending": ("●", "yellow"),
+        "idle": ("○", "dim"),
+        "error": ("●", "red"),
+        "dead": ("●", "dim"),
+    }.get(status, ("○", "dim"))
+
+
+def _status_cell(status: str) -> str:
+    marker, colour = _status_marker(status)
+    text = f"{marker} {status}"
+    return _style(text, colour, "bold" if status in ("active", "pending", "error") else "dim")
+
+
+def _fmt_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {secs}s"
+    return f"{secs}s"
+
+
+def _short_path(path: str) -> str:
+    home = os.path.expanduser("~")
+    if path == home:
+        return "~"
+    if path.startswith(home + os.sep):
+        return "~" + path[len(home):]
+    return path
+
+
+class _ArmadaHelpFormatter(argparse.RawDescriptionHelpFormatter):
+    """Color section headings when the terminal supports it."""
+
+    def start_section(self, heading):
+        super().start_section(_style(heading, "bold", "cyan"))
 
 
 def _read_token():
@@ -69,127 +204,457 @@ def _get_db_lock_pids(db_path: str, current_pid: int | None = None) -> list[int]
     return pids
 
 
-def main():
-    args = sys.argv[1:]
-    lan = "--lan" in args
-    qr = "--qr" in args
-    no_browser = "--no-browser" in args
-    keep_token = "--keep-token" in args or "--no-token-rotate" in args
-    flags = ("--lan", "--qr", "--keep-token", "--no-token-rotate", "--no-browser")
-    args = [a for a in args if a not in flags]
+class _ArmadaParser(argparse.ArgumentParser):
+    """ArgumentParser with friendly, stable error behaviour."""
 
-    if not args or args[0] in ("start", "serve"):
-        import shutil
-        if not shutil.which("tmux"):
-            print("Error: tmux is not installed.", file=sys.stderr)
-            print("Install it with:", file=sys.stderr)
-            print("  macOS:  brew install tmux", file=sys.stderr)
-            print("  Ubuntu: sudo apt install tmux", file=sys.stderr)
-            print("  Fedora: sudo dnf install tmux", file=sys.stderr)
-            sys.exit(1)
-        from .server import start_server, _ensure_token
-        if not args:
-            print("Starting Armada server... (use 'armada --help' for other commands)")
-        _ensure_token(keep=True)
-        _print_startup_info(lan=lan, qr=qr)
-        start_server(daemon=True, open_browser=not no_browser, lan=lan, keep_token=keep_token)
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(
+            1,
+            f"{self.prog}: {_style('error:', 'red', stream=sys.stderr)} {message}\n",
+        )
 
-    elif args[0] == "stop":
-        _stop_server()
 
-    elif args[0] == "attach":
-        do_split = "--split" in args
-        node_arg = next((a for a in args[1:] if not a.startswith("--")), None)
-        if do_split and node_arg:
-            _attach_split(node_arg)
-        elif node_arg:
-            _attach_node(node_arg)
+# Boolean flags that may appear anywhere on the command line. They are pulled
+# out before argparse runs so both `armada --lan` and `armada start --lan` work.
+_GLOBAL_FLAGS = {
+    "--lan": "lan",
+    "--qr": "qr",
+    "--no-browser": "no_browser",
+    "--keep-token": "keep_token",
+    "--no-token-rotate": "keep_token",
+    "--foreground": "foreground",
+    "--color": "color",
+    "--no-color": "no_color",
+    "--version": "version",
+    "-V": "version",
+}
+
+_GLOBAL_DEFAULTS = {
+    "lan": False,
+    "qr": False,
+    "no_browser": False,
+    "keep_token": False,
+    "foreground": False,
+    "color": False,
+    "no_color": False,
+}
+
+
+def _extract_global_flags(argv: list[str]) -> tuple[dict, list[str]]:
+    opts = dict(_GLOBAL_DEFAULTS)
+    opts["version"] = False
+    rest: list[str] = []
+    for arg in argv:
+        name = _GLOBAL_FLAGS.get(arg)
+        if name:
+            opts[name] = True
         else:
-            from .server import start_server, _ensure_token
-            _ensure_token(keep=True)
-            _print_startup_info(lan=lan, qr=qr)
-            start_server(daemon=False, open_browser=False, lan=lan)
+            rest.append(arg)
+    return opts, rest
 
-    elif args[0] == "setup":
-        _setup_skills()
 
-    elif args[0] == "version":
-        print(f"armada {constants.VERSION}")
+def _print_tmux_error():
+    _err("tmux is not installed.")
+    print(f"  {_style('Install it with:', 'dim')}", file=sys.stderr)
+    print("    macOS:  brew install tmux", file=sys.stderr)
+    print("    Ubuntu: sudo apt install tmux", file=sys.stderr)
+    print("    Fedora: sudo dnf install tmux", file=sys.stderr)
 
-    elif args[0] == "token":
-        _print_token(qr=qr, lan=lan)
 
-    elif args[0] == "doctor":
-        nuke = "--nuke" in args
-        _doctor(nuke=nuke)
+def _build_parser() -> argparse.ArgumentParser:
+    parser = _ArmadaParser(
+        prog="armada",
+        description=(
+            f"{_style('⚓ Armada', 'bold', 'cyan')}  "
+            f"{_style('persistent tmux sessions for coding agents', 'dim')}\n"
+            "Start, supervise, and orchestrate agent sessions from the terminal or dashboard."
+        ),
+        epilog=(
+            f"{_style('examples', 'bold', 'cyan')}\n"
+            "  armada                     start the server and open the dashboard\n"
+            "  armada --lan --no-browser  expose the dashboard on the LAN\n"
+            "  armada nodes --watch       live terminal dashboard\n"
+            "  armada agents              show installed agent CLIs\n"
+            "  armada create -p armada -a claude -m \"review the auth module\"\n"
+            "\n"
+            f"{_style('colour', 'bold', 'cyan')}\n"
+            "  Colour is automatic on a TTY. Use --color to force it or --no-color\n"
+            "  (or NO_COLOR=1) to disable it."
+        ),
+        formatter_class=_ArmadaHelpFormatter,
+        allow_abbrev=False,
+    )
+    parser.set_defaults(**_GLOBAL_DEFAULTS)
 
-    elif args[0] == "status":
-        _status()
+    glob = parser.add_argument_group("global options")
+    glob.add_argument("--lan", action="store_true",
+                      help="bind to the LAN address (0.0.0.0) instead of localhost")
+    glob.add_argument("--no-browser", action="store_true",
+                      help="do not open the dashboard in a browser")
+    glob.add_argument("--qr", action="store_true",
+                      help="show a QR code for the dashboard URL")
+    glob.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
+                      action="store_true",
+                      help="reuse the existing auth token (do not rotate)")
+    glob.add_argument("--foreground", action="store_true",
+                      help="run the server in the foreground (do not daemonize)")
+    glob.add_argument("--color", action="store_true",
+                      help="force coloured output")
+    glob.add_argument("--no-color", action="store_true",
+                      help="disable coloured output")
+    glob.add_argument("-V", "--version", action="version",
+                      version=f"armada {constants.VERSION}",
+                      help="show the Armada version and exit")
 
-    elif args[0] == "config":
-        _config(args[1:])
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND", title="commands")
 
-    elif args[0] == "service":
-        _service_cmd(args[1:])
+    p = sub.add_parser("start", aliases=["serve"],
+                       help="start the server and open the dashboard")
+    p.add_argument("--foreground", action="store_true",
+                   help="run in the foreground (do not daemonize)")
+    p.add_argument("--lan", action="store_true",
+                   help="bind to the LAN address (0.0.0.0)")
+    p.add_argument("--no-browser", action="store_true",
+                   help="do not open the dashboard in a browser")
+    p.add_argument("--qr", action="store_true",
+                   help="show a QR code for the dashboard URL")
+    p.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
+                   action="store_true", help="reuse the existing auth token")
+    p.set_defaults(_handler=_cmd_start)
 
-    elif args[0] in ("nodes", "list"):
-        _nodes_cmd(args[1:])
+    p = sub.add_parser("stop", help="stop the server")
+    p.set_defaults(_handler=_cmd_stop)
 
-    elif args[0] == "create":
-        _create_cmd(args[1:])
+    p = sub.add_parser("status", help="show server and fleet status")
+    p.add_argument("--json", action="store_true", help="output JSON")
+    p.set_defaults(_handler=_cmd_status)
 
-    elif args[0] == "projects":
-        _projects_cmd(args[1:])
+    p = sub.add_parser("nodes", aliases=["list"],
+                       help="list agent nodes (or watch them live)")
+    p.add_argument("--watch", action="store_true", help="open the live terminal dashboard")
+    p.add_argument("--all", action="store_true", help="include dead nodes")
+    p.add_argument("--json", action="store_true", help="output JSON")
+    p.set_defaults(_handler=_cmd_nodes)
 
-    elif args[0] == "logs":
-        _logs_cmd(args[1:])
+    p = sub.add_parser("watch", help="open the live terminal dashboard (legacy alias)")
+    p.set_defaults(_handler=_cmd_watch)
 
-    elif args[0] == "restart":
-        _restart_cmd(args[1:])
+    p = sub.add_parser("create", help="create a new agent node")
+    p.add_argument("-p", "--project", required=True, metavar="ID",
+                   help="project label ID (required)")
+    p.add_argument("-n", "--name", help="node name (auto-generated if omitted)")
+    p.add_argument("-a", "--agent", default="auto",
+                   choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
+                   help="agent type (default: auto)")
+    p.add_argument("-P", "--parent", type=int, metavar="ID",
+                   help="parent node ID")
+    p.add_argument("-m", "--prompt", help="initial prompt to send to the agent")
+    p.set_defaults(_handler=_cmd_create)
 
-    elif args[0] == "watch":
-        _watch_cmd(args[1:])
+    p = sub.add_parser("attach", help="attach to a node's terminal")
+    p.add_argument("name", nargs="?", help="node name (omit for debug server)")
+    p.add_argument("--split", action="store_true", help="split the current tmux window")
+    p.add_argument("--lan", action="store_true",
+                   help="bind the debug server to the LAN address")
+    p.add_argument("--qr", action="store_true",
+                   help="show a QR code when starting the debug server")
+    p.set_defaults(_handler=_cmd_attach)
 
-    elif args[0] == "demodb":
-        _demodb_cmd(args[1:])
+    p = sub.add_parser("restart", help="kill and recreate a node")
+    p.add_argument("target", metavar="NAME_OR_ID", help="node name or numeric ID")
+    p.set_defaults(_handler=_cmd_restart)
 
-    elif args[0] == "mcp":
-        from .mcp_server import main as mcp_main
-        mcp_main()
+    p = sub.add_parser("projects", help="manage project labels")
+    p.set_defaults(_handler=_cmd_projects)
+    projects_sub = p.add_subparsers(dest="projects_action", metavar="ACTION")
+    projects_sub.add_parser("list", help="list projects (default)")
+    pa = projects_sub.add_parser("add", help="register a project")
+    pa.add_argument("id")
+    pa.add_argument("name")
+    pa.add_argument("path")
+    pr = projects_sub.add_parser("rm", help="remove a project")
+    pr.add_argument("id")
 
-    elif args[0] == "report":
-        _report_cmd(args[1:])
+    p = sub.add_parser("logs", help="tail a node's activity log")
+    p.add_argument("node", nargs="?", help="node name")
+    p.add_argument("-f", "--follow", action="store_true", help="follow new entries")
+    p.add_argument("-n", "--limit", type=int, default=20, metavar="N",
+                   help="number of entries to show (default: 20)")
+    p.set_defaults(_handler=_cmd_logs)
 
+    p = sub.add_parser("config", help="show or edit configuration")
+    p.set_defaults(_handler=_cmd_config)
+    config_sub = p.add_subparsers(dest="config_action", metavar="ACTION")
+    config_sub.add_parser("show", help="show current configuration (default)")
+    config_sub.add_parser("init", help="create the default config file")
+    cs = config_sub.add_parser("set", help="set a config value")
+    cs.add_argument("key")
+    cs.add_argument("value")
+
+    p = sub.add_parser("service", help="install Armada as a system service")
+    p.set_defaults(_handler=_cmd_service)
+    service_sub = p.add_subparsers(dest="service_action", metavar="ACTION")
+    service_sub.add_parser("install", help="install launchd/systemd service")
+
+    p = sub.add_parser("setup", help="install agent skills, hooks, and MCP config")
+    p.set_defaults(_handler=_cmd_setup)
+
+    p = sub.add_parser("doctor", help="diagnose and clean up local state")
+    p.add_argument("--nuke", action="store_true",
+                   help="kill all Armada tmux sessions and reset the DB")
+    p.set_defaults(_handler=_cmd_doctor)
+
+    p = sub.add_parser("token", help="print the auth token")
+    p.add_argument("--qr", action="store_true", help="show a scannable QR code")
+    p.add_argument("--lan", action="store_true", help="use the LAN IP in the QR URL")
+    p.set_defaults(_handler=_cmd_token)
+
+    p = sub.add_parser("agents", help="show detected agent CLIs and versions")
+    p.add_argument("--json", action="store_true", help="output JSON")
+    p.set_defaults(_handler=_cmd_agents)
+
+    p = sub.add_parser("mcp", help="run the MCP server (stdio)")
+    p.set_defaults(_handler=_cmd_mcp)
+
+    p = sub.add_parser("report", help="report node status (used by agent hooks)")
+    p.add_argument("status", choices=["active", "idle", "pending", "error"])
+    p.add_argument("message", nargs="?", default="")
+    p.add_argument("--options", metavar="JSON", help="permission options as a JSON array")
+    p.set_defaults(_handler=_cmd_report)
+
+    p = sub.add_parser("demodb", help="seed a demo database for recordings")
+    p.set_defaults(_handler=_cmd_demodb)
+    demodb_sub = p.add_subparsers(dest="demodb_action", metavar="ACTION")
+    ds = demodb_sub.add_parser("seed", help="seed the demo database (default)")
+    ds.add_argument("--force", action="store_true", help="allow a non-demo DB path")
+    demodb_sub.add_parser("path", help="print the active database path")
+
+    p = sub.add_parser("version", help="print the Armada version")
+    p.set_defaults(_handler=_cmd_version)
+
+    return parser
+
+
+def main(argv: list[str] | None = None):
+    global _COLOR_MODE
+
+    raw = list(sys.argv[1:] if argv is None else argv)
+    opts, args = _extract_global_flags(raw)
+
+    if opts.get("no_color"):
+        _COLOR_MODE = "never"
+    elif opts.get("color"):
+        _COLOR_MODE = "always"
     else:
-        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|create|logs|restart|demodb|watch|mcp|report] [--lan] [--qr] [--keep-token]")
-        print("  start        Start the Armada server daemon + open dashboard")
-        print("  stop         Stop the Armada server")
-        print("  attach       Attach to a node: armada attach <name> [--split] (no args = debug mode)")
-        print("  setup        Install Armada skills to user profile")
-        print("  version      Print the Armada version")
-        print("  token        Print the auth token (--qr for scannable QR code)")
-        print("  doctor       Clean up orphaned tmux sessions and stale state")
-        print("  status       Show server and node status")
-        print("  config       Show or manage configuration (~/.armada/config.yaml)")
-        print("  service      Install as system service (launchd/systemd)")
-        print("  nodes        List all agents in a table")
-        print("  create       Create a new agent node")
-        print("  logs         Tail a node's log: armada logs <name> [-f] [-n 20]")
-        print("  restart      Kill + recreate a node: armada restart <name-or-id>")
-        print("  projects     List, add, or remove projects")
-        print("  demodb       Seed a demo database for screen recordings")
-        print("  watch        Interactive live dashboard with select, attach, and alerts")
-        print("  mcp          Start the Armada MCP server (stdio mode, for AI agents)")
-        print("  report       Report node status: armada report <status> <message> [--options '<json>']")
-        print("  --lan        Bind to / use LAN IP (for other devices on network)")
-        print("  --qr         Show QR code (with token command)")
-        print("  --no-browser Don't open the dashboard in a browser")
-        print("  --keep-token Reuse existing token (don't regenerate on restart)")
-        print("  --nuke       (with doctor) Kill ALL armada tmux sessions and reset DB")
-        print()
-        print("  The dashboard opens in your default browser automatically.")
-        print("  URLs are printed as clickable hyperlinks (OSC 8).")
+        _COLOR_MODE = "auto"
+
+    if opts.get("version"):
+        print(f"armada {constants.VERSION}")
+        return 0
+
+    if not args:
+        args = ["start"]
+
+    parser = _build_parser()
+    ns = parser.parse_args(args)
+    for key, value in opts.items():
+        if key != "version":
+            setattr(ns, key, value)
+
+    handler = getattr(ns, "_handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+    return handler(ns)
+
+
+# --- Command handlers ---
+
+def _cmd_start(ns):
+    if not shutil.which("tmux"):
+        _print_tmux_error()
         sys.exit(1)
+    from .server import _ensure_token, start_server
+    _ensure_token(keep=True)
+    _print_startup_info(lan=ns.lan, qr=ns.qr)
+    start_server(
+        daemon=not ns.foreground,
+        open_browser=not ns.no_browser,
+        lan=ns.lan,
+        keep_token=ns.keep_token,
+    )
+
+
+def _cmd_stop(ns):
+    _stop_server()
+
+
+def _cmd_status(ns):
+    _status(json_output=ns.json)
+
+
+def _cmd_nodes(ns):
+    if ns.watch:
+        _watch_nodes()
+        return
+    _print_nodes(include_dead=ns.all, json_output=ns.json)
+
+
+def _cmd_watch(ns):
+    _watch_cmd([])
+
+
+def _cmd_create(ns):
+    subargs = ["--project", ns.project]
+    if ns.name:
+        subargs += ["--name", ns.name]
+    if ns.agent:
+        subargs += ["--agent", ns.agent]
+    if ns.parent is not None:
+        subargs += ["--parent", str(ns.parent)]
+    if ns.prompt:
+        subargs += ["--prompt", ns.prompt]
+    _create_cmd(subargs)
+
+
+def _cmd_attach(ns):
+    if ns.split and ns.name:
+        _attach_split(ns.name)
+    elif ns.name:
+        _attach_node(ns.name)
+    else:
+        from .server import _ensure_token, start_server
+        _ensure_token(keep=True)
+        _print_startup_info(lan=ns.lan, qr=ns.qr)
+        start_server(daemon=False, open_browser=False, lan=ns.lan)
+
+
+def _cmd_restart(ns):
+    _restart_cmd([ns.target])
+
+
+def _cmd_projects(ns):
+    action = ns.projects_action or "list"
+    if action == "add":
+        _projects_cmd(["add", ns.id, ns.name, ns.path])
+    elif action == "rm":
+        _projects_cmd(["rm", ns.id])
+    else:
+        _projects_cmd(["list"])
+
+
+def _cmd_logs(ns):
+    subargs = []
+    if ns.node:
+        subargs.append(ns.node)
+    if ns.follow:
+        subargs.append("--follow")
+    subargs += ["--limit", str(ns.limit)]
+    _logs_cmd(subargs)
+
+
+def _cmd_config(ns):
+    action = ns.config_action or "show"
+    if action == "init":
+        _config(["init"])
+    elif action == "set":
+        _config(["set", ns.key, ns.value])
+    else:
+        _config([])
+
+
+def _cmd_service(ns):
+    _service_cmd(["install"] if ns.service_action == "install" else [])
+
+
+def _cmd_setup(ns):
+    _setup_skills()
+
+
+def _cmd_doctor(ns):
+    _doctor(nuke=ns.nuke)
+
+
+def _cmd_token(ns):
+    _print_token(qr=ns.qr, lan=ns.lan)
+
+
+def _cmd_agents(ns):
+    rows = []
+    for binary, label in (
+        ("opencode", "OpenCode"),
+        ("claude", "Claude Code"),
+        ("aap", "AAP proxy"),
+        ("tmux", "tmux"),
+    ):
+        path = shutil.which(binary)
+        version = ""
+        if path:
+            version_args = [path, "-V"] if binary == "tmux" else [path, "--version"]
+            try:
+                result = subprocess.run(
+                    version_args, check=False, capture_output=True, text=True, timeout=3,
+                )
+                output = (result.stdout or result.stderr).strip()
+                version = output.splitlines()[0] if output else ""
+            except Exception:
+                version = ""
+        rows.append({
+            "id": binary,
+            "label": label,
+            "available": bool(path),
+            "path": path or "",
+            "version": version,
+        })
+
+    if ns.json:
+        print(json.dumps(rows, indent=2))
+        return
+
+    _header("Agent CLIs", "detected on PATH")
+    _table(
+        ["AGENT", "STATUS", "VERSION", "PATH"],
+        [[
+            row["label"],
+            _style("installed", "green", "bold") if row["available"]
+            else _style("missing", "dim"),
+            row["version"] or "-",
+            _short_path(row["path"]) if row["path"] else "-",
+        ] for row in rows],
+    )
+    print()
+    print(
+        f"  {_style('Install integrations with:', 'dim')} "
+        f"{_style('armada setup', 'bold')}"
+    )
+
+
+def _cmd_mcp(ns):
+    from .mcp_server import main as mcp_main
+    mcp_main()
+
+
+def _cmd_report(ns):
+    subargs = [ns.status, ns.message]
+    if ns.options:
+        subargs += ["--options", ns.options]
+    _report_cmd(subargs)
+
+
+def _cmd_demodb(ns):
+    action = ns.demodb_action or "seed"
+    if action == "path":
+        _demodb_cmd(["path"])
+    else:
+        subargs = ["seed"]
+        if getattr(ns, "force", False):
+            subargs.append("--force")
+        _demodb_cmd(subargs)
+
+
+def _cmd_version(ns):
+    print(f"armada {constants.VERSION}")
 
 
 def _lan_ip():
@@ -209,10 +674,11 @@ def _print_startup_info(lan: bool = False, qr: bool = False):
         return
 
     local_url = f"http://127.0.0.1:9100?token={token}"
-    print(f"\n{_hyperlink(local_url)}")
+    print(f"\n{_style('⚓ Armada is starting', 'bold', 'cyan')}")
+    print(f"  {_style('Dashboard:', 'dim')} {_hyperlink(local_url)}")
     if lan:
         ip = _lan_ip()
-        print(_hyperlink(f"http://{ip}:9100?token={token}"))
+        print(f"  {_style('LAN:', 'dim')}       {_hyperlink(f'http://{ip}:9100?token={token}')}")
     print()
 
     if qr:
@@ -227,20 +693,23 @@ def _print_startup_info(lan: bool = False, qr: bool = False):
 def _print_token(qr: bool = False, lan: bool = False):
     token = _read_token()
     if not token:
-        print("No token found. Start Armada first with: armada start", file=sys.stderr)
+        _err("No token found.")
+        _info("Start Armada first with: armada start")
         sys.exit(1)
 
     if qr:
         import qrcode
         host = _lan_ip() if lan else "127.0.0.1"
         url = f"http://{host}:9100?token={token}"
-        print(_hyperlink(url))
+        _header("Armada token", "scan to open the dashboard")
+        print(f"  {_hyperlink(url)}")
         print()
         qr_code = qrcode.QRCode()
         qr_code.add_data(url)
         qr_code.print_ascii()
         print()
     else:
+        # Keep this line machine-readable: `armada token` is often piped.
         print(token)
 
 
@@ -250,7 +719,7 @@ def _stop_server():
         with open(pid_file) as f:
             pid = int(f.read().strip())
         os.kill(pid, signal.SIGTERM)
-        print(f"Stopped Armada server (PID {pid}).")
+        _ok(f"Stopped Armada server (PID {pid}).")
         return
     except FileNotFoundError:
         pass
@@ -264,9 +733,12 @@ def _stop_server():
     if found_pid:
         try:
             os.kill(found_pid, signal.SIGTERM)
-            print(f"Stopped Armada server (PID {found_pid}, found via port).")
+            _ok(f"Stopped Armada server (PID {found_pid}, found via port).")
+            return
         except ProcessLookupError:
             pass
+
+    _warn("No running Armada server found.")
 
 
 def _service_cmd(subargs: list[str]):
@@ -283,27 +755,28 @@ def _config(subargs: list[str]):
     from . import config
     if not subargs:
         cfg = config.get_all()
+        _header("Configuration", _short_path(config.CONFIG_PATH))
         for key, value in cfg.items():
             if isinstance(value, list):
-                print(f"{key}:")
+                print(f"  {_style(key, 'cyan')}:")
                 for item in value:
                     if isinstance(item, dict):
                         for k, v in item.items():
-                            print(f"  - {k}: {v}")
+                            print(f"    {_style(k, 'dim')}: {v}")
                     else:
-                        print(f"  - {item}")
+                        print(f"    {_style('-', 'dim')} {item}")
             else:
-                print(f"{key}: {value}")
+                print(f"  {_style(key, 'cyan')}: {value}")
     elif subargs[0] == "init":
         config.init_config()
-        print(f"Config initialized at {config.CONFIG_PATH}")
+        _ok(f"Config initialized at {_short_path(config.CONFIG_PATH)}")
     elif subargs[0] == "set" and len(subargs) >= 3:
         key = subargs[1]
         val_str = " ".join(subargs[2:])
         cfg = config.get_all()
         valid_keys = config.DEFAULTS.keys()
         if key not in valid_keys:
-            print(f"Unknown key: {key}. Valid keys: {', '.join(valid_keys)}", file=sys.stderr)
+            _err(f"Unknown key: {key}. Valid keys: {', '.join(valid_keys)}")
             sys.exit(1)
         default_value = config.DEFAULTS[key]
         if isinstance(default_value, bool):
@@ -312,18 +785,18 @@ def _config(subargs: list[str]):
             try:
                 cfg[key] = int(val_str)
             except ValueError:
-                print(f"Invalid integer: {val_str}", file=sys.stderr)
+                _err(f"Invalid integer: {val_str}")
                 sys.exit(1)
         elif isinstance(default_value, float):
             try:
                 cfg[key] = float(val_str)
             except ValueError:
-                print(f"Invalid float: {val_str}", file=sys.stderr)
+                _err(f"Invalid float: {val_str}")
                 sys.exit(1)
         else:
             cfg[key] = val_str
         config.write_config(cfg)
-        print(f"{key} = {cfg[key]}")
+        _ok(f"{key} = {cfg[key]}")
     else:
         print("Usage: armada config [init|show|set <key> <value>]")
         print("  armada config              Show current configuration")
@@ -334,15 +807,15 @@ def _config(subargs: list[str]):
 
 def _setup_skills():
     if not shutil.which("tmux"):
-        print("tmux is not installed. Armada requires tmux to manage agent sessions.", file=sys.stderr)
-        print("Install it with:", file=sys.stderr)
+        _err("tmux is not installed. Armada requires tmux to manage agent sessions.")
+        print(f"  {_style('Install it with:', 'dim')}", file=sys.stderr)
         if platform.system() == "Darwin":
-            print("  brew install tmux", file=sys.stderr)
+            print("    brew install tmux", file=sys.stderr)
         elif platform.system() == "Linux":
-            print("  sudo apt install tmux   (Ubuntu/Debian)", file=sys.stderr)
-            print("  sudo dnf install tmux   (Fedora)", file=sys.stderr)
+            print("    sudo apt install tmux   (Ubuntu/Debian)", file=sys.stderr)
+            print("    sudo dnf install tmux   (Fedora)", file=sys.stderr)
         else:
-            print("  See https://github.com/tmux/tmux/wiki/Installing", file=sys.stderr)
+            print("    See https://github.com/tmux/tmux/wiki/Installing", file=sys.stderr)
         sys.exit(1)
 
     from .infrastructure.deployment import install_skills_to_user, deploy_claude_hooks
@@ -352,41 +825,78 @@ def _setup_skills():
     if not os.path.isdir(skill_dir):
         skill_dir = os.path.join(os.path.dirname(__file__), "..", "skills")
     if not os.path.isdir(skill_dir):
-        print("Skills directory not found. Is armada-ai installed correctly?", file=sys.stderr)
+        _err("Skills directory not found. Is armada-ai installed correctly?")
         sys.exit(1)
 
     skill_dir = os.path.abspath(skill_dir)
-    print(f"Installing skills from {skill_dir}...")
+    _header("Armada setup")
+    _info(f"Installing skills from {_short_path(skill_dir)}")
 
     token = _read_token()
 
     if token:
         os.environ["ARMADA_AUTH_TOKEN"] = token
-        print("  ARMADA_AUTH_TOKEN set")
+        _ok("ARMADA_AUTH_TOKEN set")
 
     installed = install_skills_to_user()
-    print(f"  Skills installed to: {', '.join(installed)}")
+    _ok(f"Skills installed to: {', '.join(_short_path(p) for p in installed)}")
 
     claude_hooks = os.path.expanduser("~/.claude/hooks")
     if os.path.isdir(claude_hooks):
         deploy_claude_hooks(os.path.expanduser("~"))
-        print(f"  Claude Code hooks deployed to {claude_hooks}")
+        _ok(f"Claude Code hooks deployed to {_short_path(claude_hooks)}")
     else:
-        print("  Claude Code hooks directory not found (skip)")
+        _info("Claude Code hooks directory not found (skip)")
 
 
-def _status():
-    import json
+def _status(json_output: bool = False):
     try:
         import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:9100/health")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{constants.DEFAULT_PORT}/health"
+        )
         resp = urllib.request.urlopen(req, timeout=5)
         data = json.loads(resp.read())
-        print(f"Armada server: running (v{data.get('version','?')})")
-        print(f"Uptime: {data.get('uptime',0):.0f}s")
-        print(f"Agents: {data.get('agents',0)} (active={data.get('active',0)} pending={data.get('pending',0)} idle={data.get('idle',0)})")
     except Exception:
-        print("Armada server: not reachable")
+        if json_output:
+            print(json.dumps({"status": "down"}))
+        else:
+            _err("Armada server is not reachable")
+            print(
+                f"  {_style('Start it with:', 'dim')} {_style('armada', 'bold')}",
+                file=sys.stderr,
+            )
+        return
+
+    if json_output:
+        print(json.dumps(data, indent=2))
+        return
+
+    uptime = data.get("uptime", 0)
+    total = data.get("agents", 0)
+    counts = []
+    for status in ("active", "pending", "idle"):
+        marker, colour = _status_marker(status)
+        counts.append(
+            f"{_style(marker, colour)} {data.get(status, 0)} {status}"
+        )
+
+    _header("Armada status")
+    print(
+        f"  {_style('Server:', 'dim')} "
+        f"{_style('running', 'green', 'bold')} (v{data.get('version', '?')})"
+    )
+    print(
+        f"  {_style('Uptime:', 'dim')} "
+        f"{_fmt_duration(uptime)} ({int(uptime)}s)"
+    )
+    print(
+        f"  {_style('Agents:', 'dim')} {total}  " + "  ".join(counts)
+    )
+    print(
+        f"  {_style('Dashboard:', 'dim')} "
+        f"{_style(f'http://127.0.0.1:{constants.DEFAULT_PORT}', 'cyan')}"
+    )
 
 
 
@@ -395,21 +905,21 @@ def _doctor(nuke: bool = False):
     import glob
     from . import tmux as _tmux_mod
 
-    print("Armada Doctor\n")
+    _header("Armada Doctor")
 
     # 1. Check tmux
-    print("[1] Tmux sessions")
+    _section("[1] Tmux sessions")
     try:
         running = _tmux_mod.running_window_names()
         if running:
-            print(f"  Live windows: {', '.join(running)}")
+            _info(f"Live windows: {_style(', '.join(running), 'bold')}")
         else:
-            print("  No armada windows found")
+            _info("No armada windows found")
     except Exception as e:
-        print(f"  Error checking tmux: {e}")
+        _err(f"Error checking tmux: {e}")
 
     # 2. Check server
-    print("\n[2] Server process")
+    _section("[2] Server process")
     found_pid = _get_pid_from_port(constants.DEFAULT_PORT)
     pid_file = os.path.expanduser("~/.armada/server.pid")
     pid_file_pid = None
@@ -420,19 +930,19 @@ def _doctor(nuke: bool = False):
         pass
 
     if found_pid:
-        print(f"  Listening on port {constants.DEFAULT_PORT} (PID {found_pid})")
+        _ok(f"Listening on port {constants.DEFAULT_PORT} (PID {found_pid})")
     elif pid_file_pid:
         try:
             os.kill(pid_file_pid, 0)
-            print(f"  PID file says {pid_file_pid} (but not on port {constants.DEFAULT_PORT})")
+            _info(f"PID file says {pid_file_pid} (but not on port {constants.DEFAULT_PORT})")
         except OSError:
-            print(f"  PID file says {pid_file_pid} (process is dead — cleaning up)")
+            _warn(f"PID file says {pid_file_pid} (process is dead — cleaning up)")
             os.remove(pid_file)
     else:
-        print("  Not running")
+        _info("Not running")
 
     if nuke:
-        print("\n--nuke: Killing all armada tmux sessions and resetting state...")
+        _section("--nuke: Killing all armada tmux sessions and resetting state")
         try:
             subprocess.run(["tmux", "kill-server"], capture_output=True, timeout=5)
         except Exception:
@@ -440,20 +950,20 @@ def _doctor(nuke: bool = False):
         db_path = constants.DB_PATH
         if os.path.exists(db_path):
             os.remove(db_path)
-            print(f"  Removed {os.path.basename(db_path)}")
+            _ok(f"Removed {os.path.basename(db_path)}")
         if os.path.exists(pid_file):
             os.remove(pid_file)
-            print("  Removed PID file")
+            _ok("Removed PID file")
         log_dir = os.path.expanduser("~/.armada/logs")
         if os.path.isdir(log_dir):
             for f in os.listdir(log_dir):
                 os.remove(os.path.join(log_dir, f))
-            print("  Cleared logs")
-        print("\nDone. Start fresh with: armada")
+            _ok("Cleared logs")
+        _ok("Done. Start fresh with: armada")
         sys.exit(0)
 
     # 3. Sync DB with tmux
-    print("\n[3] Database sync")
+    _section("[3] Database sync")
     db_path = constants.DB_PATH
     if os.path.exists(db_path):
         conn = sqlite3.connect(db_path)
@@ -470,15 +980,15 @@ def _doctor(nuke: bool = False):
                     (nid,)
                 )
             conn.commit()
-            print(f"  Marked {len(stale)} node(s) as dead: {', '.join(n for _, n in stale)}")
+            _ok(f"Marked {len(stale)} node(s) as dead: {', '.join(n for _, n in stale)}")
         else:
-            print("  All DB nodes have live tmux windows")
+            _ok("All DB nodes have live tmux windows")
         conn.close()
     else:
-        print("  No DB found (nothing to sync)")
+        _info("No DB found (nothing to sync)")
 
     # 4. Clean up /tmp/_armada_* temp files
-    print("\n[4] Temp files (/tmp/_armada_*)")
+    _section("[4] Temp files (/tmp/_armada_*)")
     temps = glob.glob("/tmp/_armada_*")
     if temps:
         for f in temps:
@@ -486,12 +996,12 @@ def _doctor(nuke: bool = False):
                 os.remove(f)
             except OSError:
                 pass
-        print(f"  Removed {len(temps)} file(s)")
+        _ok(f"Removed {len(temps)} file(s)")
     else:
-        print("  None found")
+        _info("None found")
 
     # 5. Clean up stale hooks
-    print("\n[5] Stale hook files")
+    _section("[5] Stale hook files")
     hooks_dir = os.path.expanduser("~/.armada/hooks")
     if os.path.isdir(hooks_dir):
         running = _tmux_mod.running_window_names()
@@ -503,13 +1013,13 @@ def _doctor(nuke: bool = False):
                     os.remove(os.path.join(hooks_dir, hook_file))
                     removed += 1
         if removed:
-            print(f"  Removed {removed} stale hook file(s)")
+            _ok(f"Removed {removed} stale hook file(s)")
         else:
-            print("  None found")
+            _info("None found")
     else:
-        print("  No hooks directory")
+        _info("No hooks directory")
 
-    print("\nDone.")
+    _ok("Done.")
 
 
 def _api_get(path: str):
@@ -563,26 +1073,26 @@ def _nodes_cmd(subargs: list[str]):
         _watch_nodes()
 
 
-def _print_nodes():
+def _print_nodes(include_dead: bool = False, json_output: bool = False):
+    path = "/api/tree" if include_dead else "/api/tree?hide_dead=true"
     try:
-        tree = _api_get("/api/tree")
+        tree = _api_get(path)
     except Exception as e:
         print(f"Failed to reach Armada server: {e}", file=sys.stderr)
         sys.exit(1)
 
+    if json_output:
+        print(json.dumps(tree, indent=2))
+        return
+
     def _collect(nodes, depth=0):
         rows = []
         for n in nodes:
-            icon = {"active": "\033[32m●\033[0m",
-                    "pending": "\033[33m●\033[0m",
-                    "error": "\033[31m●\033[0m",
-                    "dead": "\033[2m●\033[0m",
-                    "idle": "\033[0m○\033[0m"}.get(n["status"], "○")
             rows.append({
                 "id": n["id"],
                 "name": n["name"],
-                "icon": icon,
                 "status": n["status"],
+                "colour": n.get("colour", "#8b949e"),
                 "project": n.get("project_label_name", "") or "",
                 "message": n.get("latest_message", "") or "",
                 "total_cost": n.get("total_cost", 0) or 0,
@@ -594,20 +1104,52 @@ def _print_nodes():
 
     rows = _collect(tree)
     if not rows:
-        print("No agents. Create one with the dashboard or API.")
+        _header("Armada nodes")
+        print(f"  {_style('No agents yet.', 'dim')}")
+        print(f"  Create one with: {_style('armada create -p <project>', 'bold')}")
         return
 
-    show_cost = any(r["total_cost"] > 0 for r in rows)
+    active = sum(1 for r in rows if r["status"] == "active")
+    pending = sum(1 for r in rows if r["status"] == "pending")
+    idle = sum(1 for r in rows if r["status"] == "idle")
+    _header(
+        "Armada nodes",
+        f"{len(rows)} agents · {active} active · {pending} pending · {idle} idle",
+    )
 
+    show_cost = any(r["total_cost"] > 0 for r in rows)
+    table_rows = []
+    pending_names = []
     for r in rows:
-        indent = "  " * r["depth"]
-        cost_str = ""
+        name = ("  " * r["depth"]) + r["name"]
+        if len(name) > 30:
+            name = name[:29] + "…"
+        if r["status"] == "dead":
+            name = _style(name, "dim")
+
+        project = r["project"][:18]
+        message = " ".join(r["message"].split())[:60]
+        if r["status"] == "dead":
+            project = _style(project, "dim")
+            message = _style(message, "dim")
+        if r["status"] == "pending":
+            pending_names.append(r["name"])
+
+        row = [_status_cell(r["status"]), name, project, message]
         if show_cost:
-            cost_str = f"  \033[36m${r['total_cost']:.2f}\033[0m"
-        print(f"  {r['icon']} {indent}\033[1m{r['name']}\033[0m  "
-              f"\033[2m{r['status']}\033[0m  {r['project']}{cost_str}")
-        if r["message"]:
-            print(f"     {indent}\033[2m{r['message'][:80]}\033[0m")
+            row.append(f"${r['total_cost']:.2f}")
+        table_rows.append(row)
+
+    headers = ["STATUS", "NAME", "PROJECT", "MESSAGE"]
+    aligns = ["left", "left", "left", "left"]
+    if show_cost:
+        headers.append("COST")
+        aligns.append("right")
+    _table(headers, table_rows, aligns=aligns)
+
+    if pending_names:
+        print()
+        _warn(f"Pending: {', '.join(pending_names)}")
 
 
 def _strip_ansi(s):
@@ -1159,14 +1701,16 @@ def _create_cmd(subargs: list[str]):
 
     try:
         result = _api_post("/api/nodes", body)
-        print(f"Created node {result['name']} (id={result['id']})")
+        _ok(f"Created node {result['name']} (id={result['id']})")
     except Exception as e:
         resp = ""
         try:
             resp = str(e.read(), "utf-8")[:200]
         except Exception:
             pass
-        print(f"Failed: {e}\n{resp}", file=sys.stderr)
+        _err(f"Failed: {e}")
+        if resp:
+            print(f"  {_style(resp, 'dim')}", file=sys.stderr)
         sys.exit(1)
 
 
@@ -1179,9 +1723,9 @@ def _projects_cmd(subargs: list[str]):
             _api_post("/api/project-labels", {
                 "id": subargs[1], "name": subargs[2], "path": subargs[3],
             })
-            print(f"Added project {subargs[1]}")
+            _ok(f"Added project {subargs[1]}")
         except Exception as e:
-            print(f"Failed: {e}", file=sys.stderr)
+            _err(f"Failed: {e}")
             sys.exit(1)
         return
 
@@ -1198,26 +1742,28 @@ def _projects_cmd(subargs: list[str]):
             if token:
                 req.add_header("Authorization", f"Bearer {token}")
             ur.urlopen(req, timeout=5)
-            print(f"Removed project {subargs[1]}")
+            _ok(f"Removed project {subargs[1]}")
         except Exception as e:
-            print(f"Failed: {e}", file=sys.stderr)
+            _err(f"Failed: {e}")
             sys.exit(1)
         return
 
     try:
         labels = _api_get("/api/project-labels")
     except Exception as e:
-        print(f"Failed: {e}", file=sys.stderr)
+        _err(f"Failed: {e}")
         sys.exit(1)
 
+    _header("Projects", f"{len(labels)} registered")
     if not labels:
-        print("No projects.")
+        print(f"  {_style('No projects.', 'dim')}")
+        print(f"  Add one with: {_style('armada projects add <id> <name> <path>', 'bold')}")
         return
 
-    print(f"{'ID':<20} {'Name':<20} Path")
-    print("-" * 70)
-    for lb in labels:
-        print(f"{lb['id']:<20} {lb['name']:<20} {lb['path']}")
+    _table(
+        ["ID", "NAME", "PATH"],
+        [[lb["id"], lb["name"], _short_path(lb["path"])] for lb in labels],
+    )
 
 
 def _kill_node(search: str):
@@ -1331,14 +1877,16 @@ def _attach_node(search: str, exit_on_error: bool = True):
     nid = node["id"]
     try:
         _api_post(f"/api/nodes/{nid}/attach")
-        print(f"Attached to {node['name']}")
+        _ok(f"Attached to {node['name']}")
     except Exception as e:
         resp_body = ""
         try:
             resp_body = str(e.read(), "utf-8")[:200]
         except Exception:
             pass
-        print(f"Failed to attach: {e}\n{resp_body}", file=sys.stderr)
+        _err(f"Failed to attach: {e}")
+        if resp_body:
+            print(f"  {_style(resp_body, 'dim')}", file=sys.stderr)
         if exit_on_error:
             sys.exit(1)
 
@@ -1490,33 +2038,39 @@ def _logs_cmd(subargs: list[str]):
 
     def _format_entry(entry: dict) -> str:
         ts = entry.get("ts", 0)
-        dt = datetime.fromtimestamp(ts).strftime("%H:%M:%S")
+        dt = _style(datetime.fromtimestamp(ts).strftime("%H:%M:%S"), "dim")
         etype = entry.get("type", "?")
         data = entry.get("data", {})
         # Build a concise message from data
         if etype == "report":
-            msg = f"{data.get('status', '')} {data.get('message', '')}".strip()
+            status = data.get("status", "")
+            marker = _status_cell(status) if status else ""
+            msg = f"{marker} {data.get('message', '')}".strip()
         elif etype == "create":
-            msg = f"agent_type={data.get('agent_type', '?')} project={data.get('project', '?')}"
+            msg = (
+                f"{_style('agent', 'dim')}={data.get('agent_type', '?')} "
+                f"{_style('project', 'dim')}={data.get('project', '?')}"
+            )
         elif etype == "send":
             msg = data.get("command", "")
         elif etype == "output":
             msg = data.get("content", "")[:100]
         elif etype == "health":
-            msg = "dead=true" if data.get("dead") else "alive"
+            msg = _style("dead", "red") if data.get("dead") else _style("alive", "green")
         else:
             msg = json.dumps(data) if data else ""
-        return f"\033[2m{dt}\033[0m  \033[1m{etype:<10}\033[0m  {msg}"
+        return f"{dt}  {_style(f'{etype:<10}', 'bold', 'cyan')}  {msg}"
 
     # Read last N lines
     try:
         with open(log_path) as f:
             lines = f.readlines()
     except IOError as e:
-        print(f"Error reading log: {e}", file=sys.stderr)
+        _err(f"Error reading log: {e}")
         sys.exit(1)
 
     tail_lines = lines[-limit:]
+    _header(f"Logs · {node_name}", f"{len(tail_lines)} entries")
     for line in tail_lines:
         try:
             entry = json.loads(line)
@@ -1562,29 +2116,31 @@ def _restart_cmd(subargs: list[str]):
     agent_type = node.get("agent_type", "auto")
 
     # Kill the node
-    print(f"Killing {node_name} (id={node_id})...")
+    _info(f"Killing {node_name} (id={node_id})...")
     try:
         _api_delete(f"/api/nodes/{node_id}")
     except Exception as e:
-        print(f"Failed to kill node: {e}", file=sys.stderr)
+        _err(f"Failed to kill node: {e}")
         sys.exit(1)
 
     # Recreate with same config
-    print(f"Recreating with project={project_label_id} agent_type={agent_type}...")
+    _info(f"Recreating with project={project_label_id} agent_type={agent_type}...")
     body = {
         "project_label_id": project_label_id,
         "agent_type": agent_type,
     }
     try:
         result = _api_post("/api/nodes", body)
-        print(f"Created new node: {result['name']} (id={result['id']})")
+        _ok(f"Created new node: {result['name']} (id={result['id']})")
     except Exception as e:
         resp = ""
         try:
             resp = str(e.read(), "utf-8")[:200]
         except Exception:
             pass
-        print(f"Failed to create node: {e}\n{resp}", file=sys.stderr)
+        _err(f"Failed to create node: {e}")
+        if resp:
+            print(f"  {_style(resp, 'dim')}", file=sys.stderr)
         sys.exit(1)
 
 
