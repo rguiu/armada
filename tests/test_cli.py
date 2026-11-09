@@ -6,8 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-import armada_ai.constants as constants
-from armada_ai import cli
+from armada_ai import cli, constants
 
 # The tmux mock lives in sys.modules, injected by conftest
 _tmux = sys.modules["armada_ai.tmux"]
@@ -37,8 +36,9 @@ class TestMainDispatch:
         with pytest.raises(SystemExit) as exc_info:
             cli.main()
         assert exc_info.value.code == 1
-        out = capsys.readouterr().out
-        assert "Usage:" in out
+        err = capsys.readouterr().err
+        assert "usage:" in err.lower()
+        assert "invalid choice" in err.lower()
 
     def test_doctor_dispatches(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["armada", "doctor"])
@@ -66,11 +66,64 @@ class TestMainDispatch:
 
     def test_start_dispatches_to_server(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["armada", "start"])
-        with patch("armada_ai.cli._print_startup_info"), \
+        with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch("armada_ai.cli._print_startup_info"), \
              patch("armada_ai.server.start_server") as mock_start, \
              patch("armada_ai.server._ensure_token"):
             cli.main()
-            mock_start.assert_called_once()
+            mock_start.assert_called_once_with(
+                daemon=True, open_browser=True, lan=False, keep_token=False
+            )
+
+    def test_start_foreground(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["armada", "start", "--foreground"])
+        with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch("armada_ai.cli._print_startup_info"), \
+             patch("armada_ai.server.start_server") as mock_start, \
+             patch("armada_ai.server._ensure_token"):
+            cli.main()
+            assert mock_start.call_args.kwargs["daemon"] is False
+
+    def test_global_flags_can_appear_after_command(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["armada", "status", "--lan", "--no-browser"])
+        with patch.object(cli, "_status") as mock_status:
+            cli.main()
+            mock_status.assert_called_once_with(json_output=False)
+
+    def test_version_flag(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["armada", "--version"])
+        cli.main()
+        assert f"armada {constants.VERSION}" in capsys.readouterr().out
+
+    def test_help_lists_commands(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["armada", "--help"])
+        with pytest.raises(SystemExit) as exc_info:
+            cli.main()
+        assert exc_info.value.code == 0
+        out = capsys.readouterr().out
+        assert "commands:" in out
+        assert "nodes" in out
+        assert "agents" in out
+
+    def test_nodes_json_and_all(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["armada", "nodes", "--all", "--json"])
+        with patch.object(cli, "_print_nodes") as mock_nodes:
+            cli.main()
+            mock_nodes.assert_called_once_with(include_dead=True, json_output=True)
+
+    def test_nodes_watch(self, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["armada", "nodes", "--watch"])
+        with patch.object(cli, "_watch_nodes") as mock_watch:
+            cli.main()
+            mock_watch.assert_called_once_with()
+
+    def test_agents_json(self, capsys, monkeypatch):
+        monkeypatch.setattr(sys, "argv", ["armada", "agents", "--json"])
+        with patch("shutil.which", return_value=None):
+            cli.main()
+        data = json.loads(capsys.readouterr().out)
+        assert any(row["id"] == "claude" for row in data)
+        assert all(row["available"] is False for row in data)
 
 
 # --- _status() ---
@@ -107,6 +160,33 @@ class TestStatus:
 
         out = capsys.readouterr().out
         assert "not reachable" in out
+
+    def test_status_json(self, capsys):
+        health_data = json.dumps({
+            "version": "0.4.0",
+            "uptime": 12.0,
+            "agents": 3,
+            "active": 1,
+            "pending": 1,
+            "idle": 1,
+        }).encode()
+
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = health_data
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            cli._status(json_output=True)
+
+        data = json.loads(capsys.readouterr().out)
+        assert data["agents"] == 3
+        assert data["version"] == "0.4.0"
+
+    def test_status_json_down(self, capsys):
+        with patch("urllib.request.urlopen", side_effect=ConnectionRefusedError("refused")):
+            cli._status(json_output=True)
+
+        data = json.loads(capsys.readouterr().out)
+        assert data == {"status": "down"}
 
 
 # --- _doctor() ---

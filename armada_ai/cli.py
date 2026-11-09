@@ -1,10 +1,12 @@
+import argparse
+import json
 import os
-import sys
+import platform
 import shutil
 import signal
 import socket
 import subprocess
-import platform
+import sys
 
 from . import constants
 
@@ -69,127 +71,416 @@ def _get_db_lock_pids(db_path: str, current_pid: int | None = None) -> list[int]
     return pids
 
 
-def main():
-    args = sys.argv[1:]
-    lan = "--lan" in args
-    qr = "--qr" in args
-    no_browser = "--no-browser" in args
-    keep_token = "--keep-token" in args or "--no-token-rotate" in args
-    flags = ("--lan", "--qr", "--keep-token", "--no-token-rotate", "--no-browser")
-    args = [a for a in args if a not in flags]
+class _ArmadaParser(argparse.ArgumentParser):
+    """ArgumentParser with friendly, stable error behaviour."""
 
-    if not args or args[0] in ("start", "serve"):
-        import shutil
-        if not shutil.which("tmux"):
-            print("Error: tmux is not installed.", file=sys.stderr)
-            print("Install it with:", file=sys.stderr)
-            print("  macOS:  brew install tmux", file=sys.stderr)
-            print("  Ubuntu: sudo apt install tmux", file=sys.stderr)
-            print("  Fedora: sudo dnf install tmux", file=sys.stderr)
-            sys.exit(1)
-        from .server import start_server, _ensure_token
-        if not args:
-            print("Starting Armada server... (use 'armada --help' for other commands)")
-        _ensure_token(keep=True)
-        _print_startup_info(lan=lan, qr=qr)
-        start_server(daemon=True, open_browser=not no_browser, lan=lan, keep_token=keep_token)
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        self.exit(1, f"{self.prog}: error: {message}\n")
 
-    elif args[0] == "stop":
-        _stop_server()
 
-    elif args[0] == "attach":
-        do_split = "--split" in args
-        node_arg = next((a for a in args[1:] if not a.startswith("--")), None)
-        if do_split and node_arg:
-            _attach_split(node_arg)
-        elif node_arg:
-            _attach_node(node_arg)
+# Boolean flags that may appear anywhere on the command line. They are pulled
+# out before argparse runs so both `armada --lan` and `armada start --lan` work.
+_GLOBAL_FLAGS = {
+    "--lan": "lan",
+    "--qr": "qr",
+    "--no-browser": "no_browser",
+    "--keep-token": "keep_token",
+    "--no-token-rotate": "keep_token",
+    "--foreground": "foreground",
+    "--version": "version",
+    "-V": "version",
+}
+
+_GLOBAL_DEFAULTS = {
+    "lan": False,
+    "qr": False,
+    "no_browser": False,
+    "keep_token": False,
+    "foreground": False,
+}
+
+
+def _extract_global_flags(argv: list[str]) -> tuple[dict, list[str]]:
+    opts = dict(_GLOBAL_DEFAULTS)
+    opts["version"] = False
+    rest: list[str] = []
+    for arg in argv:
+        name = _GLOBAL_FLAGS.get(arg)
+        if name:
+            opts[name] = True
         else:
-            from .server import start_server, _ensure_token
-            _ensure_token(keep=True)
-            _print_startup_info(lan=lan, qr=qr)
-            start_server(daemon=False, open_browser=False, lan=lan)
+            rest.append(arg)
+    return opts, rest
 
-    elif args[0] == "setup":
-        _setup_skills()
 
-    elif args[0] == "version":
+def _print_tmux_error():
+    print("Error: tmux is not installed.", file=sys.stderr)
+    print("Install it with:", file=sys.stderr)
+    print("  macOS:  brew install tmux", file=sys.stderr)
+    print("  Ubuntu: sudo apt install tmux", file=sys.stderr)
+    print("  Fedora: sudo dnf install tmux", file=sys.stderr)
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = _ArmadaParser(
+        prog="armada",
+        description="Armada — persistent tmux sessions for coding agents.",
+        epilog=(
+            "Run 'armada <command> --help' for command options.\n"
+            "With no command, Armada starts the server and opens the dashboard."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
+    parser.set_defaults(**_GLOBAL_DEFAULTS)
+
+    glob = parser.add_argument_group("global options")
+    glob.add_argument("--lan", action="store_true",
+                      help="bind to the LAN address (0.0.0.0) instead of localhost")
+    glob.add_argument("--no-browser", action="store_true",
+                      help="do not open the dashboard in a browser")
+    glob.add_argument("--qr", action="store_true",
+                      help="show a QR code for the dashboard URL")
+    glob.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
+                      action="store_true",
+                      help="reuse the existing auth token (do not rotate)")
+    glob.add_argument("--foreground", action="store_true",
+                      help="run the server in the foreground (do not daemonize)")
+    glob.add_argument("-V", "--version", action="version",
+                      version=f"armada {constants.VERSION}",
+                      help="show the Armada version and exit")
+
+    sub = parser.add_subparsers(dest="command", metavar="COMMAND", title="commands")
+
+    p = sub.add_parser("start", aliases=["serve"],
+                       help="start the server and open the dashboard")
+    p.add_argument("--foreground", action="store_true",
+                   help="run in the foreground (do not daemonize)")
+    p.add_argument("--lan", action="store_true",
+                   help="bind to the LAN address (0.0.0.0)")
+    p.add_argument("--no-browser", action="store_true",
+                   help="do not open the dashboard in a browser")
+    p.add_argument("--qr", action="store_true",
+                   help="show a QR code for the dashboard URL")
+    p.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
+                   action="store_true", help="reuse the existing auth token")
+    p.set_defaults(_handler=_cmd_start)
+
+    p = sub.add_parser("stop", help="stop the server")
+    p.set_defaults(_handler=_cmd_stop)
+
+    p = sub.add_parser("status", help="show server and fleet status")
+    p.add_argument("--json", action="store_true", help="output JSON")
+    p.set_defaults(_handler=_cmd_status)
+
+    p = sub.add_parser("nodes", aliases=["list"],
+                       help="list agent nodes (or watch them live)")
+    p.add_argument("--watch", action="store_true", help="open the live terminal dashboard")
+    p.add_argument("--all", action="store_true", help="include dead nodes")
+    p.add_argument("--json", action="store_true", help="output JSON")
+    p.set_defaults(_handler=_cmd_nodes)
+
+    p = sub.add_parser("watch", help="open the live terminal dashboard (legacy alias)")
+    p.set_defaults(_handler=_cmd_watch)
+
+    p = sub.add_parser("create", help="create a new agent node")
+    p.add_argument("-p", "--project", required=True, metavar="ID",
+                   help="project label ID (required)")
+    p.add_argument("-n", "--name", help="node name (auto-generated if omitted)")
+    p.add_argument("-a", "--agent", default="auto",
+                   choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
+                   help="agent type (default: auto)")
+    p.add_argument("-P", "--parent", type=int, metavar="ID",
+                   help="parent node ID")
+    p.add_argument("-m", "--prompt", help="initial prompt to send to the agent")
+    p.set_defaults(_handler=_cmd_create)
+
+    p = sub.add_parser("attach", help="attach to a node's terminal")
+    p.add_argument("name", nargs="?", help="node name (omit for debug server)")
+    p.add_argument("--split", action="store_true", help="split the current tmux window")
+    p.add_argument("--lan", action="store_true",
+                   help="bind the debug server to the LAN address")
+    p.add_argument("--qr", action="store_true",
+                   help="show a QR code when starting the debug server")
+    p.set_defaults(_handler=_cmd_attach)
+
+    p = sub.add_parser("restart", help="kill and recreate a node")
+    p.add_argument("target", metavar="NAME_OR_ID", help="node name or numeric ID")
+    p.set_defaults(_handler=_cmd_restart)
+
+    p = sub.add_parser("projects", help="manage project labels")
+    p.set_defaults(_handler=_cmd_projects)
+    projects_sub = p.add_subparsers(dest="projects_action", metavar="ACTION")
+    projects_sub.add_parser("list", help="list projects (default)")
+    pa = projects_sub.add_parser("add", help="register a project")
+    pa.add_argument("id")
+    pa.add_argument("name")
+    pa.add_argument("path")
+    pr = projects_sub.add_parser("rm", help="remove a project")
+    pr.add_argument("id")
+
+    p = sub.add_parser("logs", help="tail a node's activity log")
+    p.add_argument("node", nargs="?", help="node name")
+    p.add_argument("-f", "--follow", action="store_true", help="follow new entries")
+    p.add_argument("-n", "--limit", type=int, default=20, metavar="N",
+                   help="number of entries to show (default: 20)")
+    p.set_defaults(_handler=_cmd_logs)
+
+    p = sub.add_parser("config", help="show or edit configuration")
+    p.set_defaults(_handler=_cmd_config)
+    config_sub = p.add_subparsers(dest="config_action", metavar="ACTION")
+    config_sub.add_parser("show", help="show current configuration (default)")
+    config_sub.add_parser("init", help="create the default config file")
+    cs = config_sub.add_parser("set", help="set a config value")
+    cs.add_argument("key")
+    cs.add_argument("value")
+
+    p = sub.add_parser("service", help="install Armada as a system service")
+    p.set_defaults(_handler=_cmd_service)
+    service_sub = p.add_subparsers(dest="service_action", metavar="ACTION")
+    service_sub.add_parser("install", help="install launchd/systemd service")
+
+    p = sub.add_parser("setup", help="install agent skills, hooks, and MCP config")
+    p.set_defaults(_handler=_cmd_setup)
+
+    p = sub.add_parser("doctor", help="diagnose and clean up local state")
+    p.add_argument("--nuke", action="store_true",
+                   help="kill all Armada tmux sessions and reset the DB")
+    p.set_defaults(_handler=_cmd_doctor)
+
+    p = sub.add_parser("token", help="print the auth token")
+    p.add_argument("--qr", action="store_true", help="show a scannable QR code")
+    p.add_argument("--lan", action="store_true", help="use the LAN IP in the QR URL")
+    p.set_defaults(_handler=_cmd_token)
+
+    p = sub.add_parser("agents", help="show detected agent CLIs and versions")
+    p.add_argument("--json", action="store_true", help="output JSON")
+    p.set_defaults(_handler=_cmd_agents)
+
+    p = sub.add_parser("mcp", help="run the MCP server (stdio)")
+    p.set_defaults(_handler=_cmd_mcp)
+
+    p = sub.add_parser("report", help="report node status (used by agent hooks)")
+    p.add_argument("status", choices=["active", "idle", "pending", "error"])
+    p.add_argument("message", nargs="?", default="")
+    p.add_argument("--options", metavar="JSON", help="permission options as a JSON array")
+    p.set_defaults(_handler=_cmd_report)
+
+    p = sub.add_parser("demodb", help="seed a demo database for recordings")
+    p.set_defaults(_handler=_cmd_demodb)
+    demodb_sub = p.add_subparsers(dest="demodb_action", metavar="ACTION")
+    ds = demodb_sub.add_parser("seed", help="seed the demo database (default)")
+    ds.add_argument("--force", action="store_true", help="allow a non-demo DB path")
+    demodb_sub.add_parser("path", help="print the active database path")
+
+    p = sub.add_parser("version", help="print the Armada version")
+    p.set_defaults(_handler=_cmd_version)
+
+    return parser
+
+
+def main(argv: list[str] | None = None):
+    raw = list(sys.argv[1:] if argv is None else argv)
+    opts, args = _extract_global_flags(raw)
+
+    if opts.get("version"):
         print(f"armada {constants.VERSION}")
+        return 0
 
-    elif args[0] == "token":
-        _print_token(qr=qr, lan=lan)
+    if not args:
+        args = ["start"]
 
-    elif args[0] == "doctor":
-        nuke = "--nuke" in args
-        _doctor(nuke=nuke)
+    parser = _build_parser()
+    ns = parser.parse_args(args)
+    for key, value in opts.items():
+        if key != "version":
+            setattr(ns, key, value)
 
-    elif args[0] == "status":
-        _status()
+    handler = getattr(ns, "_handler", None)
+    if handler is None:
+        parser.print_help()
+        return 1
+    return handler(ns)
 
-    elif args[0] == "config":
-        _config(args[1:])
 
-    elif args[0] == "service":
-        _service_cmd(args[1:])
+# --- Command handlers ---
 
-    elif args[0] in ("nodes", "list"):
-        _nodes_cmd(args[1:])
-
-    elif args[0] == "create":
-        _create_cmd(args[1:])
-
-    elif args[0] == "projects":
-        _projects_cmd(args[1:])
-
-    elif args[0] == "logs":
-        _logs_cmd(args[1:])
-
-    elif args[0] == "restart":
-        _restart_cmd(args[1:])
-
-    elif args[0] == "watch":
-        _watch_cmd(args[1:])
-
-    elif args[0] == "demodb":
-        _demodb_cmd(args[1:])
-
-    elif args[0] == "mcp":
-        from .mcp_server import main as mcp_main
-        mcp_main()
-
-    elif args[0] == "report":
-        _report_cmd(args[1:])
-
-    else:
-        print("Usage: armada [start|stop|attach|setup|version|token|doctor|status|config|service|nodes|create|logs|restart|demodb|watch|mcp|report] [--lan] [--qr] [--keep-token]")
-        print("  start        Start the Armada server daemon + open dashboard")
-        print("  stop         Stop the Armada server")
-        print("  attach       Attach to a node: armada attach <name> [--split] (no args = debug mode)")
-        print("  setup        Install Armada skills to user profile")
-        print("  version      Print the Armada version")
-        print("  token        Print the auth token (--qr for scannable QR code)")
-        print("  doctor       Clean up orphaned tmux sessions and stale state")
-        print("  status       Show server and node status")
-        print("  config       Show or manage configuration (~/.armada/config.yaml)")
-        print("  service      Install as system service (launchd/systemd)")
-        print("  nodes        List all agents in a table")
-        print("  create       Create a new agent node")
-        print("  logs         Tail a node's log: armada logs <name> [-f] [-n 20]")
-        print("  restart      Kill + recreate a node: armada restart <name-or-id>")
-        print("  projects     List, add, or remove projects")
-        print("  demodb       Seed a demo database for screen recordings")
-        print("  watch        Interactive live dashboard with select, attach, and alerts")
-        print("  mcp          Start the Armada MCP server (stdio mode, for AI agents)")
-        print("  report       Report node status: armada report <status> <message> [--options '<json>']")
-        print("  --lan        Bind to / use LAN IP (for other devices on network)")
-        print("  --qr         Show QR code (with token command)")
-        print("  --no-browser Don't open the dashboard in a browser")
-        print("  --keep-token Reuse existing token (don't regenerate on restart)")
-        print("  --nuke       (with doctor) Kill ALL armada tmux sessions and reset DB")
-        print()
-        print("  The dashboard opens in your default browser automatically.")
-        print("  URLs are printed as clickable hyperlinks (OSC 8).")
+def _cmd_start(ns):
+    if not shutil.which("tmux"):
+        _print_tmux_error()
         sys.exit(1)
+    from .server import _ensure_token, start_server
+    _ensure_token(keep=True)
+    _print_startup_info(lan=ns.lan, qr=ns.qr)
+    start_server(
+        daemon=not ns.foreground,
+        open_browser=not ns.no_browser,
+        lan=ns.lan,
+        keep_token=ns.keep_token,
+    )
+
+
+def _cmd_stop(ns):
+    _stop_server()
+
+
+def _cmd_status(ns):
+    _status(json_output=ns.json)
+
+
+def _cmd_nodes(ns):
+    if ns.watch:
+        _watch_nodes()
+        return
+    _print_nodes(include_dead=ns.all, json_output=ns.json)
+
+
+def _cmd_watch(ns):
+    _watch_cmd([])
+
+
+def _cmd_create(ns):
+    subargs = ["--project", ns.project]
+    if ns.name:
+        subargs += ["--name", ns.name]
+    if ns.agent:
+        subargs += ["--agent", ns.agent]
+    if ns.parent is not None:
+        subargs += ["--parent", str(ns.parent)]
+    if ns.prompt:
+        subargs += ["--prompt", ns.prompt]
+    _create_cmd(subargs)
+
+
+def _cmd_attach(ns):
+    if ns.split and ns.name:
+        _attach_split(ns.name)
+    elif ns.name:
+        _attach_node(ns.name)
+    else:
+        from .server import _ensure_token, start_server
+        _ensure_token(keep=True)
+        _print_startup_info(lan=ns.lan, qr=ns.qr)
+        start_server(daemon=False, open_browser=False, lan=ns.lan)
+
+
+def _cmd_restart(ns):
+    _restart_cmd([ns.target])
+
+
+def _cmd_projects(ns):
+    action = ns.projects_action or "list"
+    if action == "add":
+        _projects_cmd(["add", ns.id, ns.name, ns.path])
+    elif action == "rm":
+        _projects_cmd(["rm", ns.id])
+    else:
+        _projects_cmd(["list"])
+
+
+def _cmd_logs(ns):
+    subargs = []
+    if ns.node:
+        subargs.append(ns.node)
+    if ns.follow:
+        subargs.append("--follow")
+    subargs += ["--limit", str(ns.limit)]
+    _logs_cmd(subargs)
+
+
+def _cmd_config(ns):
+    action = ns.config_action or "show"
+    if action == "init":
+        _config(["init"])
+    elif action == "set":
+        _config(["set", ns.key, ns.value])
+    else:
+        _config([])
+
+
+def _cmd_service(ns):
+    _service_cmd(["install"] if ns.service_action == "install" else [])
+
+
+def _cmd_setup(ns):
+    _setup_skills()
+
+
+def _cmd_doctor(ns):
+    _doctor(nuke=ns.nuke)
+
+
+def _cmd_token(ns):
+    _print_token(qr=ns.qr, lan=ns.lan)
+
+
+def _cmd_agents(ns):
+    rows = []
+    for binary, label in (
+        ("opencode", "OpenCode"),
+        ("claude", "Claude Code"),
+        ("aap", "AAP proxy"),
+        ("tmux", "tmux"),
+    ):
+        path = shutil.which(binary)
+        version = ""
+        if path:
+            version_args = [path, "-V"] if binary == "tmux" else [path, "--version"]
+            try:
+                result = subprocess.run(
+                    version_args, check=False, capture_output=True, text=True, timeout=3,
+                )
+                output = (result.stdout or result.stderr).strip()
+                version = output.splitlines()[0] if output else ""
+            except Exception:
+                version = ""
+        rows.append({
+            "id": binary,
+            "label": label,
+            "available": bool(path),
+            "path": path or "",
+            "version": version,
+        })
+
+    if ns.json:
+        print(json.dumps(rows, indent=2))
+        return
+
+    print(f"{'Agent':<16} {'Status':<10} Version")
+    print("-" * 60)
+    for row in rows:
+        status = "installed" if row["available"] else "missing"
+        print(f"{row['label']:<16} {status:<10} {row['version'] or '-'}")
+    print()
+    print("Install agent integrations with: armada setup")
+
+
+def _cmd_mcp(ns):
+    from .mcp_server import main as mcp_main
+    mcp_main()
+
+
+def _cmd_report(ns):
+    subargs = [ns.status, ns.message]
+    if ns.options:
+        subargs += ["--options", ns.options]
+    _report_cmd(subargs)
+
+
+def _cmd_demodb(ns):
+    action = ns.demodb_action or "seed"
+    if action == "path":
+        _demodb_cmd(["path"])
+    else:
+        subargs = ["seed"]
+        if getattr(ns, "force", False):
+            subargs.append("--force")
+        _demodb_cmd(subargs)
+
+
+def _cmd_version(ns):
+    print(f"armada {constants.VERSION}")
 
 
 def _lan_ip():
@@ -375,18 +666,28 @@ def _setup_skills():
         print("  Claude Code hooks directory not found (skip)")
 
 
-def _status():
-    import json
+def _status(json_output: bool = False):
     try:
         import urllib.request
-        req = urllib.request.Request("http://127.0.0.1:9100/health")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{constants.DEFAULT_PORT}/health"
+        )
         resp = urllib.request.urlopen(req, timeout=5)
         data = json.loads(resp.read())
-        print(f"Armada server: running (v{data.get('version','?')})")
-        print(f"Uptime: {data.get('uptime',0):.0f}s")
-        print(f"Agents: {data.get('agents',0)} (active={data.get('active',0)} pending={data.get('pending',0)} idle={data.get('idle',0)})")
     except Exception:
-        print("Armada server: not reachable")
+        if json_output:
+            print(json.dumps({"status": "down"}))
+        else:
+            print("Armada server: not reachable")
+        return
+
+    if json_output:
+        print(json.dumps(data, indent=2))
+        return
+
+    print(f"Armada server: running (v{data.get('version','?')})")
+    print(f"Uptime: {data.get('uptime',0):.0f}s")
+    print(f"Agents: {data.get('agents',0)} (active={data.get('active',0)} pending={data.get('pending',0)} idle={data.get('idle',0)})")
 
 
 
@@ -563,12 +864,17 @@ def _nodes_cmd(subargs: list[str]):
         _watch_nodes()
 
 
-def _print_nodes():
+def _print_nodes(include_dead: bool = False, json_output: bool = False):
+    path = "/api/tree" if include_dead else "/api/tree?hide_dead=true"
     try:
-        tree = _api_get("/api/tree")
+        tree = _api_get(path)
     except Exception as e:
         print(f"Failed to reach Armada server: {e}", file=sys.stderr)
         sys.exit(1)
+
+    if json_output:
+        print(json.dumps(tree, indent=2))
+        return
 
     def _collect(nodes, depth=0):
         rows = []
