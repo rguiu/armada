@@ -120,11 +120,11 @@ Armada supports Claude Code, OpenCode, and Bash as agent types.
 
 ### OpenCode
 
-- **MCP Server** — typed tools (`spawn_node`, `send_message`, `report_status`, etc.) directly in the agent's tool palette. Auto-configured via `opencode.json`.
-- **Plugin system** — an `armada-pending` plugin hooks into OpenCode's event loop. Agents automatically report status.
+- **MCP Server** — typed tools (`spawn_node`, `send_message`, `report_status`, etc.) directly in the agent's tool palette. Configured under `mcp.servers` in `opencode.json`.
+- **Plugin system** — the `armada-pending` plugin uses OpenCode 2.x's V2 plugin API (`Plugin.define`). It is installed to `.opencode/plugins/` in a project or `~/.config/opencode/plugins/` globally, where OpenCode discovers it automatically.
 - **Skills** — `armada-node` and `armada-worker` skill files teach agents orchestration and messaging patterns.
 
-To use: install OpenCode, make sure `opencode` is on your PATH, run `armada setup`.
+To use: install OpenCode from [opencode.ai](https://opencode.ai), make sure `opencode` is on your PATH, run `armada setup`.
 
 ### Claude Code
 
@@ -141,10 +141,10 @@ Bare shell nodes without an agent. Useful for running scripts or manual commands
 
 | | OpenCode | Claude Code |
 |---|---|---|
-| **Install** | `pip install opencode` | `npm install -g @anthropic-ai/claude-code` |
-| **Status reporting** | Plugin (TypeScript, event-driven) | Shell hooks (pre/post-tool, stop) |
-| **Permissions** | Permission events in plugin | `claude-permission.sh` hook |
-| **Cost tracking** | Token usage from step-finish events | Not built in |
+| **Install** | install from [opencode.ai](https://opencode.ai) | `npm install -g @anthropic-ai/claude-code` |
+| **Status reporting** | Plugin (TypeScript, V2 event hooks) | Shell hooks (pre/post-tool, stop) |
+| **Permissions** | `permission.asked` / `permission.replied` events | `claude-permission.sh` hook |
+| **Cost tracking** | Token/cost usage from `session.usage.updated` | Not built in |
 | **Best for** | Open-source workflows, custom plugins | Anthropic ecosystem, official support |
 
 Either works. Pick based on which agent you already have installed.

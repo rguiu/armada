@@ -1,13 +1,10 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "skills": {
-    "paths": [".opencode/skills"]
-  },
-  "command": {
+  "skills": [".opencode/skills"],
+  "commands": {
     "armada": {
       "description": "Spawn and manage Armada parallel worker nodes",
-      "template": "Execute the user's request using Armada parallel workers. Spawn bash workers via POST /api/nodes, send tasks via POST /api/nodes/:id/send (single-quoted -d body), poll until idle, read results from /tmp/armada-results/, kill workers when done. Report status before/after every step."
+      "template": "Execute the user's request using Armada parallel workers. Use the Armada MCP tools when available: spawn_node, send_task, get_tree, send_message, read_inbox, kill_node. Report status before/after every step."
     }
-  },
-  "plugin": [".opencode/plugins/armada-pending.ts", ".opencode/plugins/armada-pending.js"]
+  }
 }
