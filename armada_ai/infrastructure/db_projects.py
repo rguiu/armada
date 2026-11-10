@@ -1,11 +1,46 @@
 """Project label persistence and JSON sync."""
 import json
 import os
+import re
 import sqlite3
 
 from .. import constants
 from ..domain.models import ProjectLabel
 from .database import _get_conn, _retry, _ensure_dir
+
+
+def _slugify(text: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
+    return (slug or "project")[:40]
+
+
+def _unique_id(base: str) -> str:
+    conn = _get_conn()
+    candidate, suffix = base, 2
+    while conn.execute("SELECT 1 FROM project_labels WHERE id = ?", (candidate,)).fetchone():
+        candidate = f"{base}-{suffix}"
+        suffix += 1
+    return candidate
+
+
+def ensure_project_label(path: str, name: str | None = None,
+                         id: str | None = None) -> ProjectLabel:
+    """Register a folder if needed and return its label. id/name default to the folder name."""
+    path = os.path.abspath(os.path.expanduser(path))
+    conn = _get_conn()
+    row = conn.execute(
+        "SELECT id, name, path FROM project_labels WHERE path = ?", (path,)
+    ).fetchone()
+    if row:
+        if id and id != row["id"]:
+            raise ValueError(
+                f"Path '{path}' is already registered as '{row['id']}'. Remove it first."
+            )
+        return ProjectLabel(id=row["id"], name=row["name"], path=row["path"])
+    name = name or os.path.basename(path) or _slugify(path)
+    label_id = id or _unique_id(_slugify(name))
+    add_project_label(label_id, name, path)
+    return ProjectLabel(id=label_id, name=name, path=path)
 
 
 def add_project_label(id: str, name: str, path: str):

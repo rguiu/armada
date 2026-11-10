@@ -270,6 +270,48 @@ class TestProjectLabels:
         assert len(labels) == 1
         assert labels[0]["id"] == "myproj"
 
+    def test_create_from_path_only(self, client, tmp_path):
+        proj = tmp_path / "demo"
+        proj.mkdir()
+        r = client.post("/api/project-labels", json={"path": str(proj)})
+        assert r.status_code == 201
+        assert r.json()["id"] == "demo"
+        assert r.json()["name"] == "demo"
+        assert r.json()["path"] == str(proj)
+
+    def test_create_same_path_twice_is_idempotent(self, client, tmp_path):
+        proj = tmp_path / "demo"
+        proj.mkdir()
+        first = client.post("/api/project-labels", json={"path": str(proj)})
+        second = client.post("/api/project-labels", json={"path": str(proj)})
+        assert first.json()["id"] == second.json()["id"]
+        assert len(client.get("/api/project-labels").json()) == 1
+
+    def test_discover_marks_registered(self, temp_db, client, tmp_path, monkeypatch):
+        from armada_ai import server as server_mod
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        (tmp_path / "plain").mkdir()
+        temp_db.add_project_label("repo", "Repo", str(repo))
+        monkeypatch.setattr(server_mod.config, "get",
+                            lambda key: [str(tmp_path)] if key == "project_roots" else None)
+
+        data = client.get("/api/project-labels/discover").json()
+        by_path = {p["path"]: p for p in data["projects"]}
+        assert by_path[str(repo)]["id"] == "repo"
+        assert str(tmp_path / "plain") not in by_path
+
+    def test_create_node_from_project_path(self, temp_db, client, tmp_path):
+        proj = tmp_path / "demo"
+        proj.mkdir()
+        r = client.post("/api/nodes", json={
+            "project_path": str(proj), "agent_type": "bash",
+        })
+        assert r.status_code == 201
+        assert r.json()["project_label_id"] == "demo"
+        assert any(lb["path"] == str(proj)
+                   for lb in client.get("/api/project-labels").json())
+
     def test_delete(self, temp_db, client):
         proj_path = tempfile.mkdtemp(prefix="armada_test_x_")
         client.post("/api/project-labels", json={"id": "x", "name": "X", "path": proj_path})

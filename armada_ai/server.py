@@ -31,7 +31,7 @@ from .infrastructure.auth_manager import TokenManager, AuthExemptPaths
 from .infrastructure import deployment
 from .project_explorer import (
     list_project_skills, list_project_plugins, list_project_hooks,
-    get_project_config, get_project_git_info,
+    get_project_config, get_project_git_info, discover_projects,
 )
 from .domain.models import AgentStatus, CreateNodeRequest, AgentReportRequest, Node
 from .transport.middleware import _CSP_HEADER
@@ -459,16 +459,27 @@ def get_children_output(node_id: int):
 @app.post("/api/nodes")
 async def create_node(request: Request):
     body = await request.json()
+    project_label_id = body.get("project_label_id") or None
+    project_path = (body.get("project_path") or "").strip()
+
+    if project_path:
+        project_path = os.path.abspath(os.path.expanduser(project_path))
+        if not os.path.isdir(project_path):
+            raise HTTPException(status_code=400,
+                detail=f"Project path does not exist: {project_path}")
+        label = await asyncio.to_thread(db.ensure_project_label, project_path)
+        project_label_id = label.id
+
     req = CreateNodeRequest(
         name=body.get("name") or None,
-        project_label_id=body.get("project_label_id") or None,
+        project_label_id=project_label_id,
         agent_type=body.get("agent_type", "auto"),
         parent_id=body.get("parent_id") or None,
         initial_prompt=(body.get("initial_prompt") or "").strip() or None,
     )
 
     if not req.project_label_id:
-        raise HTTPException(status_code=400, detail="A project must be selected")
+        raise HTTPException(status_code=400, detail="A project path or label is required")
 
     global _create_lock
     if _create_lock is None:
@@ -962,21 +973,39 @@ def list_project_labels():
 @app.post("/api/project-labels")
 async def create_project_label(request: Request):
     body = await request.json()
-    label_id = body.get("id", "").strip()
-    name = body.get("name", "").strip()
-    path = body.get("path", "").strip()
+    label_id = (body.get("id") or "").strip()
+    name = (body.get("name") or "").strip()
+    path = (body.get("path") or "").strip()
 
-    if not label_id or not name:
-        raise HTTPException(status_code=400, detail="id and name are required")
-    if not path:
+    # Legacy clients sent id/name with no path; they meant the server's cwd.
+    if not path and (label_id or name):
         path = os.getcwd()
+    if not path:
+        raise HTTPException(status_code=400, detail="path is required")
 
     try:
-        db.add_project_label(label_id, name, os.path.abspath(path))
+        label = await asyncio.to_thread(
+            db.ensure_project_label, path, name or None, label_id or None)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    return JSONResponse({"ok": True}, status_code=201)
+    return JSONResponse(
+        {"id": label.id, "name": label.name, "path": label.path}, status_code=201)
+
+
+@app.get("/api/project-labels/discover")
+def discover_project_labels():
+    roots = config.get("project_roots") or []
+    registered = {lb.path: lb for lb in db.list_project_labels()}
+    projects = []
+    for item in discover_projects(roots):
+        label = registered.get(item["path"])
+        projects.append({
+            "name": label.name if label else item["name"],
+            "path": item["path"],
+            "id": label.id if label else None,
+        })
+    return JSONResponse({"roots": roots, "projects": projects})
 
 
 @app.delete("/api/project-labels/{label_id}")

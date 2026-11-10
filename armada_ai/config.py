@@ -11,7 +11,7 @@ DEFAULTS = {
     "default_agent": "opencode",
     "health_interval": constants.DEFAULT_HEALTH_INTERVAL,
     "max_restarts": constants.MAX_RESTARTS,
-    "projects": [],
+    "project_roots": ["~/Projects", "~/projects", "~/code", "~/src", "~/work"],
 }
 
 _cache = None
@@ -19,58 +19,67 @@ _cache_mtime = 0
 
 
 def _parse_yaml(text: str) -> dict:
+    lines = text.splitlines()
     result = {}
-    stack = [(result, -1)]
-    pending_list_key = None
+    stack = [(-1, result)]
 
-    for line in text.splitlines():
+    def next_content(index: int) -> str:
+        for line in lines[index + 1:]:
+            if line.strip() and not line.strip().startswith("#"):
+                return line
+        return ""
+
+    for index, line in enumerate(lines):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
 
         indent = len(line) - len(line.lstrip())
-
-        while len(stack) > 1 and stack[-1][1] >= indent:
+        while len(stack) > 1 and indent <= stack[-1][0]:
             stack.pop()
+        current = stack[-1][1]
 
-        current = stack[-1][0]
+        if stripped == "-":
+            if isinstance(current, list):
+                item = {}
+                current.append(item)
+                stack.append((indent, item))
+            continue
 
         if stripped.startswith("- "):
-            value_str = stripped[2:].strip()
-            value = _parse_value(value_str.strip('"').strip("'"))
             if isinstance(current, list):
-                current.append(value)
-            elif pending_list_key:
-                if not isinstance(result[pending_list_key], list):
-                    result[pending_list_key] = []
-                result[pending_list_key].append(value)
-        elif ": " in stripped:
+                value_str = stripped[2:].strip()
+                current.append(_parse_value(value_str.strip('"').strip("'")))
+            continue
+
+        if ": " in stripped:
             key, value_str = stripped.split(": ", 1)
             key = key.strip().strip('"').strip("'")
             value_str = value_str.strip().strip('"').strip("'")
-            value = _parse_value(value_str)
             if isinstance(current, dict):
-                current[key] = value
-            else:
-                result[key] = value
-            pending_list_key = None
-        elif stripped.endswith(":"):
+                current[key] = _parse_value(value_str)
+            continue
+
+        if stripped.endswith(":"):
             key = stripped[:-1].strip().strip('"').strip("'")
-            current[key] = {}
-            stack.append((current[key], indent))
-        elif stripped == "-":
+            following = next_content(index)
+            following_indent = len(following) - len(following.lstrip())
+            is_list = (following_indent > indent
+                       and following.strip().startswith("-"))
+            child = [] if is_list else {}
             if isinstance(current, dict):
-                for k in current:
-                    if not isinstance(current[k], list):
-                        current[k] = []
-                    pending_list_key = k
-                    break
+                current[key] = child
+            stack.append((indent, child))
 
     return result
 
 
 def _parse_value(s: str):
     s_lower = s.lower()
+    if s == "[]":
+        return []
+    if s == "{}":
+        return {}
     if s_lower == "true":
         return True
     if s_lower == "false":

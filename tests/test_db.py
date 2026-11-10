@@ -21,6 +21,31 @@ class TestProjectLabels:
         with pytest.raises(ValueError):
             temp_db.add_project_label("b", "B", "/tmp/shared")
 
+    def test_ensure_derives_id_and_name(self, temp_db, tmp_path):
+        project = tmp_path / "My Project"
+        project.mkdir()
+        label = temp_db.ensure_project_label(str(project))
+        assert label.id == "my-project"
+        assert label.name == "My Project"
+        assert label.path == str(project)
+        assert len(temp_db.list_project_labels()) == 1
+
+    def test_ensure_is_idempotent(self, temp_db, tmp_path):
+        project = tmp_path / "proj"
+        project.mkdir()
+        first = temp_db.ensure_project_label(str(project))
+        second = temp_db.ensure_project_label(str(project))
+        assert first.id == second.id
+        assert len(temp_db.list_project_labels()) == 1
+
+    def test_ensure_keeps_distinct_ids_for_same_folder_name(self, temp_db, tmp_path):
+        one = tmp_path / "a" / "proj"
+        two = tmp_path / "b" / "proj"
+        one.mkdir(parents=True)
+        two.mkdir(parents=True)
+        assert temp_db.ensure_project_label(str(one)).id == "proj"
+        assert temp_db.ensure_project_label(str(two)).id == "proj-2"
+
 
 class TestNodes:
     def test_create_and_get(self, temp_db):

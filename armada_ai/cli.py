@@ -341,8 +341,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.set_defaults(_handler=_cmd_watch)
 
     p = sub.add_parser("create", help="create a new agent node")
-    p.add_argument("-p", "--project", required=True, metavar="ID",
-                   help="project label ID (required)")
+    p.add_argument("-p", "--project", metavar="PATH_OR_ID",
+                   help="project folder or label ID (default: current directory)")
     p.add_argument("-n", "--name", help="node name (auto-generated if omitted)")
     p.add_argument("-a", "--agent", default="auto",
                    choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
@@ -365,14 +365,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("target", metavar="NAME_OR_ID", help="node name or numeric ID")
     p.set_defaults(_handler=_cmd_restart)
 
-    p = sub.add_parser("projects", help="manage project labels")
+    p = sub.add_parser("projects", help="manage projects")
     p.set_defaults(_handler=_cmd_projects)
     projects_sub = p.add_subparsers(dest="projects_action", metavar="ACTION")
     projects_sub.add_parser("list", help="list projects (default)")
-    pa = projects_sub.add_parser("add", help="register a project")
-    pa.add_argument("id")
-    pa.add_argument("name")
-    pa.add_argument("path")
+    projects_sub.add_parser("scan", help="find projects under project_roots")
+    pa = projects_sub.add_parser("add", help="register a project folder")
+    pa.add_argument("path", help="project directory")
+    pa.add_argument("--name", help="display name (default: folder name)")
+    pa.add_argument("--id", help="label ID (default: derived from folder name)")
     pr = projects_sub.add_parser("rm", help="remove a project")
     pr.add_argument("id")
 
@@ -506,7 +507,7 @@ def _cmd_watch(ns):
 
 
 def _cmd_create(ns):
-    subargs = ["--project", ns.project]
+    subargs = ["--project", ns.project] if ns.project else []
     if ns.name:
         subargs += ["--name", ns.name]
     if ns.agent:
@@ -537,7 +538,14 @@ def _cmd_restart(ns):
 def _cmd_projects(ns):
     action = ns.projects_action or "list"
     if action == "add":
-        _projects_cmd(["add", ns.id, ns.name, ns.path])
+        args = ["add", ns.path]
+        if ns.name:
+            args += ["--name", ns.name]
+        if ns.id:
+            args += ["--id", ns.id]
+        _projects_cmd(args)
+    elif action == "scan":
+        _projects_cmd(["scan"])
     elif action == "rm":
         _projects_cmd(["rm", ns.id])
     else:
@@ -793,6 +801,8 @@ def _config(subargs: list[str]):
             except ValueError:
                 _err(f"Invalid float: {val_str}")
                 sys.exit(1)
+        elif isinstance(default_value, list):
+            cfg[key] = val_str.replace(",", " ").split()
         else:
             cfg[key] = val_str
         config.write_config(cfg)
@@ -1677,7 +1687,8 @@ def _create_cmd(subargs: list[str]):
     import argparse
     p = argparse.ArgumentParser(prog="armada create", description="Create a new agent node")
     p.add_argument("--name", "-n", help="Node name (auto-generated if omitted)")
-    p.add_argument("--project", "-p", required=True, help="Project label ID (required)")
+    p.add_argument("--project", "-p",
+                   help="Project folder or label ID (default: current directory)")
     p.add_argument("--agent", "-a", default="auto",
                    choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
                    help="Agent type (default: auto)")
@@ -1688,10 +1699,13 @@ def _create_cmd(subargs: list[str]):
     except SystemExit:
         return
 
-    body = {
-        "project_label_id": ns.project,
-        "agent_type": ns.agent,
-    }
+    body = {"agent_type": ns.agent}
+    value = ns.project or os.getcwd()
+    expanded = os.path.expanduser(value)
+    if ns.project and not os.path.isdir(expanded) and "/" not in value and "~" not in value:
+        body["project_label_id"] = value
+    else:
+        body["project_path"] = os.path.abspath(expanded)
     if ns.name:
         body["name"] = ns.name.replace(".", "-")
     if ns.parent:
@@ -1716,17 +1730,37 @@ def _create_cmd(subargs: list[str]):
 
 def _projects_cmd(subargs: list[str]):
     if subargs and subargs[0] == "add":
-        if len(subargs) < 4:
-            print("Usage: armada projects add <id> <name> <path>")
-            sys.exit(1)
+        parser = argparse.ArgumentParser(prog="armada projects add", add_help=False)
+        parser.add_argument("path")
+        parser.add_argument("--name")
+        parser.add_argument("--id")
+        ns, _ = parser.parse_known_args(subargs[1:])
+        body = {"path": ns.path}
+        if ns.name:
+            body["name"] = ns.name
+        if ns.id:
+            body["id"] = ns.id
         try:
-            _api_post("/api/project-labels", {
-                "id": subargs[1], "name": subargs[2], "path": subargs[3],
-            })
-            _ok(f"Added project {subargs[1]}")
+            label = _api_post("/api/project-labels", body)
+            _ok(f"Added project {label.get('id') or body.get('id') or body['path']}")
         except Exception as e:
             _err(f"Failed: {e}")
             sys.exit(1)
+        return
+
+    if subargs and subargs[0] == "scan":
+        try:
+            data = _api_get("/api/project-labels/discover")
+        except Exception as e:
+            _err(f"Failed: {e}")
+            sys.exit(1)
+        found = [p for p in data.get("projects", []) if not p.get("id")]
+        _header("Discovered", f"{len(found)} not registered")
+        if not found:
+            print(f"  {_style('Nothing new under ' + ', '.join(data.get('roots', [])), 'dim')}")
+            return
+        _table(["NAME", "PATH"], [[p["name"], _short_path(p["path"])] for p in found])
+        print(f"  Add one with: {_style('armada projects add <path>', 'bold')}")
         return
 
     if subargs and subargs[0] == "rm":
@@ -1757,7 +1791,7 @@ def _projects_cmd(subargs: list[str]):
     _header("Projects", f"{len(labels)} registered")
     if not labels:
         print(f"  {_style('No projects.', 'dim')}")
-        print(f"  Add one with: {_style('armada projects add <id> <name> <path>', 'bold')}")
+        print(f"  Add one with: {_style('armada projects add <path>', 'bold')}")
         return
 
     _table(

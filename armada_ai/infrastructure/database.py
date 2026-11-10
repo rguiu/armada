@@ -218,6 +218,7 @@ from .db_stats import (  # noqa: E402, F401
 from .db_projects import (  # noqa: E402, F401
     add_project_label,
     delete_project_label,
+    ensure_project_label,
     list_project_labels,
     get_project_label_path,
     sync_projects_from_json as _sync_projects_from_json,

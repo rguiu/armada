@@ -293,13 +293,15 @@ class TestProjectsCmd:
         assert "proj-2" in out
 
     def test_add_project(self, capsys):
-        """Add a project via CLI."""
+        """Add a project via CLI, with optional id/name overrides."""
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({"ok": True}).encode()
+        mock_resp.read.return_value = json.dumps({"id": "my-proj"}).encode()
 
         with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen, \
              patch.object(cli, "_read_token", return_value="test-token"):
-            cli._projects_cmd(["add", "my-proj", "My Project", "/tmp/path"])
+            cli._projects_cmd([
+                "add", "/tmp/path", "--name", "My Project", "--id", "my-proj",
+            ])
 
         out = capsys.readouterr().out
         assert "Added project my-proj" in out
@@ -312,14 +314,46 @@ class TestProjectsCmd:
         assert body["name"] == "My Project"
         assert body["path"] == "/tmp/path"
 
-    def test_add_project_missing_args(self, capsys):
-        """Add with insufficient arguments prints usage and exits."""
-        with pytest.raises(SystemExit) as exc_info:
-            cli._projects_cmd(["add", "only-id"])
-        assert exc_info.value.code == 1
+    def test_add_project_by_path(self, capsys):
+        """A bare path is enough; the server derives id and name."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {"id": "my-project", "name": "my-project", "path": "/tmp/my-project"}
+        ).encode()
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen, \
+             patch.object(cli, "_read_token", return_value="test-token"):
+            cli._projects_cmd(["add", "/tmp/my-project"])
 
         out = capsys.readouterr().out
-        assert "Usage:" in out
+        assert "Added project my-project" in out
+
+        req = mock_urlopen.call_args[0][0]
+        assert json.loads(req.data) == {"path": "/tmp/my-project"}
+
+    def test_add_project_missing_args(self, capsys):
+        """Add with no path prints usage and exits."""
+        with pytest.raises(SystemExit):
+            cli._projects_cmd(["add"])
+
+    def test_scan_lists_unregistered(self, capsys):
+        """Scan only shows discovered folders that are not registered yet."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "roots": ["/tmp"],
+            "projects": [
+                {"name": "new", "path": "/tmp/new", "id": None},
+                {"name": "old", "path": "/tmp/old", "id": "old"},
+            ],
+        }).encode()
+
+        with patch("urllib.request.urlopen", return_value=mock_resp), \
+             patch.object(cli, "_read_token", return_value="test-token"):
+            cli._projects_cmd(["scan"])
+
+        out = capsys.readouterr().out
+        assert "new" in out
+        assert "old" not in out
 
     def test_remove_project(self, capsys):
         """Remove a project via CLI."""

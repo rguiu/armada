@@ -617,6 +617,7 @@ a { color: var(--accent); }
       <span class="section-title">Projects</span>
       <div style="display:flex;gap:4px">
         <button class="section-add" onclick="refreshHooks()" title="Re-deploy hooks & skills to all projects">Sync</button>
+        <button class="section-add" onclick="scanProjects()" title="Find projects under configured roots">Scan</button>
         <button class="section-add" onclick="openModal('label-modal')" title="Add project">+ Add</button>
         <button class="section-add" onclick="toggleProjects()" id="proj-toggle">&#9660;</button>
       </div>
@@ -710,13 +711,11 @@ a { color: var(--accent); }
 <!-- ── Modal Overlays ── -->
 <div class="modal-overlay" id="label-modal">
   <div class="modal">
-    <h3>New Project Label</h3>
-    <label>ID (slug)</label>
-    <input type="text" id="label-id" placeholder="my-project">
-    <label>Name</label>
-    <input type="text" id="label-name" placeholder="My Project">
-    <label>Path (leave blank for current dir)</label>
-    <input type="text" id="label-path" placeholder="/Users/...">
+    <h3>Add Project</h3>
+    <label>Folder path</label>
+    <input type="text" id="label-path" placeholder="/Users/.../my-project">
+    <label>Name (optional)</label>
+    <input type="text" id="label-name" placeholder="Defaults to folder name">
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeModal('label-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="createLabel()">Create</button>
@@ -1710,20 +1709,53 @@ async function createNode() {
 
 /* ── Create Label ── */
 async function createLabel() {
-  const id = document.getElementById('label-id').value;
-  const name = document.getElementById('label-name').value;
-  const path = document.getElementById('label-path').value;
+  const path = document.getElementById('label-path').value.trim();
+  const name = document.getElementById('label-name').value.trim();
 
-  if (!id || !name) return alert('ID and Name are required');
+  if (!path) return alert('Folder path is required');
 
+  const body = {path};
+  if (name) body.name = name;
   await api('/api/project-labels', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({id, name, path})
+    body: JSON.stringify(body)
   });
   closeModal('label-modal');
+  document.getElementById('label-path').value = '';
+  document.getElementById('label-name').value = '';
   refreshLabels();
   refreshNodeModalDropdowns();
+}
+
+let discoveredProjects = [];
+
+async function scanProjects() {
+  try {
+    const data = await api('/api/project-labels/discover');
+    discoveredProjects = (data.projects || []).filter(p => !p.id);
+    await refreshLabels();
+    toast(discoveredProjects.length
+      ? discoveredProjects.length + ' project(s) found'
+      : 'No new projects found');
+  } catch(e) {
+    toast('Scan failed: ' + e.message, true);
+  }
+}
+
+async function addDiscovered(path) {
+  try {
+    await api('/api/project-labels', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({path})
+    });
+    discoveredProjects = discoveredProjects.filter(p => p.path !== path);
+    await refreshLabels();
+    await refreshNodeModalDropdowns();
+  } catch(e) {
+    toast('Add failed: ' + e.message, true);
+  }
 }
 
 async function deleteLabel(id) {
@@ -1795,16 +1827,30 @@ async function refreshLabels() {
     const data = await api('/api/project-labels');
     const el = document.getElementById('labels-list');
     if (!el) { console.error('labels-list element not found'); return; }
-    if (!data || !data.length) {
-      el.innerHTML = '<div class="label-item" style="color:#484f58">No labels</div>';
-      return;
-    }
-    el.innerHTML = data.map(l => `
+    const registered = data || [];
+    const known = new Set(registered.map(l => l.path));
+    const discovered = discoveredProjects.filter(p => !known.has(p.path));
+
+    let html = registered.map(l => `
       <div class="label-item" onclick="showProjectOverview('${esc(l.id)}')" title="View project overview">
         <div><span>${esc(l.name)}</span> <span class="label-path">${esc(l.path)}</span></div>
         <span class="label-del" onclick="event.stopPropagation();deleteLabel('${esc(l.id)}')">x</span>
       </div>
     `).join('');
+
+    if (discovered.length) {
+      html += `<div class="label-item" style="color:var(--text-dim);font-size:10px;padding-top:6px">DISCOVERED</div>`;
+      html += discovered.map(p => `
+        <div class="label-item" title="Click + to register">
+          <div><span>${esc(p.name)}</span> <span class="label-path">${esc(p.path)}</span></div>
+          <span class="label-del" data-path="${encodeURIComponent(p.path)}"
+            style="visibility:visible;color:var(--accent)"
+            onclick="addDiscovered(decodeURIComponent(this.dataset.path))">+</span>
+        </div>
+      `).join('');
+    }
+
+    el.innerHTML = html || '<div class="label-item" style="color:#484f58">No labels</div>';
   } catch(e) {
     console.error('Failed to load project labels:', e.message);
     const el = document.getElementById('labels-list');

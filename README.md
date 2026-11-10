@@ -67,7 +67,7 @@ armada                     # start server + open dashboard
 
 Open `http://127.0.0.1:9100`.
 
-1. **Register a project** — sidebar Projects → **+ Add**. Give it an ID, name, and directory path.
+1. **Pick a project folder** — sidebar Projects → **+ Add** and enter a path (name defaults to the folder name). Or click **Scan** to find git repos under `project_roots` in `~/.armada/config.yaml`.
 2. **Create a node** — click **+ Node**, pick a project, choose an agent type (OpenCode, Claude Code, or Bash), optionally add an initial prompt.
 3. **Attach** — select the node and click **Attach**. Opens the agent session in iTerm2 (macOS) or in-browser via xterm.js.
 4. **Monitor** — see status, activity logs, and task history in real time.
@@ -214,11 +214,11 @@ can appear before or after the command.
 | `armada stop` | Stop the daemon |
 | `armada status [--json]` | Show server and fleet status |
 | `armada nodes [--watch] [--all] [--json]` | List agents; `--watch` opens the live dashboard |
-| `armada create -p <project> [-n name] [-a agent]` | Create a new agent node |
+| `armada create [-p <path-or-id>] [-n name] [-a agent]` | Create a new agent node (default project: current directory) |
 | `armada attach <name> [--split]` | Attach to a node by name |
 | `armada restart <name-or-id>` | Kill and recreate a node |
 | `armada logs <name> [-f] [-n 20]` | Tail a node's activity log |
-| `armada projects [list\|add\|rm]` | Manage project labels |
+| `armada projects [list\|scan\|add <path>\|rm]` | Manage project folders |
 | `armada config [show\|init\|set]` | Show or edit `~/.armada/config.yaml` |
 | `armada service install` | Install as a launchd/systemd service |
 | `armada setup` | Install skills, hooks, and MCP config |
@@ -236,7 +236,7 @@ Examples:
 armada --lan --no-browser      # start on the LAN without opening a browser
 armada nodes --watch           # live terminal dashboard
 armada nodes --all --json      # script-friendly agent list, including dead nodes
-armada create -p armada -a claude -m "review the auth module"
+armada create -p ~/Projects/armada -a claude -m "review the auth module"
 armada logs HOOK20 -f
 ```
 
@@ -261,7 +261,8 @@ Output is colourised automatically on a TTY. Use `--color` to force it, or `--no
 | `POST` | `/api/queue` | Post task to work queue |
 | `GET` | `/api/queue` | List unclaimed tasks |
 | `POST` | `/api/queue/:id/claim` | Claim a queue task |
-| `GET/POST/DELETE` | `/api/project-labels` | CRUD project directories |
+| `GET/POST/DELETE` | `/api/project-labels` | List/register/remove project folders (`POST` accepts `{"path"}`) |
+| `GET` | `/api/project-labels/discover` | Scan `project_roots` for unregistered projects |
 | `GET` | `/health` | Health check |
 | `GET` | `/metrics` | Prometheus metrics |
 

@@ -47,7 +47,18 @@ class TestParseYaml:
 
     def test_list_scalar_items(self):
         result = config._parse_yaml("projects:\n  - alpha\n  - beta")
-        assert "projects" in result
+        assert result == {"projects": ["alpha", "beta"]}
+
+    def test_list_of_dicts(self):
+        result = config._parse_yaml("items:\n  -\n    key: value\n  -\n    key: other")
+        assert result == {"items": [{"key": "value"}, {"key": "other"}]}
+
+    def test_write_then_parse_roundtrip(self):
+        cfg = {"port": 9100, "project_roots": ["/a", "/b"], "debug": True}
+        assert config._parse_yaml("\n".join(
+            line for key, value in cfg.items()
+            for line in config._yaml_lines(key, value, 0)
+        )) == cfg
 
     def test_bare_dash_dict(self):
         result = config._parse_yaml("items:\n  -\n    key: value")

@@ -18,6 +18,39 @@ _ANSI_RE = re.compile(
 )
 _SENSITIVE_KEY_RE = re.compile(r"(token|key|secret|auth|password)", re.IGNORECASE)
 
+_DISCOVERY_DIRS = {".git", ".opencode", ".claude"}
+_DISCOVERY_FILES = {"opencode.json", "opencode.jsonc", "package.json", "pyproject.toml"}
+_SKIP_DIRS = {
+    "node_modules", "venv", ".venv", "env", "build", "dist", "target",
+    "vendor", "__pycache__", ".next", ".cache",
+}
+
+
+def discover_projects(roots: list[str], max_depth: int = 2) -> list[dict]:
+    """Find project folders under roots: git repos or agent/package configs."""
+    if isinstance(roots, str):
+        roots = [roots]
+    found = {}
+    for root in roots:
+        root_path = Path(os.path.abspath(os.path.expanduser(root)))
+        if not root_path.is_dir():
+            continue
+        base_depth = len(root_path.parts)
+        for dirpath, dirnames, filenames in os.walk(root_path):
+            path = Path(dirpath)
+            if len(path.parts) - base_depth > max_depth:
+                dirnames[:] = []
+                continue
+            if any(d in _DISCOVERY_DIRS for d in dirnames) or any(
+                f in _DISCOVERY_FILES for f in filenames
+            ):
+                found[str(path)] = path.name
+            dirnames[:] = [
+                d for d in dirnames
+                if not d.startswith(".") and d not in _SKIP_DIRS
+            ]
+    return [{"name": found[p], "path": p} for p in sorted(found)]
+
 
 def _skill_description(skill_md: Path) -> str:
     try:
