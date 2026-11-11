@@ -46,6 +46,10 @@ armada setup                # install agent skills and MCP config
 ```bash
 docker build -t armada .
 docker run -d -p 9100:9100 --name armada armada
+
+# The container has its own token. Read it, then open the dashboard once with it:
+docker exec armada armada token
+# http://127.0.0.1:9100/?token=<token-from-above>
 ```
 </details>
 
@@ -62,16 +66,32 @@ bash install.sh
 ## Quick Start
 
 ```bash
-armada                     # start server + open dashboard
+armada                     # start server + open dashboard with a one-time login ticket
 ```
 
-Open `http://127.0.0.1:9100`.
+If your browser opens automatically, you're done. Otherwise, with the server running:
+
+```bash
+armada token --qr          # prints a 60-second login URL and QR code
+```
+
+Open the printed link or scan the QR. The ticket logs you in once, sets an `HttpOnly` cookie for 7 days, and redirects to the dashboard. Opening `http://127.0.0.1:9100` without a ticket or cookie returns `401 Unauthorized` — this is intentional.
 
 1. **Pick a project folder** — sidebar Projects → **+ Add** and enter a path (name defaults to the folder name). Or click **Scan** to find git repos under `project_roots` in `~/.armada/config.yaml`.
 2. **Create a node** — click **+ Node**, pick a project, choose an agent type (OpenCode, Claude Code, or Bash), optionally add an initial prompt.
 3. **Attach** — select the node and click **Attach**. Opens the agent session in iTerm2 (macOS) or in-browser via xterm.js.
 4. **Monitor** — see status, activity logs, and task history in real time.
-5. **Connect other devices** — scan the QR code in the sidebar to open the dashboard on your phone or tablet.
+5. **Connect other devices** — start with `armada --lan`, then run `armada token --qr --lan` and scan the QR. Tickets expire after 60 seconds; rerun the command for a fresh one.
+
+### Authentication
+
+The dashboard and API are protected by a token stored in `~/.armada/token` (mode `0600`). The browser gets it through a one-time ticket and an `HttpOnly` cookie; API clients can send it directly:
+
+```bash
+curl -H "Authorization: Bearer $(armada token)" http://127.0.0.1:9100/api/tree
+```
+
+`/health` is the only public endpoint. To log in again after clearing cookies, run `armada token --qr`.
 
 ![Armada Dashboard](img/armada.png)
 
@@ -226,7 +246,7 @@ can appear before or after the command.
 | `armada mcp` | Start the MCP server (stdio mode) |
 | `armada report <status> <msg>` | Report node status (used by agent hooks) |
 | `armada doctor [--nuke]` | Clean up stale sessions and DB state |
-| `armada token [--qr] [--lan]` | Print the auth token or a QR code |
+| `armada token [--qr] [--lan]` | Print the raw auth token, or a one-time login link/QR (60s) |
 | `armada demodb [seed\|path]` | Seed a demo database for recordings |
 | `armada version` / `armada --version` | Print the Armada version |
 
@@ -234,6 +254,7 @@ Examples:
 
 ```bash
 armada --lan --no-browser      # start on the LAN without opening a browser
+armada token --qr --lan        # fresh 60s login link/QR for a phone or tablet
 armada nodes --watch           # live terminal dashboard
 armada nodes --all --json      # script-friendly agent list, including dead nodes
 armada create -p ~/Projects/armada -a claude -m "review the auth module"
@@ -246,6 +267,8 @@ Output is colourised automatically on a TTY. Use `--color` to force it, or `--no
 
 ## API Endpoints
 
+All `/api/*` routes and `/metrics` require `Authorization: Bearer $(armada token)` (browsers use the dashboard cookie). `/health` is public and minimal.
+
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/tree` | Full node hierarchy |
@@ -253,7 +276,7 @@ Output is colourised automatically on a TTY. Use `--color` to force it, or `--no
 | `GET` | `/api/nodes/:id` | Node detail + reports |
 | `DELETE` | `/api/nodes/:id` | Kill node + cascades to children |
 | `POST` | `/api/nodes/:id/send` | Send command to worker |
-| `POST` | `/api/report` | Agent status report |
+| `POST` | `/api/report` | Agent status report (token required) |
 | `POST` | `/api/nodes/:id/messages` | Send message to node |
 | `GET` | `/api/nodes/:id/messages` | Read node inbox |
 | `PATCH` | `/api/messages/:id` | Acknowledge message |
@@ -263,10 +286,11 @@ Output is colourised automatically on a TTY. Use `--color` to force it, or `--no
 | `POST` | `/api/queue/:id/claim` | Claim a queue task |
 | `GET/POST/DELETE` | `/api/project-labels` | List/register/remove project folders (`POST` accepts `{"path"}`) |
 | `GET` | `/api/project-labels/discover` | Scan `project_roots` for unregistered projects |
-| `GET` | `/health` | Health check |
-| `GET` | `/metrics` | Prometheus metrics |
+| `GET` | `/api/pair-ticket` | Create a one-time dashboard login ticket |
+| `GET` | `/health` | Public liveness check (`status`, `version`) |
+| `GET` | `/metrics` | Prometheus metrics (token required) |
 
-Full API docs at `http://127.0.0.1:9100/docs` (FastAPI Swagger UI).
+Full API docs at `http://127.0.0.1:9100/docs` (FastAPI Swagger UI). Endpoints will prompt for the bearer token.
 
 ## Development
 

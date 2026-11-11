@@ -293,7 +293,7 @@ def _build_parser() -> argparse.ArgumentParser:
     glob.add_argument("--no-browser", action="store_true",
                       help="do not open the dashboard in a browser")
     glob.add_argument("--qr", action="store_true",
-                      help="show a QR code for the dashboard URL")
+                      help="print a pairing hint (use 'armada token --qr' once running)")
     glob.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
                       action="store_true",
                       help="reuse the existing auth token (do not rotate)")
@@ -318,7 +318,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-browser", action="store_true",
                    help="do not open the dashboard in a browser")
     p.add_argument("--qr", action="store_true",
-                   help="show a QR code for the dashboard URL")
+                   help="print a pairing hint (use 'armada token --qr' once running)")
     p.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
                    action="store_true", help="reuse the existing auth token")
     p.set_defaults(_handler=_cmd_start)
