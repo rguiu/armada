@@ -67,6 +67,7 @@ class TestMainDispatch:
     def test_start_dispatches_to_server(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["armada", "start"])
         with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch.object(cli, "_get_pid_from_port", return_value=None), \
              patch("armada_ai.cli._print_startup_info"), \
              patch("armada_ai.server.start_server") as mock_start, \
              patch("armada_ai.server._ensure_token"):
@@ -75,9 +76,19 @@ class TestMainDispatch:
                 daemon=True, open_browser=True, lan=False, keep_token=False
             )
 
+    def test_start_does_not_spawn_when_already_running(self, monkeypatch, capsys):
+        monkeypatch.setattr(sys, "argv", ["armada", "start"])
+        with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch.object(cli, "_get_pid_from_port", return_value=1234), \
+             patch("armada_ai.server.start_server") as mock_start:
+            cli.main()
+        mock_start.assert_not_called()
+        assert "already running" in capsys.readouterr().out.lower()
+
     def test_start_foreground(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["armada", "start", "--foreground"])
         with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch.object(cli, "_get_pid_from_port", return_value=None), \
              patch("armada_ai.cli._print_startup_info"), \
              patch("armada_ai.server.start_server") as mock_start, \
              patch("armada_ai.server._ensure_token"):

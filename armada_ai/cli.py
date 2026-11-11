@@ -161,7 +161,10 @@ def _get_pid_from_port(port: int = constants.DEFAULT_PORT) -> int | None:
     system = platform.system()
     try:
         if system == "Darwin":
-            result = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
+            result = subprocess.run(
+                ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                capture_output=True, text=True,
+            )
             if result.returncode == 0 and result.stdout.strip():
                 return int(result.stdout.strip().split("\n")[0])
         elif system == "Linux":
@@ -476,6 +479,13 @@ def _cmd_start(ns):
     if not shutil.which("tmux"):
         _print_tmux_error()
         sys.exit(1)
+    existing = _get_pid_from_port(constants.DEFAULT_PORT)
+    if existing:
+        _warn(f"Armada is already running (PID {existing}).")
+        print(f"  {_style('Dashboard:', 'dim')} http://127.0.0.1:{constants.DEFAULT_PORT}")
+        print(f"  {_style('Login:', 'dim')}     armada token --qr")
+        print(f"  {_style('Restart:', 'dim')}   armada stop && armada")
+        return
     from .server import _ensure_token, start_server
     _ensure_token(keep=True)
     _print_startup_info(lan=ns.lan, qr=ns.qr)
@@ -698,9 +708,13 @@ def _print_token(qr: bool = False, lan: bool = False):
     if qr:
         try:
             ticket = _api_get("/api/pair-ticket")["ticket"]
-        except Exception:
-            _err("Armada server is not reachable.")
-            _info("Start it first with: armada")
+        except Exception as e:
+            if getattr(e, "code", None) == 404:
+                _err("The running Armada server is an older version.")
+                _info("Restart it with: armada stop && armada")
+            else:
+                _err("Armada server is not reachable.")
+                _info("Start it first with: armada")
             sys.exit(1)
         import qrcode
         host = _lan_ip() if lan else "127.0.0.1"
