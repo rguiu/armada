@@ -23,7 +23,19 @@ _RETRY_BASE_DELAY = constants.RETRY_BASE_DELAY
 # --- Connection management ---
 
 def _ensure_dir():
-    os.makedirs(constants.DATA_DIR, exist_ok=True)
+    os.makedirs(constants.DATA_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(constants.DATA_DIR, 0o700)
+    except OSError:
+        pass
+
+
+def _secure_db_files():
+    for suffix in ("", "-wal", "-shm"):
+        try:
+            os.chmod(constants.DB_PATH + suffix, 0o600)
+        except OSError:
+            pass
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -37,6 +49,7 @@ def _get_conn() -> sqlite3.Connection:
         conn.execute("PRAGMA cache_size=-8000")
         conn.row_factory = sqlite3.Row
         _local.conn = conn
+        _secure_db_files()
     return _local.conn
 
 
@@ -152,6 +165,7 @@ def init_db():
     sync_projects_from_json()
     from .db_stats import migrate_hourly_stats
     migrate_hourly_stats()
+    _secure_db_files()
 
 
 def _migrate():
@@ -218,6 +232,7 @@ from .db_stats import (  # noqa: E402, F401
 from .db_projects import (  # noqa: E402, F401
     add_project_label,
     delete_project_label,
+    ensure_project_label,
     list_project_labels,
     get_project_label_path,
     sync_projects_from_json as _sync_projects_from_json,

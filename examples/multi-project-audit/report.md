@@ -29,7 +29,7 @@
 
 ---
 
-## 1. Armada (`/Users/armada/Projects/armadaai`)
+## 1. Armada (`~/Projects/armada`)
 
 ### [MEDIUM] Token & DB files world-readable
 - **File:** `armada_ai/infrastructure/auth_manager.py:43` — writes token with default umask, never `chmod 0o600`
@@ -80,7 +80,7 @@
 
 ---
 
-## 2. PGLease (`/Users/armada/Projects/pglease`)
+## 2. PGLease (`~/Projects/pglease`)
 
 ### [MEDIUM] GitHub Actions script injection via PR title
 - **File:** `.github/workflows/release.yml:62`
@@ -107,7 +107,7 @@
 
 ---
 
-## 3. SGLang (`/Users/armada/Projects/sglang`)
+## 3. SGLang (`~/Projects/sglang`)
 
 ### [HIGH] trust_remote_code=True hardcoded — RCE via model repos
 - **Files:**

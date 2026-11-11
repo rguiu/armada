@@ -13,7 +13,18 @@ LOG_LEVELS = ("debug", "info", "warn", "error")
 
 
 def _ensure_dir():
-    os.makedirs(LOGS_DIR, exist_ok=True)
+    os.makedirs(LOGS_DIR, mode=0o700, exist_ok=True)
+    try:
+        os.chmod(LOGS_DIR, 0o700)
+    except OSError:
+        pass
+
+
+def _secure_file(path: str):
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
 
 
 def log_event(node_name: str, event_type: str, data: dict | None = None,
@@ -34,6 +45,7 @@ def log_event(node_name: str, event_type: str, data: dict | None = None,
     with _write_lock:
         with open(log_path, "a") as f:
             f.write(line)
+        _secure_file(log_path)
 
 
 def search_logs(query: str, limit: int = 50, node_name: str | None = None) -> list[dict]:
@@ -110,6 +122,7 @@ def rotate_logs(max_size_mb: int = 50):
                 with open(filepath, "rb") as f_in:
                     with gzip.open(gz_path, "wb") as f_out:
                         f_out.writelines(f_in)
+                _secure_file(gz_path)
                 os.remove(filepath)
         except (IOError, OSError):
             pass
@@ -178,6 +191,7 @@ def log_server_start():
         with open(log_path, "a") as f:
             json.dump({"ts": time.time(), "type": "server_start", "level": "info"}, f, ensure_ascii=False)
             f.write("\n")
+        _secure_file(log_path)
 
 
 def log_server_stop():
@@ -187,6 +201,7 @@ def log_server_stop():
         with open(log_path, "a") as f:
             json.dump({"ts": time.time(), "type": "server_stop", "level": "info"}, f, ensure_ascii=False)
             f.write("\n")
+        _secure_file(log_path)
 
 
 def log_agent_output(node_name: str, content: str):

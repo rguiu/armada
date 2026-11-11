@@ -23,26 +23,28 @@ done
 echo "  Ready: $BASE"
 
 echo "=== Creating demo agents (armada project) ==="
+TOKEN=$(cat "$HOME/.armada/token")
+AUTH=(-H "Authorization: Bearer $TOKEN")
 
 # Architect: root orchestrator
-curl -sf -X POST "$BASE/api/nodes" -H "Content-Type: application/json" \
+curl -sf -X POST "$BASE/api/nodes" -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name":"Architect","project_label_id":"armada","agent_type":"bash"}' >/dev/null
 sleep 0.5
-curl -sf -X POST "$BASE/api/report" -H "Content-Type: application/json" \
+curl -sf -X POST "$BASE/api/report" -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name":"Architect","status":"active","message":"designing WebSocket tree update protocol to replace 10s polling"}' >/dev/null
 
 # Code-Reviewer: child of Architect
-curl -sf -X POST "$BASE/api/nodes" -H "Content-Type: application/json" \
+curl -sf -X POST "$BASE/api/nodes" -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name":"Code-Reviewer","parent_id":1,"project_label_id":"armada","agent_type":"bash"}' >/dev/null
 sleep 0.3
-curl -sf -X POST "$BASE/api/report" -H "Content-Type: application/json" \
+curl -sf -X POST "$BASE/api/report" -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name":"Code-Reviewer","status":"active","message":"auditing remaining innerHTML paths for XSS after SESSION_LOG fixes"}' >/dev/null
 
 # Test-Runner: child of Architect
-curl -sf -X POST "$BASE/api/nodes" -H "Content-Type: application/json" \
+curl -sf -X POST "$BASE/api/nodes" -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name":"Test-Runner","parent_id":1,"project_label_id":"armada","agent_type":"bash"}' >/dev/null
 sleep 0.3
-curl -sf -X POST "$BASE/api/report" -H "Content-Type: application/json" \
+curl -sf -X POST "$BASE/api/report" -H "Content-Type: application/json" "${AUTH[@]}" \
   -d '{"name":"Test-Runner","status":"active","message":"running integration suite against split-attach with 3 tmux sessions"}' >/dev/null
 
 echo ""

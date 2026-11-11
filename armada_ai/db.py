@@ -7,6 +7,7 @@ init_db = _db.init_db
 close_connection = _db.close_connection
 add_project_label = _db.add_project_label
 delete_project_label = _db.delete_project_label
+ensure_project_label = _db.ensure_project_label
 list_project_labels = _db.list_project_labels
 get_project_label_path = _db.get_project_label_path
 create_node = _db.create_node

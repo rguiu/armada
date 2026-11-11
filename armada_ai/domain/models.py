@@ -1,7 +1,18 @@
 from __future__ import annotations
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
+
+
+NODE_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+
+
+def validate_node_name(name: str) -> str | None:
+    """Return an error message when a node name is unsafe or too long."""
+    if not NODE_NAME_RE.fullmatch(name or ""):
+        return "Node name must be 1-64 characters: letters, digits, hyphens, underscores"
+    return None
 
 
 class AgentStatus(str, Enum):
@@ -21,8 +32,6 @@ class AgentType(str, Enum):
     BASH = "bash"
     OPENCODE = "opencode"
     CLAUDE = "claude"
-    AAP_OPENCODE = "aap_opencode"
-    AAP_CLAUDE = "aap_claude"
 
 
 @dataclass(frozen=True)
@@ -142,8 +151,10 @@ class CreateNodeRequest:
     initial_prompt: str | None = None
 
     def validate_name(self, existing_names: set[str]) -> CreateNodeRequest | str:
-        if self.name and len(self.name) > 100:
-            return "Node name must be 100 characters or fewer"
+        if self.name:
+            error = validate_node_name(self.name)
+            if error:
+                return error
         if self.name and self.name in existing_names:
             return f"Node '{self.name}' already exists"
         return self
@@ -161,6 +172,9 @@ class AgentReportRequest:
     def validate(self) -> str | None:
         if not self.name:
             return "name is required"
+        error = validate_node_name(self.name)
+        if error:
+            return error
         if self.status not in AgentStatus.valid_transitions():
             return f"Invalid status: {self.status}"
         return None

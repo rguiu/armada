@@ -51,7 +51,9 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 
 source "$VENV_DIR/bin/activate"
-"$VENV_DIR/bin/pip" install -e "$PROJECT_DIR" --quiet --index-url https://pypi.org/simple
+# uv-created venvs ship without pip
+"$VENV_DIR/bin/python3" -m pip --version >/dev/null 2>&1 || "$VENV_DIR/bin/python3" -m ensurepip --upgrade >/dev/null
+"$VENV_DIR/bin/python3" -m pip install -e "$PROJECT_DIR" --quiet --disable-pip-version-check --index-url https://pypi.org/simple
 echo "  ✓ armada-ai installed"
 
 # 3. Add to PATH

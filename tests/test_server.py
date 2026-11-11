@@ -3,7 +3,7 @@
 import tempfile
 import pytest
 import time
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from starlette.websockets import WebSocketDisconnect
 from armada_ai.constants import VERSION
 
@@ -79,6 +79,31 @@ class TestNodeCRUD:
         client.post("/api/nodes", json={"name": "dup", "project_label_id": "p", "agent_type": "bash"})
         r = client.post("/api/nodes", json={"name": "dup", "project_label_id": "p", "agent_type": "bash"})
         assert r.status_code == 409
+
+    @pytest.mark.parametrize("name", [
+        "x'; touch /tmp/pwn; echo '",
+        "../escape",
+        "name with space",
+        "a" * 65,
+    ])
+    def test_create_node_rejects_unsafe_names(self, temp_db, client, name):
+        _mkproj(temp_db, "p", "P")
+        r = client.post("/api/nodes", json={
+            "name": name, "project_label_id": "p", "agent_type": "bash",
+        })
+        assert r.status_code == 400
+
+    def test_rename_node_rejects_unsafe_name(self, temp_db, client):
+        _mkproj(temp_db, "p", "P")
+        r = client.post("/api/nodes", json={
+            "name": "safe-node", "project_label_id": "p", "agent_type": "bash",
+        })
+        node_id = r.json()["id"]
+        r = client.patch(f"/api/nodes/{node_id}", json={
+            "action": "rename", "name": "x'; touch /tmp/pwn; echo '",
+        })
+        assert r.status_code == 400
+        assert temp_db.get_node(node_id)["name"] == "safe-node"
 
     def test_get_node_detail(self, temp_db, client):
         nid = temp_db.create_node("detail", "#333")
@@ -245,12 +270,12 @@ class TestSendEndpoint:
         r = client.post(f"/api/nodes/{nid}/send", json={"command": "x"})
         assert r.status_code == 410
 
-    def test_send_window_gone(self, temp_db, client, monkeypatch):
+    def test_send_window_gone(self, temp_db, client):
         """Send to node whose tmux window no longer exists returns 410."""
         import armada_ai.server as server_mod
         nid = temp_db.create_node("gone", "#ccc")
-        monkeypatch.setattr(server_mod.tmux, "window_exists", lambda _: False)
-        r = client.post(f"/api/nodes/{nid}/send", json={"command": "x"})
+        with patch.object(server_mod.tmux, "window_exists", lambda _: False):
+            r = client.post(f"/api/nodes/{nid}/send", json={"command": "x"})
         assert r.status_code == 410
 
 
@@ -269,6 +294,48 @@ class TestProjectLabels:
         labels = client.get("/api/project-labels").json()
         assert len(labels) == 1
         assert labels[0]["id"] == "myproj"
+
+    def test_create_from_path_only(self, client, tmp_path):
+        proj = tmp_path / "demo"
+        proj.mkdir()
+        r = client.post("/api/project-labels", json={"path": str(proj)})
+        assert r.status_code == 201
+        assert r.json()["id"] == "demo"
+        assert r.json()["name"] == "demo"
+        assert r.json()["path"] == str(proj)
+
+    def test_create_same_path_twice_is_idempotent(self, client, tmp_path):
+        proj = tmp_path / "demo"
+        proj.mkdir()
+        first = client.post("/api/project-labels", json={"path": str(proj)})
+        second = client.post("/api/project-labels", json={"path": str(proj)})
+        assert first.json()["id"] == second.json()["id"]
+        assert len(client.get("/api/project-labels").json()) == 1
+
+    def test_discover_marks_registered(self, temp_db, client, tmp_path, monkeypatch):
+        from armada_ai import server as server_mod
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        (tmp_path / "plain").mkdir()
+        temp_db.add_project_label("repo", "Repo", str(repo))
+        monkeypatch.setattr(server_mod.config, "get",
+                            lambda key: [str(tmp_path)] if key == "project_roots" else None)
+
+        data = client.get("/api/project-labels/discover").json()
+        by_path = {p["path"]: p for p in data["projects"]}
+        assert by_path[str(repo)]["id"] == "repo"
+        assert str(tmp_path / "plain") not in by_path
+
+    def test_create_node_from_project_path(self, temp_db, client, tmp_path):
+        proj = tmp_path / "demo"
+        proj.mkdir()
+        r = client.post("/api/nodes", json={
+            "project_path": str(proj), "agent_type": "bash",
+        })
+        assert r.status_code == 201
+        assert r.json()["project_label_id"] == "demo"
+        assert any(lb["path"] == str(proj)
+                   for lb in client.get("/api/project-labels").json())
 
     def test_delete(self, temp_db, client):
         proj_path = tempfile.mkdtemp(prefix="armada_test_x_")
@@ -376,14 +443,13 @@ class TestRemainingEndpoints:
         r = client.get("/api/nodes/99999/terminal")
         assert r.status_code == 404
 
-    def test_terminal_view_window_gone(self, temp_db, client, monkeypatch):
+    def test_terminal_view_window_gone(self, temp_db, client):
         """Terminal view when window doesn't exist returns 410."""
         import armada_ai.server as server_mod
 
         nid = temp_db.create_node("deadwin", "#222")
-        monkeypatch.setattr(server_mod.tmux, "window_exists", lambda _: False)
-
-        r = client.get(f"/api/nodes/{nid}/terminal")
+        with patch.object(server_mod.tmux, "window_exists", lambda _: False):
+            r = client.get(f"/api/nodes/{nid}/terminal")
         assert r.status_code == 410
 
     def test_terminal_view_capture_fails(self, temp_db, client, monkeypatch):
@@ -731,11 +797,10 @@ class TestRemainingEndpoints:
         import shutil
         shutil.rmtree(d)
         install_called = []
-        monkeypatch.setattr(server_mod.tmux, "install_skills",
-                           lambda p: install_called.append(p))
-        monkeypatch.setattr(server_mod.tmux, "_deploy_claude_hooks",
-                           lambda p: None)
-        r = client.post("/api/refresh-hooks")
+        with patch.object(server_mod.tmux, "install_skills",
+                          lambda p: install_called.append(p)), \
+             patch.object(server_mod.tmux, "_deploy_claude_hooks", lambda p: None):
+            r = client.post("/api/refresh-hooks")
         assert r.status_code == 200
         data = r.json()
         assert len(data["skipped"]) == 1
@@ -843,27 +908,19 @@ class TestAuth:
         import armada_ai.server as server_mod
         monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
-        r = client.get("/api/auth/status?token=secret123")
+        r = client.get("/api/auth/status", headers={"Authorization": "Bearer secret123"})
         assert r.json()["valid"] is True
 
-    def test_auth_status_invalid(self, client, monkeypatch):
-        """Auth status with invalid token returns false."""
+    def test_auth_status_requires_auth(self, client, monkeypatch):
+        """Auth status is not a public token oracle."""
         import armada_ai.server as server_mod
         monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
         r = client.get("/api/auth/status?token=wrong")
-        assert r.json()["valid"] is False
+        assert r.status_code == 401
 
-    def test_auth_status_bearer_header(self, client, monkeypatch):
-        """Auth status via Authorization header."""
-        import armada_ai.server as server_mod
-        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
-
-        r = client.get("/api/auth/status", headers={"Authorization": "Bearer secret123"})
-        assert r.json()["valid"] is True
-
-    def test_report_exempt_from_auth(self, temp_db, client, monkeypatch):
-        """Agent report endpoint is exempt from token requirement."""
+    def test_report_requires_auth(self, temp_db, client, monkeypatch):
+        """Agent reports must present the token."""
         import armada_ai.server as server_mod
         monkeypatch.setattr(server_mod, "TOKEN", "secret123")
         temp_db.create_node("reporter", "#888")
@@ -871,16 +928,69 @@ class TestAuth:
         r = client.post("/api/report", json={
             "name": "reporter", "status": "active", "message": "working",
         })
+        assert r.status_code == 401
+
+    def test_report_with_auth(self, temp_db, client, monkeypatch):
+        """A valid token lets an agent report status."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+        temp_db.create_node("reporter", "#888")
+
+        r = client.post("/api/report", headers={"Authorization": "Bearer secret123"}, json={
+            "name": "reporter", "status": "active", "message": "working",
+        })
         assert r.status_code == 200
 
-    def test_dashboard_no_token(self, client, monkeypatch):
-        """Dashboard page loads without token."""
+    def test_dashboard_requires_auth(self, client, monkeypatch):
+        """The dashboard no longer leaks the token to unauthenticated clients."""
         import armada_ai.server as server_mod
         monkeypatch.setattr(server_mod, "TOKEN", "secret123")
 
         r = client.get("/")
+        assert r.status_code == 401
+
+    def test_dashboard_with_query_token_sets_cookie(self, anon_client, monkeypatch):
+        """A token URL logs in once and redirects to a tokenless dashboard."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = anon_client.get("/?token=secret123", follow_redirects=False)
+        assert r.status_code == 303
+        assert r.headers["location"] == "/"
+        cookie = r.headers["set-cookie"]
+        assert "armada_token=secret123" in cookie
+        assert "HttpOnly" in cookie
+        assert "SameSite=strict" in cookie
+
+        r = anon_client.get("/", cookies={"armada_token": "secret123"})
         assert r.status_code == 200
-        assert "<html" in r.text.lower()
+        assert "armada-token" not in r.text
+
+    def test_dashboard_rejects_wrong_query_token(self, anon_client, monkeypatch):
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = anon_client.get("/?token=wrong", follow_redirects=False)
+        assert r.status_code == 401
+
+    def test_pair_ticket_is_one_time(self, client, anon_client, monkeypatch):
+        """Dashboard QR pairing uses a short-lived one-time ticket."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "secret123")
+
+        r = client.get("/api/pair-ticket", headers={"Authorization": "Bearer secret123"})
+        assert r.status_code == 200
+        ticket = r.json()["ticket"]
+
+        r = anon_client.get(f"/?ticket={ticket}", follow_redirects=False)
+        assert r.status_code == 303
+        r = anon_client.get(f"/?ticket={ticket}", follow_redirects=False)
+        assert r.status_code == 401
+
+    def test_invalid_host_header_rejected(self, client):
+        """DNS-rebinding hostnames are refused."""
+        r = client.get("/api/nodes", headers={"Host": "evil.example"})
+        assert r.status_code == 400
 
     def test_ws_requires_token(self, temp_db, client, monkeypatch):
         """WebSocket without token is rejected."""
@@ -1003,13 +1113,28 @@ class TestAuth:
         r = client.get("/api/info")
         assert r.status_code == 401
 
-    def test_qr_is_auth_exempt(self, client, monkeypatch):
-        """QR endpoint is auth-exempt (generates QR from a URL)."""
+    def test_qr_requires_auth(self, client, monkeypatch):
+        """QR generation is not a public endpoint."""
         import armada_ai.server as server_mod
         monkeypatch.setattr(server_mod, "TOKEN", "wrong-token")
 
         r = client.get("/api/qr?url=http://example.com")
+        assert r.status_code == 401
+
+    def test_metrics_requires_auth(self, client, monkeypatch):
+        """Prometheus metrics require the token."""
+        import armada_ai.server as server_mod
+        monkeypatch.setattr(server_mod, "TOKEN", "wrong-token")
+
+        r = client.get("/metrics")
+        assert r.status_code == 401
+
+    def test_health_is_minimal_and_public(self, anon_client):
+        """The unauthenticated health check exposes only liveness/version."""
+        r = anon_client.get("/health")
         assert r.status_code == 200
+        assert r.json()["status"] == "ok"
+        assert "agents" not in r.json()
 
     def test_info_returns_lan_and_port(self, client):
         """Info endpoint returns LAN IP and port."""
@@ -1067,8 +1192,9 @@ class TestCLI:
         assert captured.getvalue().strip() == "my-token-123"
 
     def test_print_token_qr(self, tmp_path, monkeypatch):
-        """_print_token --qr prints URL and QR code."""
+        """_print_token --qr prints a one-time pairing URL and QR code."""
         import armada_ai.cli as cli_mod
+        from unittest.mock import patch
 
         token_file = tmp_path / "token"
         token_file.write_text("my-token-123")
@@ -1078,9 +1204,11 @@ class TestCLI:
         import sys
         captured = io.StringIO()
         monkeypatch.setattr(sys, "stdout", captured)
-        cli_mod._print_token(qr=True)
+        with patch.object(cli_mod, "_api_get", return_value={"ticket": "pair-ticket"}):
+            cli_mod._print_token(qr=True)
         output = captured.getvalue()
-        assert "http://127.0.0.1:9100?token=my-token-123" in output
+        assert "http://127.0.0.1:9100/?ticket=pair-ticket" in output
+        assert "my-token-123" not in output
         assert "█" in output
 
     def test_print_token_missing(self, tmp_path, monkeypatch):

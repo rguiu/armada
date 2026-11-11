@@ -161,7 +161,10 @@ def _get_pid_from_port(port: int = constants.DEFAULT_PORT) -> int | None:
     system = platform.system()
     try:
         if system == "Darwin":
-            result = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True)
+            result = subprocess.run(
+                ["lsof", "-nP", f"-iTCP:{port}", "-sTCP:LISTEN", "-t"],
+                capture_output=True, text=True,
+            )
             if result.returncode == 0 and result.stdout.strip():
                 return int(result.stdout.strip().split("\n")[0])
         elif system == "Linux":
@@ -293,7 +296,7 @@ def _build_parser() -> argparse.ArgumentParser:
     glob.add_argument("--no-browser", action="store_true",
                       help="do not open the dashboard in a browser")
     glob.add_argument("--qr", action="store_true",
-                      help="show a QR code for the dashboard URL")
+                      help="print a pairing hint (use 'armada token --qr' once running)")
     glob.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
                       action="store_true",
                       help="reuse the existing auth token (do not rotate)")
@@ -318,7 +321,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-browser", action="store_true",
                    help="do not open the dashboard in a browser")
     p.add_argument("--qr", action="store_true",
-                   help="show a QR code for the dashboard URL")
+                   help="print a pairing hint (use 'armada token --qr' once running)")
     p.add_argument("--keep-token", "--no-token-rotate", dest="keep_token",
                    action="store_true", help="reuse the existing auth token")
     p.set_defaults(_handler=_cmd_start)
@@ -341,11 +344,11 @@ def _build_parser() -> argparse.ArgumentParser:
     p.set_defaults(_handler=_cmd_watch)
 
     p = sub.add_parser("create", help="create a new agent node")
-    p.add_argument("-p", "--project", required=True, metavar="ID",
-                   help="project label ID (required)")
+    p.add_argument("-p", "--project", metavar="PATH_OR_ID",
+                   help="project folder or label ID (default: current directory)")
     p.add_argument("-n", "--name", help="node name (auto-generated if omitted)")
     p.add_argument("-a", "--agent", default="auto",
-                   choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
+                   choices=["auto", "opencode", "claude", "bash"],
                    help="agent type (default: auto)")
     p.add_argument("-P", "--parent", type=int, metavar="ID",
                    help="parent node ID")
@@ -365,14 +368,15 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("target", metavar="NAME_OR_ID", help="node name or numeric ID")
     p.set_defaults(_handler=_cmd_restart)
 
-    p = sub.add_parser("projects", help="manage project labels")
+    p = sub.add_parser("projects", help="manage projects")
     p.set_defaults(_handler=_cmd_projects)
     projects_sub = p.add_subparsers(dest="projects_action", metavar="ACTION")
     projects_sub.add_parser("list", help="list projects (default)")
-    pa = projects_sub.add_parser("add", help="register a project")
-    pa.add_argument("id")
-    pa.add_argument("name")
-    pa.add_argument("path")
+    projects_sub.add_parser("scan", help="find projects under project_roots")
+    pa = projects_sub.add_parser("add", help="register a project folder")
+    pa.add_argument("path", help="project directory")
+    pa.add_argument("--name", help="display name (default: folder name)")
+    pa.add_argument("--id", help="label ID (default: derived from folder name)")
     pr = projects_sub.add_parser("rm", help="remove a project")
     pr.add_argument("id")
 
@@ -475,6 +479,13 @@ def _cmd_start(ns):
     if not shutil.which("tmux"):
         _print_tmux_error()
         sys.exit(1)
+    existing = _get_pid_from_port(constants.DEFAULT_PORT)
+    if existing:
+        _warn(f"Armada is already running (PID {existing}).")
+        print(f"  {_style('Dashboard:', 'dim')} http://127.0.0.1:{constants.DEFAULT_PORT}")
+        print(f"  {_style('Login:', 'dim')}     armada token --qr")
+        print(f"  {_style('Restart:', 'dim')}   armada stop && armada")
+        return
     from .server import _ensure_token, start_server
     _ensure_token(keep=True)
     _print_startup_info(lan=ns.lan, qr=ns.qr)
@@ -506,7 +517,7 @@ def _cmd_watch(ns):
 
 
 def _cmd_create(ns):
-    subargs = ["--project", ns.project]
+    subargs = ["--project", ns.project] if ns.project else []
     if ns.name:
         subargs += ["--name", ns.name]
     if ns.agent:
@@ -537,7 +548,14 @@ def _cmd_restart(ns):
 def _cmd_projects(ns):
     action = ns.projects_action or "list"
     if action == "add":
-        _projects_cmd(["add", ns.id, ns.name, ns.path])
+        args = ["add", ns.path]
+        if ns.name:
+            args += ["--name", ns.name]
+        if ns.id:
+            args += ["--id", ns.id]
+        _projects_cmd(args)
+    elif action == "scan":
+        _projects_cmd(["scan"])
     elif action == "rm":
         _projects_cmd(["rm", ns.id])
     else:
@@ -585,7 +603,6 @@ def _cmd_agents(ns):
     for binary, label in (
         ("opencode", "OpenCode"),
         ("claude", "Claude Code"),
-        ("aap", "AAP proxy"),
         ("tmux", "tmux"),
     ):
         path = shutil.which(binary)
@@ -669,25 +686,16 @@ def _lan_ip():
 
 
 def _print_startup_info(lan: bool = False, qr: bool = False):
-    token = _read_token()
-    if not token:
-        return
-
-    local_url = f"http://127.0.0.1:9100?token={token}"
+    local_url = "http://127.0.0.1:9100"
     print(f"\n{_style('⚓ Armada is starting', 'bold', 'cyan')}")
     print(f"  {_style('Dashboard:', 'dim')} {_hyperlink(local_url)}")
+    print(f"  {_style('Login:', 'dim')}     armada token --qr")
     if lan:
         ip = _lan_ip()
-        print(f"  {_style('LAN:', 'dim')}       {_hyperlink(f'http://{ip}:9100?token={token}')}")
-    print()
-
+        print(f"  {_style('LAN:', 'dim')}       {_hyperlink(f'http://{ip}:9100')}")
     if qr:
-        import qrcode
-        url = f"http://{_lan_ip()}:9100?token={token}" if lan else local_url
-        qr_code = qrcode.QRCode()
-        qr_code.add_data(url)
-        qr_code.print_ascii()
-        print()
+        print(f"  {_style('Pair a device:', 'dim')} armada token --qr")
+    print()
 
 
 def _print_token(qr: bool = False, lan: bool = False):
@@ -698,10 +706,20 @@ def _print_token(qr: bool = False, lan: bool = False):
         sys.exit(1)
 
     if qr:
+        try:
+            ticket = _api_get("/api/pair-ticket")["ticket"]
+        except Exception as e:
+            if getattr(e, "code", None) == 404:
+                _err("The running Armada server is an older version.")
+                _info("Restart it with: armada stop && armada")
+            else:
+                _err("Armada server is not reachable.")
+                _info("Start it first with: armada")
+            sys.exit(1)
         import qrcode
         host = _lan_ip() if lan else "127.0.0.1"
-        url = f"http://{host}:9100?token={token}"
-        _header("Armada token", "scan to open the dashboard")
+        url = f"http://{host}:9100/?ticket={ticket}"
+        _header("Armada token", "scan to open the dashboard (valid for 60s)")
         print(f"  {_hyperlink(url)}")
         print()
         qr_code = qrcode.QRCode()
@@ -793,6 +811,8 @@ def _config(subargs: list[str]):
             except ValueError:
                 _err(f"Invalid float: {val_str}")
                 sys.exit(1)
+        elif isinstance(default_value, list):
+            cfg[key] = val_str.replace(",", " ").split()
         else:
             cfg[key] = val_str
         config.write_config(cfg)
@@ -851,12 +871,8 @@ def _setup_skills():
 
 def _status(json_output: bool = False):
     try:
-        import urllib.request
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{constants.DEFAULT_PORT}/health"
-        )
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
+        info = _api_get("/api/info")
+        summary = _api_get("/api/stats/summary")
     except Exception:
         if json_output:
             print(json.dumps({"status": "down"}))
@@ -867,6 +883,16 @@ def _status(json_output: bool = False):
                 file=sys.stderr,
             )
         return
+
+    data = {
+        "status": "ok",
+        "version": info.get("version", "?"),
+        "uptime": info.get("uptime", 0),
+        "agents": summary.get("total_agents", 0),
+        "active": summary.get("active", 0),
+        "pending": summary.get("pending", 0),
+        "idle": summary.get("idle", 0),
+    }
 
     if json_output:
         print(json.dumps(data, indent=2))
@@ -1276,7 +1302,7 @@ def _watch_nodes():
                 _watch_draw_nodes(tree, projects, selected, tw, has_pending, attached, _status_msg)
             else:
                 pending_names = [r["name"] for r in rows_check if r["status"] == "pending"]
-                _watch_draw_projects(projects, selected, tw, has_pending, pending_names)
+                _watch_draw_projects(projects, selected, tw, has_pending, pending_names, _status_msg)
 
             sys.stdout.flush()
 
@@ -1377,8 +1403,10 @@ def _watch_nodes():
                     selected = max(0, selected - 1)
                 elif ch == 'DOWN':
                     selected = min(len(projects) - 1, selected + 1)
-                elif ch == 'n' and projects:
-                    _watch_add_project(fd, old_settings)
+                elif ch == 'n':
+                    err = _watch_add_project(fd, old_settings)
+                    if err:
+                        _status_msg = err
                     tty.setcbreak(fd)
                 elif ch == 'd' and projects:
                     try:
@@ -1474,7 +1502,7 @@ def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=
     _watch_draw_bottom(tw, "[↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit")
 
 
-def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_names=None):
+def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_names=None, status_msg=""):
     sys.stdout.write("\033[H\033[J")
 
     nodes_tab = "\033[33m⚠ Nodes \033[0m" if has_pending else " Nodes "
@@ -1494,6 +1522,11 @@ def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_name
 
     if has_pending and pending_names:
         sys.stdout.write(f"\n\033[33m⚠ Pending: {', '.join(pending_names)}\033[0m\n")
+
+    if status_msg:
+        is_error = status_msg.startswith("Failed")
+        color = "\033[31m" if is_error else "\033[32m"
+        sys.stdout.write(f"\n{color}  {status_msg}\033[0m\n")
 
     _watch_draw_bottom(tw, "[↑↓]nav [n]ew [d]elete [tab]nodes [q]quit")
 
@@ -1612,7 +1645,7 @@ def _watch_add_node(fd, old_settings, projects):
     fields = [
         {"label": "Name", "value": "", "type": "text"},
         {"label": "Project", "value": proj_opts[0] if proj_opts else "", "type": "select", "options": proj_opts, "required": True},
-        {"label": "Agent", "value": "auto", "type": "select", "options": ["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"]},
+        {"label": "Agent", "value": "auto", "type": "select", "options": ["auto", "opencode", "claude", "bash"]},
         {"label": "Parent ID", "value": "", "type": "text"},
         {"label": "Prompt", "value": "", "type": "text"},
         {"label": "[ Save ]", "type": "button"},
@@ -1639,18 +1672,17 @@ def _watch_add_node(fd, old_settings, projects):
 
 def _watch_add_project(fd, old_settings):
     fields = [
-        {"label": "ID", "value": "", "type": "text", "required": True},
-        {"label": "Name", "value": "", "type": "text", "required": True},
         {"label": "Path", "value": "", "type": "text", "required": True},
         {"label": "[ Save ]", "type": "button"},
     ]
     result = _watch_form(fd, old_settings, "New Project", fields)
-    if not result or not result["ID"] or not result["Name"] or not result["Path"]:
-        return
+    if not result or not result["Path"]:
+        return None
     try:
-        _api_post("/api/project-labels", {"id": result["ID"], "name": result["Name"], "path": result["Path"]})
-    except Exception:
-        pass
+        _api_post("/api/project-labels", {"path": result["Path"]})
+    except Exception as e:
+        return f"Failed: {e}"
+    return None
 
 
 def _notify_desktop(title: str, message: str):
@@ -1677,9 +1709,10 @@ def _create_cmd(subargs: list[str]):
     import argparse
     p = argparse.ArgumentParser(prog="armada create", description="Create a new agent node")
     p.add_argument("--name", "-n", help="Node name (auto-generated if omitted)")
-    p.add_argument("--project", "-p", required=True, help="Project label ID (required)")
+    p.add_argument("--project", "-p",
+                   help="Project folder or label ID (default: current directory)")
     p.add_argument("--agent", "-a", default="auto",
-                   choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
+                   choices=["auto", "opencode", "claude", "bash"],
                    help="Agent type (default: auto)")
     p.add_argument("--parent", "-P", type=int, help="Parent node ID")
     p.add_argument("--prompt", "-m", help="Initial prompt to send to the agent")
@@ -1688,10 +1721,13 @@ def _create_cmd(subargs: list[str]):
     except SystemExit:
         return
 
-    body = {
-        "project_label_id": ns.project,
-        "agent_type": ns.agent,
-    }
+    body = {"agent_type": ns.agent}
+    value = ns.project or os.getcwd()
+    expanded = os.path.expanduser(value)
+    if ns.project and not os.path.isdir(expanded) and "/" not in value and "~" not in value:
+        body["project_label_id"] = value
+    else:
+        body["project_path"] = os.path.abspath(expanded)
     if ns.name:
         body["name"] = ns.name.replace(".", "-")
     if ns.parent:
@@ -1716,17 +1752,37 @@ def _create_cmd(subargs: list[str]):
 
 def _projects_cmd(subargs: list[str]):
     if subargs and subargs[0] == "add":
-        if len(subargs) < 4:
-            print("Usage: armada projects add <id> <name> <path>")
-            sys.exit(1)
+        parser = argparse.ArgumentParser(prog="armada projects add", add_help=False)
+        parser.add_argument("path")
+        parser.add_argument("--name")
+        parser.add_argument("--id")
+        ns, _ = parser.parse_known_args(subargs[1:])
+        body = {"path": ns.path}
+        if ns.name:
+            body["name"] = ns.name
+        if ns.id:
+            body["id"] = ns.id
         try:
-            _api_post("/api/project-labels", {
-                "id": subargs[1], "name": subargs[2], "path": subargs[3],
-            })
-            _ok(f"Added project {subargs[1]}")
+            label = _api_post("/api/project-labels", body)
+            _ok(f"Added project {label.get('id') or body.get('id') or body['path']}")
         except Exception as e:
             _err(f"Failed: {e}")
             sys.exit(1)
+        return
+
+    if subargs and subargs[0] == "scan":
+        try:
+            data = _api_get("/api/project-labels/discover")
+        except Exception as e:
+            _err(f"Failed: {e}")
+            sys.exit(1)
+        found = [p for p in data.get("projects", []) if not p.get("id")]
+        _header("Discovered", f"{len(found)} not registered")
+        if not found:
+            print(f"  {_style('Nothing new under ' + ', '.join(data.get('roots', [])), 'dim')}")
+            return
+        _table(["NAME", "PATH"], [[p["name"], _short_path(p["path"])] for p in found])
+        print(f"  Add one with: {_style('armada projects add <path>', 'bold')}")
         return
 
     if subargs and subargs[0] == "rm":
@@ -1757,7 +1813,7 @@ def _projects_cmd(subargs: list[str]):
     _header("Projects", f"{len(labels)} registered")
     if not labels:
         print(f"  {_style('No projects.', 'dim')}")
-        print(f"  Add one with: {_style('armada projects add <id> <name> <path>', 'bold')}")
+        print(f"  Add one with: {_style('armada projects add <path>', 'bold')}")
         return
 
     _table(

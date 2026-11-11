@@ -10,13 +10,15 @@ import subprocess
 import threading
 import re
 import json
+import ipaddress
+import secrets
 import asyncio
 import time as _time
 from datetime import datetime as _datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
@@ -27,13 +29,15 @@ from . import metrics
 from . import naming
 from .infrastructure import database as db
 from . import tmux as tmux
-from .infrastructure.auth_manager import TokenManager, AuthExemptPaths
+from .infrastructure.auth_manager import TokenManager, AuthExemptPaths, COOKIE_NAME
 from .infrastructure import deployment
 from .project_explorer import (
     list_project_skills, list_project_plugins, list_project_hooks,
-    get_project_config, get_project_git_info,
+    get_project_config, get_project_git_info, discover_projects,
 )
-from .domain.models import AgentStatus, CreateNodeRequest, AgentReportRequest, Node
+from .domain.models import (
+    AgentStatus, CreateNodeRequest, AgentReportRequest, Node, validate_node_name,
+)
 from .transport.middleware import _CSP_HEADER
 from .transport.static_assets import manifest_route, service_worker_route, app_icon_route
 
@@ -61,6 +65,27 @@ _ws_clients: set[WebSocket] = set()
 _restart_lock = threading.Lock()
 _restarting_nodes: set[str] = set()
 _create_lock: asyncio.Lock | None = None
+
+_PAIR_TTL = 60
+_pair_tickets: dict[str, float] = {}
+_pair_lock = threading.Lock()
+
+
+def _create_pair_ticket() -> str:
+    ticket = secrets.token_urlsafe(24)
+    now = _time.time()
+    with _pair_lock:
+        for key, expires in list(_pair_tickets.items()):
+            if expires < now:
+                del _pair_tickets[key]
+        _pair_tickets[ticket] = now + _PAIR_TTL
+    return ticket
+
+
+def _consume_pair_ticket(ticket: str) -> bool:
+    with _pair_lock:
+        expires = _pair_tickets.pop(ticket, None)
+    return bool(expires and expires >= _time.time())
 
 
 # --- WebSocket broadcast ---
@@ -119,12 +144,39 @@ def _lan_ip() -> str:
         return "127.0.0.1"
 
 
+def _valid_token(token: str) -> bool:
+    return bool(token and TOKEN and secrets.compare_digest(token, TOKEN))
+
+
 def _check_token(request: Request) -> bool:
-    token = TokenManager.extract_from_request(request)
-    return bool(token and token == TOKEN)
+    return _valid_token(TokenManager.extract_from_request(request))
+
+
+def _host_allowed(value: str) -> bool:
+    """Allow loopback, LAN IPs, mDNS names, and the test client; block DNS-rebinding names."""
+    host = (value or "").strip().lower()
+    if host.startswith("["):
+        host = host[1:host.find("]")] if "]" in host else host[1:]
+    elif ":" in host:
+        host = host.rsplit(":", 1)[0]
+    if host in ("localhost", "testserver") or host.endswith(".local"):
+        return True
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
 
 
 # --- Middleware ---
+
+
+@app.middleware("http")
+async def host_middleware(request: Request, call_next):
+    if not _host_allowed(request.headers.get("host", "")):
+        logs.log_http_error(request.method, request.url.path, 400, "invalid host")
+        return JSONResponse({"detail": "Invalid Host header"}, status_code=400)
+    return await call_next(request)
 
 
 @app.middleware("http")
@@ -138,8 +190,8 @@ async def auth_middleware(request: Request, call_next):
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
         return await call_next(request)
 
-    if (path.startswith("/api/") and path not in AuthExemptPaths.EXEMPT
-            and not path.endswith("/ws")):
+    if (path.startswith("/api/") or path == "/metrics") and path not in AuthExemptPaths.EXEMPT \
+            and not path.endswith("/ws"):
         if not _check_token(request):
             logs.log_http_error(request.method, path, 401, "missing or invalid token")
             return JSONResponse({"detail": "Unauthorized"}, status_code=401)
@@ -364,14 +416,35 @@ def app_icon():
 # --- Dashboard ---
 
 @app.get("/", response_class=HTMLResponse)
-def dashboard_page():
+def dashboard_page(request: Request):
+    query_token = request.query_params.get("token", "")
+    ticket = request.query_params.get("ticket", "")
+
+    if query_token or ticket:
+        valid = (_valid_token(query_token) if query_token
+                 else _consume_pair_ticket(ticket))
+        if not valid:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+        response = RedirectResponse(url="/", status_code=303)
+        response.set_cookie(
+            COOKIE_NAME, TOKEN, max_age=7 * 86400,
+            httponly=True, samesite="strict",
+            secure=request.url.scheme == "https", path="/",
+        )
+        return response
+
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
     html_path = TEMPLATE_DIR / "index.html"
     if html_path.exists():
-        html = html_path.read_text()
-        meta = f'<meta name="armada-token" content="{TOKEN}">'
-        html = html.replace("<head>", "<head>\n" + meta, 1)
-        return html
+        return html_path.read_text()
     return HTMLResponse("<h1>Dashboard not found</h1>")
+
+
+@app.get("/api/pair-ticket")
+def pair_ticket():
+    return JSONResponse({"ticket": _create_pair_ticket(), "expires_in": _PAIR_TTL})
 
 
 # --- Tree & Nodes ---
@@ -385,7 +458,7 @@ def get_tree(hide_dead: bool = False):
 async def tree_ws(websocket: WebSocket):
     client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
     token = TokenManager.extract_from_websocket(websocket)
-    if token != TOKEN:
+    if not _valid_token(token):
         logs.log_ws_disconnect(client, "/api/ws", "bad_token")
         await websocket.close(code=4001)
         return
@@ -459,16 +532,27 @@ def get_children_output(node_id: int):
 @app.post("/api/nodes")
 async def create_node(request: Request):
     body = await request.json()
+    project_label_id = body.get("project_label_id") or None
+    project_path = (body.get("project_path") or "").strip()
+
+    if project_path:
+        project_path = os.path.abspath(os.path.expanduser(project_path))
+        if not os.path.isdir(project_path):
+            raise HTTPException(status_code=400,
+                detail=f"Project path does not exist: {project_path}")
+        label = await asyncio.to_thread(db.ensure_project_label, project_path)
+        project_label_id = label.id
+
     req = CreateNodeRequest(
-        name=body.get("name") or None,
-        project_label_id=body.get("project_label_id") or None,
+        name=(body.get("name") or "").replace(".", "-") or None,
+        project_label_id=project_label_id,
         agent_type=body.get("agent_type", "auto"),
         parent_id=body.get("parent_id") or None,
         initial_prompt=(body.get("initial_prompt") or "").strip() or None,
     )
 
     if not req.project_label_id:
-        raise HTTPException(status_code=400, detail="A project must be selected")
+        raise HTTPException(status_code=400, detail="A project path or label is required")
 
     global _create_lock
     if _create_lock is None:
@@ -482,9 +566,11 @@ async def create_node(request: Request):
             raise HTTPException(status_code=400, detail=validation_error)
 
         colour = naming.next_colour(await asyncio.to_thread(db.active_colours))
-        agent_name = req.name or naming.generate_sequential_name(
-            req.project_label_id, existing_names)
-        agent_name = agent_name.replace(".", "-")
+        prefix = re.sub(r"[^A-Za-z0-9_-]+", "-", req.project_label_id).strip("-") or "node"
+        agent_name = req.name or naming.generate_sequential_name(prefix, existing_names)
+        name_error = validate_node_name(agent_name)
+        if name_error:
+            raise HTTPException(status_code=400, detail=name_error)
 
     path = await asyncio.to_thread(db.get_project_label_path, req.project_label_id)
     if not path:
@@ -533,7 +619,7 @@ async def create_node(request: Request):
     metrics.counter_inc("armada_nodes_created_total")
 
     if req.initial_prompt:
-        delay = 8.0 if req.agent_type in ("opencode", "claude", "aap_opencode", "aap_claude") else 3.0
+        delay = 8.0 if req.agent_type in ("opencode", "claude") else 3.0
         tmux.send_initial_prompt(agent_name, req.initial_prompt, delay=delay)
 
     node = await asyncio.to_thread(db.get_node, node_id)
@@ -639,9 +725,12 @@ async def patch_node(node_id: int, request: Request):
         await _broadcast_tree()
         return JSONResponse({"ok": True})
     if action == "rename":
-        new_name = body.get("name", "").strip()
+        new_name = body.get("name", "").strip().replace(".", "-")
         if not new_name:
             raise HTTPException(status_code=400, detail="name is required")
+        name_error = validate_node_name(new_name)
+        if name_error:
+            raise HTTPException(status_code=400, detail=name_error)
         existing = await asyncio.to_thread(db.existing_names)
         if new_name in existing:
             raise HTTPException(status_code=409, detail=f"Node '{new_name}' already exists")
@@ -711,7 +800,7 @@ def terminal_view(node_id: int):
 async def terminal_ws(websocket: WebSocket, node_id: int):
     client = f"{websocket.client.host}:{websocket.client.port}" if websocket.client else "unknown"
     token = TokenManager.extract_from_websocket(websocket)
-    if token != TOKEN:
+    if not _valid_token(token):
         logs.log_ws_disconnect(client, f"/api/nodes/{node_id}/ws", "bad_token")
         await websocket.close(code=4001)
         return
@@ -962,21 +1051,39 @@ def list_project_labels():
 @app.post("/api/project-labels")
 async def create_project_label(request: Request):
     body = await request.json()
-    label_id = body.get("id", "").strip()
-    name = body.get("name", "").strip()
-    path = body.get("path", "").strip()
+    label_id = (body.get("id") or "").strip()
+    name = (body.get("name") or "").strip()
+    path = (body.get("path") or "").strip()
 
-    if not label_id or not name:
-        raise HTTPException(status_code=400, detail="id and name are required")
-    if not path:
+    # Legacy clients sent id/name with no path; they meant the server's cwd.
+    if not path and (label_id or name):
         path = os.getcwd()
+    if not path:
+        raise HTTPException(status_code=400, detail="path is required")
 
     try:
-        db.add_project_label(label_id, name, os.path.abspath(path))
+        label = await asyncio.to_thread(
+            db.ensure_project_label, path, name or None, label_id or None)
     except ValueError as e:
         raise HTTPException(status_code=409, detail=str(e))
 
-    return JSONResponse({"ok": True}, status_code=201)
+    return JSONResponse(
+        {"id": label.id, "name": label.name, "path": label.path}, status_code=201)
+
+
+@app.get("/api/project-labels/discover")
+def discover_project_labels():
+    roots = config.get("project_roots") or []
+    registered = {lb.path: lb for lb in db.list_project_labels()}
+    projects = []
+    for item in discover_projects(roots):
+        label = registered.get(item["path"])
+        projects.append({
+            "name": label.name if label else item["name"],
+            "path": item["path"],
+            "id": label.id if label else None,
+        })
+    return JSONResponse({"roots": roots, "projects": projects})
 
 
 @app.delete("/api/project-labels/{label_id}")
@@ -1017,8 +1124,6 @@ def available_agent_types():
     types = [
         {"id": "opencode", "label": "Open Code", "available": shutil.which("opencode") is not None},
         {"id": "claude", "label": "Claude Code", "available": shutil.which("claude") is not None},
-        {"id": "aap_opencode", "label": "AAP + Open Code", "available": shutil.which("aap") is not None and shutil.which("opencode") is not None},
-        {"id": "aap_claude", "label": "AAP + Claude Code", "available": shutil.which("aap") is not None and shutil.which("claude") is not None},
         {"id": "bash", "label": "Bash", "available": True},
     ]
     return JSONResponse(types)
@@ -1458,22 +1563,7 @@ def server_info():
 
 @app.get("/health")
 def health_check():
-    uptime_seconds = _time.time() - SERVER_START_TS if SERVER_START_TS else 0
-    metrics.gauge_set("armada_uptime_seconds", uptime_seconds)
-    nodes = db.get_all_nodes(include_dead=False)
-    active = sum(1 for n in nodes if n.status == "active")
-    pending = sum(1 for n in nodes if n.status == "pending")
-    idle = sum(1 for n in nodes if n.status == "idle")
-    metrics.gauge_set("armada_agents", active, ("active",))
-    metrics.gauge_set("armada_agents", pending, ("pending",))
-    metrics.gauge_set("armada_agents", idle, ("idle",))
-    return JSONResponse({
-        "status": "ok",
-        "agents": len(nodes),
-        "active": active, "pending": pending, "idle": idle,
-        "uptime": round(uptime_seconds, 1),
-        "version": constants.VERSION,
-    })
+    return JSONResponse({"status": "ok", "version": constants.VERSION})
 
 
 @app.get("/metrics")
@@ -1521,7 +1611,7 @@ def qr_code(url: str = ""):
 def auth_status(request: Request):
     token = TokenManager.extract_from_request(request)
     return JSONResponse({
-        "valid": bool(token and token == TOKEN),
+        "valid": _valid_token(token),
         "has_token": bool(TOKEN),
         "server_alive": True,
         "uptime": round(_time.time() - SERVER_START_TS, 1) if SERVER_START_TS else 0,
@@ -1534,9 +1624,13 @@ PID_FILE = constants.PID_FILE
 
 
 def _write_pid():
-    os.makedirs(os.path.dirname(PID_FILE), exist_ok=True)
+    os.makedirs(os.path.dirname(PID_FILE), mode=0o700, exist_ok=True)
     with open(PID_FILE, "w") as f:
         f.write(str(os.getpid()))
+    try:
+        os.chmod(PID_FILE, 0o600)
+    except OSError:
+        pass
 
 
 def _remove_pid():
@@ -1553,7 +1647,7 @@ def _daemonize():
     if os.fork() > 0:
         sys.exit(0)
     os.chdir("/")
-    os.umask(0)
+    os.umask(0o077)
     devnull = os.open(os.devnull, os.O_RDWR)
     os.dup2(devnull, 0)
     os.dup2(devnull, 1)
@@ -1574,7 +1668,12 @@ def start_server(daemon: bool = True, open_browser: bool = True,
 
     if open_browser and not lan:
         import webbrowser
-        threading.Timer(1.5, lambda: webbrowser.open(f"http://{host}:{PORT}")).start()
+        threading.Timer(
+            1.5,
+            lambda: webbrowser.open(
+                f"http://{host}:{PORT}/?ticket={_create_pair_ticket()}"
+            ),
+        ).start()
 
     try:
         uvicorn.run(app, host=host, port=PORT, log_level="warning")

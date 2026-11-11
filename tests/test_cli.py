@@ -67,6 +67,7 @@ class TestMainDispatch:
     def test_start_dispatches_to_server(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["armada", "start"])
         with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch.object(cli, "_get_pid_from_port", return_value=None), \
              patch("armada_ai.cli._print_startup_info"), \
              patch("armada_ai.server.start_server") as mock_start, \
              patch("armada_ai.server._ensure_token"):
@@ -75,9 +76,19 @@ class TestMainDispatch:
                 daemon=True, open_browser=True, lan=False, keep_token=False
             )
 
+    def test_start_does_not_spawn_when_already_running(self, monkeypatch, capsys):
+        monkeypatch.setattr(sys, "argv", ["armada", "start"])
+        with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch.object(cli, "_get_pid_from_port", return_value=1234), \
+             patch("armada_ai.server.start_server") as mock_start:
+            cli.main()
+        mock_start.assert_not_called()
+        assert "already running" in capsys.readouterr().out.lower()
+
     def test_start_foreground(self, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["armada", "start", "--foreground"])
         with patch("shutil.which", return_value="/usr/bin/tmux"), \
+             patch.object(cli, "_get_pid_from_port", return_value=None), \
              patch("armada_ai.cli._print_startup_info"), \
              patch("armada_ai.server.start_server") as mock_start, \
              patch("armada_ai.server._ensure_token"):
@@ -130,22 +141,19 @@ class TestMainDispatch:
 
 
 class TestStatus:
-    """Tests for the _status command that hits /health."""
+    """Tests for the _status command."""
+
+    @staticmethod
+    def _fake_api(info, summary):
+        def _api_get(path):
+            return info if path == "/api/info" else summary
+        return _api_get
 
     def test_status_running(self, capsys):
-        health_data = json.dumps({
-            "version": "0.2.0",
-            "uptime": 123.4,
-            "agents": 5,
-            "active": 3,
-            "pending": 1,
-            "idle": 1,
-        }).encode()
+        info = {"version": "0.2.0", "uptime": 123.4}
+        summary = {"total_agents": 5, "active": 3, "pending": 1, "idle": 1}
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = health_data
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch.object(cli, "_api_get", side_effect=self._fake_api(info, summary)):
             cli._status()
 
         out = capsys.readouterr().out
@@ -155,26 +163,17 @@ class TestStatus:
         assert "Agents: 5" in out
 
     def test_status_connection_refused(self, capsys):
-        with patch("urllib.request.urlopen", side_effect=ConnectionRefusedError("refused")):
+        with patch.object(cli, "_api_get", side_effect=ConnectionRefusedError("refused")):
             cli._status()
 
         err = capsys.readouterr().err
         assert "not reachable" in err
 
     def test_status_json(self, capsys):
-        health_data = json.dumps({
-            "version": "0.4.0",
-            "uptime": 12.0,
-            "agents": 3,
-            "active": 1,
-            "pending": 1,
-            "idle": 1,
-        }).encode()
+        info = {"version": "0.4.0", "uptime": 12.0}
+        summary = {"total_agents": 3, "active": 1, "pending": 1, "idle": 1}
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = health_data
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch.object(cli, "_api_get", side_effect=self._fake_api(info, summary)):
             cli._status(json_output=True)
 
         data = json.loads(capsys.readouterr().out)
@@ -182,7 +181,7 @@ class TestStatus:
         assert data["version"] == "0.4.0"
 
     def test_status_json_down(self, capsys):
-        with patch("urllib.request.urlopen", side_effect=ConnectionRefusedError("refused")):
+        with patch.object(cli, "_api_get", side_effect=ConnectionRefusedError("refused")):
             cli._status(json_output=True)
 
         data = json.loads(capsys.readouterr().out)
@@ -293,13 +292,15 @@ class TestProjectsCmd:
         assert "proj-2" in out
 
     def test_add_project(self, capsys):
-        """Add a project via CLI."""
+        """Add a project via CLI, with optional id/name overrides."""
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({"ok": True}).encode()
+        mock_resp.read.return_value = json.dumps({"id": "my-proj"}).encode()
 
         with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen, \
              patch.object(cli, "_read_token", return_value="test-token"):
-            cli._projects_cmd(["add", "my-proj", "My Project", "/tmp/path"])
+            cli._projects_cmd([
+                "add", "/tmp/path", "--name", "My Project", "--id", "my-proj",
+            ])
 
         out = capsys.readouterr().out
         assert "Added project my-proj" in out
@@ -312,14 +313,46 @@ class TestProjectsCmd:
         assert body["name"] == "My Project"
         assert body["path"] == "/tmp/path"
 
-    def test_add_project_missing_args(self, capsys):
-        """Add with insufficient arguments prints usage and exits."""
-        with pytest.raises(SystemExit) as exc_info:
-            cli._projects_cmd(["add", "only-id"])
-        assert exc_info.value.code == 1
+    def test_add_project_by_path(self, capsys):
+        """A bare path is enough; the server derives id and name."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(
+            {"id": "my-project", "name": "my-project", "path": "/tmp/my-project"}
+        ).encode()
+
+        with patch("urllib.request.urlopen", return_value=mock_resp) as mock_urlopen, \
+             patch.object(cli, "_read_token", return_value="test-token"):
+            cli._projects_cmd(["add", "/tmp/my-project"])
 
         out = capsys.readouterr().out
-        assert "Usage:" in out
+        assert "Added project my-project" in out
+
+        req = mock_urlopen.call_args[0][0]
+        assert json.loads(req.data) == {"path": "/tmp/my-project"}
+
+    def test_add_project_missing_args(self, capsys):
+        """Add with no path prints usage and exits."""
+        with pytest.raises(SystemExit):
+            cli._projects_cmd(["add"])
+
+    def test_scan_lists_unregistered(self, capsys):
+        """Scan only shows discovered folders that are not registered yet."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "roots": ["/tmp"],
+            "projects": [
+                {"name": "new", "path": "/tmp/new", "id": None},
+                {"name": "old", "path": "/tmp/old", "id": "old"},
+            ],
+        }).encode()
+
+        with patch("urllib.request.urlopen", return_value=mock_resp), \
+             patch.object(cli, "_read_token", return_value="test-token"):
+            cli._projects_cmd(["scan"])
+
+        out = capsys.readouterr().out
+        assert "new" in out
+        assert "old" not in out
 
     def test_remove_project(self, capsys):
         """Remove a project via CLI."""
@@ -358,6 +391,36 @@ class TestProjectsCmd:
 
         err = capsys.readouterr().err
         assert "Failed" in err
+
+
+class TestWatchAddProject:
+    """Tests for the Projects tab's [n]ew-project form."""
+
+    def test_path_only_posts_path(self):
+        with patch.object(cli, "_watch_form", return_value={"Path": "/tmp/proj"}), \
+             patch.object(cli, "_api_post") as mock_post:
+            err = cli._watch_add_project(None, None)
+        assert err is None
+        mock_post.assert_called_once_with("/api/project-labels", {"path": "/tmp/proj"})
+
+    def test_form_asks_only_for_path(self):
+        with patch.object(cli, "_watch_form", return_value=None) as mock_form, \
+             patch.object(cli, "_api_post"):
+            cli._watch_add_project(None, None)
+        fields = mock_form.call_args[0][3]
+        assert [f["label"] for f in fields if f.get("type") != "button"] == ["Path"]
+
+    def test_missing_path_does_nothing(self):
+        with patch.object(cli, "_watch_form", return_value={"Path": ""}), \
+             patch.object(cli, "_api_post") as mock_post:
+            assert cli._watch_add_project(None, None) is None
+        mock_post.assert_not_called()
+
+    def test_api_error_is_reported(self):
+        with patch.object(cli, "_watch_form", return_value={"Path": "/tmp/proj"}), \
+             patch.object(cli, "_api_post", side_effect=OSError("boom")):
+            err = cli._watch_add_project(None, None)
+        assert err is not None and err.startswith("Failed")
 
 
 class TestStyle:

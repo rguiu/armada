@@ -617,6 +617,7 @@ a { color: var(--accent); }
       <span class="section-title">Projects</span>
       <div style="display:flex;gap:4px">
         <button class="section-add" onclick="refreshHooks()" title="Re-deploy hooks & skills to all projects">Sync</button>
+        <button class="section-add" onclick="scanProjects()" title="Find projects under configured roots">Scan</button>
         <button class="section-add" onclick="openModal('label-modal')" title="Add project">+ Add</button>
         <button class="section-add" onclick="toggleProjects()" id="proj-toggle">&#9660;</button>
       </div>
@@ -693,8 +694,6 @@ a { color: var(--accent); }
     <select id="node-agent">
       <option value="opencode">Open Code</option>
       <option value="claude">Claude Code</option>
-      <option value="aap_opencode">AAP + Open Code</option>
-      <option value="aap_claude">AAP + Claude Code</option>
       <option value="bash">Bash</option>
     </select>
     <label>Initial Prompt (optional)</label>
@@ -710,13 +709,11 @@ a { color: var(--accent); }
 <!-- ── Modal Overlays ── -->
 <div class="modal-overlay" id="label-modal">
   <div class="modal">
-    <h3>New Project Label</h3>
-    <label>ID (slug)</label>
-    <input type="text" id="label-id" placeholder="my-project">
-    <label>Name</label>
-    <input type="text" id="label-name" placeholder="My Project">
-    <label>Path (leave blank for current dir)</label>
-    <input type="text" id="label-path" placeholder="/Users/...">
+    <h3>Add Project</h3>
+    <label>Folder path</label>
+    <input type="text" id="label-path" placeholder="/Users/.../my-project">
+    <label>Name (optional)</label>
+    <input type="text" id="label-name" placeholder="Defaults to folder name">
     <div class="modal-actions">
       <button class="btn btn-outline" onclick="closeModal('label-modal')">Cancel</button>
       <button class="btn btn-primary" onclick="createLabel()">Create</button>
@@ -855,41 +852,17 @@ let _reconnectAttempt = 0;
 let _reconnectTimer = null;
 let _reconnectCountdown = null;
 
-/* ── Auth ── */
-let AUTH_TOKEN = '';
-
-(function initAuth() {
-  // Prefer meta tag (embedded by server), then URL param (legacy), then sessionStorage
-  const metaToken = document.querySelector('meta[name="armada-token"]');
-  if (metaToken) {
-    AUTH_TOKEN = metaToken.content;
-    sessionStorage.setItem('armada_token', AUTH_TOKEN);
-  } else {
-    const params = new URLSearchParams(location.search);
-    const urlToken = params.get('token');
-    if (urlToken) {
-      sessionStorage.setItem('armada_token', urlToken);
-      history.replaceState({}, '', location.pathname);
-      AUTH_TOKEN = urlToken;
-    } else {
-      AUTH_TOKEN = sessionStorage.getItem('armada_token') || '';
-    }
-  }
-})();
+/* ── Auth: the server sets an HttpOnly cookie on first login ── */
 
 async function api(url, opts = {}) {
   opts.headers = opts.headers || {};
-  if (AUTH_TOKEN) {
-    opts.headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
-  }
   if (opts.body && typeof opts.body === 'string') {
     opts.headers['Content-Type'] = 'application/json';
   }
   const res = await fetch(url, opts);
   if (!res.ok) {
     if (res.status === 401) {
-      sessionStorage.removeItem('armada_token');
-      AUTH_TOKEN = '';
+      toast('Session expired — reopen the dashboard with `armada token --qr`', true);
     }
     const err = await res.json().catch(() => ({detail: res.statusText}));
     clientLog('warn', 'API ' + (opts.method || 'GET') + ' ' + url + ' -> ' + res.status + ': ' + (err.detail || ''));
@@ -1192,7 +1165,7 @@ async function showProjectOverview(labelId) {
         <div class="proj-node-item" onclick="selectNodeById(${n.id})">
           <span class="dot" style="background:${n.colour || '#8b949e'}"></span>
           <span class="name">${esc(n.name)}</span>
-          <span class="badge ${n.status === 'active' ? 'active' : n.status === 'pending' ? 'pending' : n.status === 'error' ? 'error' : ''}">${n.status}</span>
+          <span class="badge ${n.status === 'active' ? 'active' : n.status === 'pending' ? 'pending' : n.status === 'error' ? 'error' : ''}">${esc(n.status)}</span>
           <span class="msg">${esc(n.latest_message || '')}</span>
           ${n.total_cost > 0 ? `<span class="cost">$${n.total_cost.toFixed(4)}</span>` : ''}
           <span style="font-size:10px;color:#484f58">${esc(n.agent_type)}</span>
@@ -1255,7 +1228,7 @@ async function loadNodeDetail(nodeId) {
     : n.status === 'dead' ? 'status-dead' : 'status-idle';
 
   document.getElementById('main-title').innerHTML =
-    `<span class="dot" style="background:${n.colour}"></span>${esc(n.name)} <span class="status-badge ${statusCls}">${n.status}</span>`;
+    `<span class="dot" style="background:${esc(n.colour)}"></span>${esc(n.name)} <span class="status-badge ${statusCls}">${esc(n.status)}</span>`;
 
   let metaHtml = `<span class="meta-item"><span>Agent:</span> ${esc(n.agent_type)}</span>`;
   if (n.project_label_name) metaHtml += `<span class="meta-item"><span>Project:</span> ${esc(n.project_label_name)}</span>`;
@@ -1290,7 +1263,7 @@ async function loadNodeDetail(nodeId) {
     reportsHtml = data.reports.map(r => `
       <div class="report-row">
         <span class="report-time">${timeAgo(r.timestamp)}</span>
-        <span class="badge ${r.status === 'active' ? 'active' : r.status === 'pending' ? 'pending' : ''}">${r.status}</span>
+        <span class="badge ${r.status === 'active' ? 'active' : r.status === 'pending' ? 'pending' : ''}">${esc(r.status)}</span>
         <span class="report-msg">${esc(r.message || '--')}</span>
       </div>
     `).join('');
@@ -1356,9 +1329,9 @@ async function loadChildrenOutput(nodeId) {
     container.innerHTML = data.map(child => `
       <div style="margin:4px 0;padding:8px;background:var(--bg);border-radius:4px;border:1px solid var(--border)">
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-          <span class="dot" style="width:6px;height:6px;border-radius:50%;background:${child.colour};flex-shrink:0"></span>
+          <span class="dot" style="width:6px;height:6px;border-radius:50%;background:${esc(child.colour)};flex-shrink:0"></span>
           <span style="font-size:11px;font-weight:600;color:var(--text);cursor:pointer" onclick="selectNodeById(${child.id})">${esc(child.name)}</span>
-          <span class="badge ${child.status === 'active' ? 'active' : ''}">${child.status}</span>
+          <span class="badge ${child.status === 'active' ? 'active' : ''}">${esc(child.status)}</span>
         </div>
         <pre style="font-size:10px;color:var(--text-muted);margin:0;white-space:pre-wrap;word-break:break-word;max-height:200px;overflow-y:auto;font-family:Menlo,Monaco,monospace">${esc(child.content || '(no output)')}</pre>
       </div>
@@ -1470,7 +1443,7 @@ async function openTerminal(id) {
   xterm.writeln('connecting...');
   xterm.focus();
 
-  const wsUrl = location.origin.replace(/^http/, 'ws') + '/api/nodes/' + id + '/ws?token=' + AUTH_TOKEN;
+  const wsUrl = location.origin.replace(/^http/, 'ws') + '/api/nodes/' + id + '/ws';
   termWs = new WebSocket(wsUrl);
 
   termWs.onopen = () => {
@@ -1710,20 +1683,53 @@ async function createNode() {
 
 /* ── Create Label ── */
 async function createLabel() {
-  const id = document.getElementById('label-id').value;
-  const name = document.getElementById('label-name').value;
-  const path = document.getElementById('label-path').value;
+  const path = document.getElementById('label-path').value.trim();
+  const name = document.getElementById('label-name').value.trim();
 
-  if (!id || !name) return alert('ID and Name are required');
+  if (!path) return alert('Folder path is required');
 
+  const body = {path};
+  if (name) body.name = name;
   await api('/api/project-labels', {
     method: 'POST',
     headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({id, name, path})
+    body: JSON.stringify(body)
   });
   closeModal('label-modal');
+  document.getElementById('label-path').value = '';
+  document.getElementById('label-name').value = '';
   refreshLabels();
   refreshNodeModalDropdowns();
+}
+
+let discoveredProjects = [];
+
+async function scanProjects() {
+  try {
+    const data = await api('/api/project-labels/discover');
+    discoveredProjects = (data.projects || []).filter(p => !p.id);
+    await refreshLabels();
+    toast(discoveredProjects.length
+      ? discoveredProjects.length + ' project(s) found'
+      : 'No new projects found');
+  } catch(e) {
+    toast('Scan failed: ' + e.message, true);
+  }
+}
+
+async function addDiscovered(path) {
+  try {
+    await api('/api/project-labels', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({path})
+    });
+    discoveredProjects = discoveredProjects.filter(p => p.path !== path);
+    await refreshLabels();
+    await refreshNodeModalDropdowns();
+  } catch(e) {
+    toast('Add failed: ' + e.message, true);
+  }
 }
 
 async function deleteLabel(id) {
@@ -1795,16 +1801,30 @@ async function refreshLabels() {
     const data = await api('/api/project-labels');
     const el = document.getElementById('labels-list');
     if (!el) { console.error('labels-list element not found'); return; }
-    if (!data || !data.length) {
-      el.innerHTML = '<div class="label-item" style="color:#484f58">No labels</div>';
-      return;
-    }
-    el.innerHTML = data.map(l => `
+    const registered = data || [];
+    const known = new Set(registered.map(l => l.path));
+    const discovered = discoveredProjects.filter(p => !known.has(p.path));
+
+    let html = registered.map(l => `
       <div class="label-item" onclick="showProjectOverview('${esc(l.id)}')" title="View project overview">
         <div><span>${esc(l.name)}</span> <span class="label-path">${esc(l.path)}</span></div>
         <span class="label-del" onclick="event.stopPropagation();deleteLabel('${esc(l.id)}')">x</span>
       </div>
     `).join('');
+
+    if (discovered.length) {
+      html += `<div class="label-item" style="color:var(--text-dim);font-size:10px;padding-top:6px">DISCOVERED</div>`;
+      html += discovered.map(p => `
+        <div class="label-item" title="Click + to register">
+          <div><span>${esc(p.name)}</span> <span class="label-path">${esc(p.path)}</span></div>
+          <span class="label-del" data-path="${encodeURIComponent(p.path)}"
+            style="visibility:visible;color:var(--accent)"
+            onclick="addDiscovered(decodeURIComponent(this.dataset.path))">+</span>
+        </div>
+      `).join('');
+    }
+
+    el.innerHTML = html || '<div class="label-item" style="color:#484f58">No labels</div>';
   } catch(e) {
     console.error('Failed to load project labels:', e.message);
     const el = document.getElementById('labels-list');
@@ -1968,16 +1988,16 @@ function toggleProjects() {
 }
 
 function initQR() {
-  const localUrl = 'http://127.0.0.1:9100?token=' + AUTH_TOKEN;
-  document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff" target="_blank">127.0.0.1:9100</a>';
+  const localUrl = location.origin + '/';
+  document.getElementById('qr-url-local').innerHTML = '&#128279; <a href="' + localUrl + '" style="color:#58a6ff" target="_blank">' + esc(location.host) + '</a>';
   fetchQR(localUrl);
 
-  api('/api/info')
-    .then(info => {
-      const lanUrl = 'http://' + info.lan_ip + ':' + info.port + '?token=' + AUTH_TOKEN;
-      document.getElementById('qr-url-lan').innerHTML = '&#128279; <a href="' + lanUrl + '" style="color:#58a6ff" target="_blank">' + info.lan_ip + ':' + info.port + '</a>';
+  api('/api/pair-ticket')
+    .then(({ticket}) => api('/api/info').then(info => {
+      const lanUrl = 'http://' + info.lan_ip + ':' + info.port + '/?ticket=' + encodeURIComponent(ticket);
+      document.getElementById('qr-url-lan').innerHTML = '&#128279; <a href="' + lanUrl + '" style="color:#58a6ff" target="_blank">' + esc(info.lan_ip) + ':' + esc(info.port) + '</a>';
       fetchQR(lanUrl);
-    })
+    }))
     .catch(() => {
       document.getElementById('qr-url-lan').innerHTML = '<span style="color:var(--text-dim)">LAN info unavailable</span>';
     });
@@ -2168,7 +2188,7 @@ function connectTreeWs() {
   clearTimeout(treeReconnectTimer);
   treeReconnectTimer = null;
   updateConnIndicator('reconnecting');
-  const wsUrl = location.origin.replace(/^http/, 'ws') + '/api/ws?token=' + AUTH_TOKEN;
+  const wsUrl = location.origin.replace(/^http/, 'ws') + '/api/ws';
   treeWs = new WebSocket(wsUrl);
   treeWs.onopen = () => {
     connState = 'connected';
@@ -2387,9 +2407,9 @@ function updateStats() {
           ${allNodes.length ? '<h3 style="margin-bottom:8px;font-size:13px;color:var(--text-dim)">All Agents</h3>' + allNodes.map(n => `
             <div class="label-item" style="cursor:pointer;margin:2px 0" onclick="selectNodeById(${n.id})">
               <div style="display:flex;align-items:center;gap:6px">
-                <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
+                <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${esc(n.colour)};flex-shrink:0"></span>
                 <span style="font-size:13px">${esc(n.name)}</span>
-                <span class="badge ${n.status === 'active' ? 'active' : n.status === 'pending' ? 'pending' : ''}" style="font-size:10px">${n.status}</span>
+                <span class="badge ${n.status === 'active' ? 'active' : n.status === 'pending' ? 'pending' : ''}" style="font-size:10px">${esc(n.status)}</span>
               </div>
               <span style="font-size:11px;color:var(--text-dim)">${esc(n.latest_message || '')}</span>
             </div>
@@ -2413,7 +2433,7 @@ function updateStats() {
           <div class="perm-bar" style="margin:8px 0;padding:12px 16px;flex-wrap:wrap">
             <div style="flex:1;min-width:0">
               <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
-                <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${n.colour};flex-shrink:0"></span>
+                <span class="dot" style="width:8px;height:8px;border-radius:50%;background:${esc(n.colour)};flex-shrink:0"></span>
                 <span style="font-weight:600;cursor:pointer;font-size:13px" onclick="selectNodeById(${n.id})">${esc(n.name)}</span>
               </div>
               <div style="color:var(--text-muted);font-size:12px;white-space:pre-wrap">${esc(n.latest_message || 'Waiting for permission...')}</div>
@@ -2552,7 +2572,7 @@ function toggleStats() {
 
 async function fetchStats() {
   try {
-    const r = await fetch('/api/stats/summary', {headers:{'Authorization':'Bearer '+AUTH_TOKEN}});
+    const r = await fetch('/api/stats/summary');
     const data = await r.json();
     document.getElementById('stat-val-cost').textContent = '$' + data.total_cost.toFixed(2);
     document.getElementById('stat-val-tokens').textContent = (data.total_tokens_in + data.total_tokens_out).toLocaleString();
@@ -2601,7 +2621,7 @@ function clientLog(level, msg) {
   try {
     fetch('/api/client-log', {
       method: 'POST',
-      headers: {'Content-Type':'application/json', 'Authorization':'Bearer ' + AUTH_TOKEN},
+      headers: {'Content-Type':'application/json'},
       body: JSON.stringify({level: level, message: msg}),
     }).catch(() => {});
   } catch(_) {}

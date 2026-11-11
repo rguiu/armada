@@ -95,3 +95,12 @@ def client():
             return super().request(method, url, **kwargs)
 
     return AuthClient(app)
+
+
+@pytest.fixture
+def anon_client():
+    """FastAPI TestClient without an Authorization header."""
+    from armada_ai.server import app
+    from fastapi.testclient import TestClient
+
+    return TestClient(app)

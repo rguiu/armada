@@ -6,15 +6,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
+RUN useradd --create-home --uid 1000 armada
+
 WORKDIR /app
 
 COPY pyproject.toml ./
 COPY armada_ai/ armada_ai/
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir -e . \
+    && chown -R armada:armada /app
 
+ENV HOME=/home/armada
 ENV ARMADA_HOST=0.0.0.0
 ENV ARMADA_PORT=9100
+
+USER armada
 
 EXPOSE 9100
 
