@@ -394,6 +394,36 @@ class TestProjectsCmd:
         assert "Failed" in err
 
 
+class TestWatchAddProject:
+    """Tests for the Projects tab's [n]ew-project form."""
+
+    def test_path_only_posts_path(self):
+        with patch.object(cli, "_watch_form", return_value={"Path": "/tmp/proj"}), \
+             patch.object(cli, "_api_post") as mock_post:
+            err = cli._watch_add_project(None, None)
+        assert err is None
+        mock_post.assert_called_once_with("/api/project-labels", {"path": "/tmp/proj"})
+
+    def test_form_asks_only_for_path(self):
+        with patch.object(cli, "_watch_form", return_value=None) as mock_form, \
+             patch.object(cli, "_api_post"):
+            cli._watch_add_project(None, None)
+        fields = mock_form.call_args[0][3]
+        assert [f["label"] for f in fields if f.get("type") != "button"] == ["Path"]
+
+    def test_missing_path_does_nothing(self):
+        with patch.object(cli, "_watch_form", return_value={"Path": ""}), \
+             patch.object(cli, "_api_post") as mock_post:
+            assert cli._watch_add_project(None, None) is None
+        mock_post.assert_not_called()
+
+    def test_api_error_is_reported(self):
+        with patch.object(cli, "_watch_form", return_value={"Path": "/tmp/proj"}), \
+             patch.object(cli, "_api_post", side_effect=OSError("boom")):
+            err = cli._watch_add_project(None, None)
+        assert err is not None and err.startswith("Failed")
+
+
 class TestStyle:
     """Tests for the small output-styling helpers."""
 

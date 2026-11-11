@@ -345,7 +345,7 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="project folder or label ID (default: current directory)")
     p.add_argument("-n", "--name", help="node name (auto-generated if omitted)")
     p.add_argument("-a", "--agent", default="auto",
-                   choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
+                   choices=["auto", "opencode", "claude", "bash"],
                    help="agent type (default: auto)")
     p.add_argument("-P", "--parent", type=int, metavar="ID",
                    help="parent node ID")
@@ -593,7 +593,6 @@ def _cmd_agents(ns):
     for binary, label in (
         ("opencode", "OpenCode"),
         ("claude", "Claude Code"),
-        ("aap", "AAP proxy"),
         ("tmux", "tmux"),
     ):
         path = shutil.which(binary)
@@ -1286,7 +1285,7 @@ def _watch_nodes():
                 _watch_draw_nodes(tree, projects, selected, tw, has_pending, attached, _status_msg)
             else:
                 pending_names = [r["name"] for r in rows_check if r["status"] == "pending"]
-                _watch_draw_projects(projects, selected, tw, has_pending, pending_names)
+                _watch_draw_projects(projects, selected, tw, has_pending, pending_names, _status_msg)
 
             sys.stdout.flush()
 
@@ -1387,8 +1386,10 @@ def _watch_nodes():
                     selected = max(0, selected - 1)
                 elif ch == 'DOWN':
                     selected = min(len(projects) - 1, selected + 1)
-                elif ch == 'n' and projects:
-                    _watch_add_project(fd, old_settings)
+                elif ch == 'n':
+                    err = _watch_add_project(fd, old_settings)
+                    if err:
+                        _status_msg = err
                     tty.setcbreak(fd)
                 elif ch == 'd' and projects:
                     try:
@@ -1484,7 +1485,7 @@ def _watch_draw_nodes(tree, projects, selected, tw, has_pending=False, attached=
     _watch_draw_bottom(tw, "[↑↓]nav [enter]attach [n]ew [k]kill [d]delete [tab]projects [q]quit")
 
 
-def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_names=None):
+def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_names=None, status_msg=""):
     sys.stdout.write("\033[H\033[J")
 
     nodes_tab = "\033[33m⚠ Nodes \033[0m" if has_pending else " Nodes "
@@ -1504,6 +1505,11 @@ def _watch_draw_projects(projects, selected, tw, has_pending=False, pending_name
 
     if has_pending and pending_names:
         sys.stdout.write(f"\n\033[33m⚠ Pending: {', '.join(pending_names)}\033[0m\n")
+
+    if status_msg:
+        is_error = status_msg.startswith("Failed")
+        color = "\033[31m" if is_error else "\033[32m"
+        sys.stdout.write(f"\n{color}  {status_msg}\033[0m\n")
 
     _watch_draw_bottom(tw, "[↑↓]nav [n]ew [d]elete [tab]nodes [q]quit")
 
@@ -1622,7 +1628,7 @@ def _watch_add_node(fd, old_settings, projects):
     fields = [
         {"label": "Name", "value": "", "type": "text"},
         {"label": "Project", "value": proj_opts[0] if proj_opts else "", "type": "select", "options": proj_opts, "required": True},
-        {"label": "Agent", "value": "auto", "type": "select", "options": ["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"]},
+        {"label": "Agent", "value": "auto", "type": "select", "options": ["auto", "opencode", "claude", "bash"]},
         {"label": "Parent ID", "value": "", "type": "text"},
         {"label": "Prompt", "value": "", "type": "text"},
         {"label": "[ Save ]", "type": "button"},
@@ -1649,18 +1655,17 @@ def _watch_add_node(fd, old_settings, projects):
 
 def _watch_add_project(fd, old_settings):
     fields = [
-        {"label": "ID", "value": "", "type": "text", "required": True},
-        {"label": "Name", "value": "", "type": "text", "required": True},
         {"label": "Path", "value": "", "type": "text", "required": True},
         {"label": "[ Save ]", "type": "button"},
     ]
     result = _watch_form(fd, old_settings, "New Project", fields)
-    if not result or not result["ID"] or not result["Name"] or not result["Path"]:
-        return
+    if not result or not result["Path"]:
+        return None
     try:
-        _api_post("/api/project-labels", {"id": result["ID"], "name": result["Name"], "path": result["Path"]})
-    except Exception:
-        pass
+        _api_post("/api/project-labels", {"path": result["Path"]})
+    except Exception as e:
+        return f"Failed: {e}"
+    return None
 
 
 def _notify_desktop(title: str, message: str):
@@ -1690,7 +1695,7 @@ def _create_cmd(subargs: list[str]):
     p.add_argument("--project", "-p",
                    help="Project folder or label ID (default: current directory)")
     p.add_argument("--agent", "-a", default="auto",
-                   choices=["auto", "opencode", "claude", "aap_opencode", "aap_claude", "bash"],
+                   choices=["auto", "opencode", "claude", "bash"],
                    help="Agent type (default: auto)")
     p.add_argument("--parent", "-P", type=int, help="Parent node ID")
     p.add_argument("--prompt", "-m", help="Initial prompt to send to the agent")
