@@ -1,5 +1,6 @@
 """Tests for message delivery, auth manager, and concurrent DB access."""
 
+import os
 import tempfile
 import threading
 import time
@@ -260,6 +261,14 @@ class TestTokenManager:
         tm = TokenManager(f"{tmpdir}/tok")
         assert tm.validate("anything") is False
 
+    def test_token_file_is_private(self):
+        """The token file must not be readable by other local users."""
+        tmpdir = tempfile.mkdtemp()
+        path = f"{tmpdir}/tok"
+        TokenManager(path).ensure()
+        assert (os.stat(path).st_mode & 0o777) == 0o600
+        assert (os.stat(tmpdir).st_mode & 0o777) == 0o700
+
     def test_ensure_keep_true_preserves_token(self):
         """ensure(keep=True) does not rotate an existing token."""
         tmpdir = tempfile.mkdtemp()
@@ -294,8 +303,8 @@ class TestAuthExemptPaths:
     def test_manifest_is_exempt(self):
         assert AuthExemptPaths.is_exempt("/manifest.json") is True
 
-    def test_metrics_is_exempt(self):
-        assert AuthExemptPaths.is_exempt("/metrics") is True
+    def test_metrics_requires_auth(self):
+        assert AuthExemptPaths.is_exempt("/metrics") is False
 
     def test_api_nodes_not_exempt(self):
         assert AuthExemptPaths.is_exempt("/api/nodes") is False
@@ -303,8 +312,14 @@ class TestAuthExemptPaths:
     def test_api_tree_not_exempt(self):
         assert AuthExemptPaths.is_exempt("/api/tree") is False
 
-    def test_report_is_exempt(self):
-        assert AuthExemptPaths.is_exempt("/api/report") is True
+    def test_report_requires_auth(self):
+        assert AuthExemptPaths.is_exempt("/api/report") is False
+
+    def test_qr_requires_auth(self):
+        assert AuthExemptPaths.is_exempt("/api/qr") is False
+
+    def test_auth_status_requires_auth(self):
+        assert AuthExemptPaths.is_exempt("/api/auth/status") is False
 
 
 # ─────────────────────────────────────────────────────────────────────────────

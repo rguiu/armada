@@ -6,8 +6,8 @@ from . import constants
 CONFIG_PATH = constants.CONFIG_PATH
 
 DEFAULTS = {
-    "port": constants.DEFAULT_PORT,
-    "host": constants.DEFAULT_HOST,
+    "port": int(os.environ.get("ARMADA_PORT", constants.DEFAULT_PORT)),
+    "host": os.environ.get("ARMADA_HOST", constants.DEFAULT_HOST),
     "default_agent": "opencode",
     "health_interval": constants.DEFAULT_HEALTH_INTERVAL,
     "max_restarts": constants.MAX_RESTARTS,
@@ -130,12 +130,16 @@ def get_all() -> dict:
 
 
 def write_config(cfg: dict):
-    os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(CONFIG_PATH), mode=0o700, exist_ok=True)
     lines = []
     for key, value in cfg.items():
         lines.extend(_yaml_lines(key, value, 0))
     with open(CONFIG_PATH, "w") as f:
         f.write("\n".join(lines) + "\n")
+    try:
+        os.chmod(CONFIG_PATH, 0o600)
+    except OSError:
+        pass
     global _cache, _cache_mtime
     _cache = dict(cfg)
     try:

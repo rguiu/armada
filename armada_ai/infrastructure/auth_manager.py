@@ -11,6 +11,8 @@ from fastapi import Request, WebSocket
 
 from .. import constants
 
+COOKIE_NAME = "armada_token"
+
 
 class TokenManager:
     """Manages the Armada auth token lifecycle."""
@@ -39,48 +41,54 @@ class TokenManager:
                 return self._token
 
         self._token = secrets.token_hex(16)
-        os.makedirs(os.path.dirname(self._token_file), exist_ok=True)
+        token_dir = os.path.dirname(self._token_file)
+        os.makedirs(token_dir, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(token_dir, 0o700)
+        except OSError:
+            pass
         Path(self._token_file).write_text(self._token)
+        try:
+            os.chmod(self._token_file, 0o600)
+        except OSError:
+            pass
         return self._token
 
     def validate(self, candidate: str) -> bool:
-        return bool(self._token and candidate == self._token)
+        return bool(self._token and candidate
+                    and secrets.compare_digest(candidate, self._token))
 
     @staticmethod
     def extract_from_request(request: Request) -> str:
-        """Extract token from query param or Authorization Bearer header."""
+        """Extract token from query param, Authorization header, or cookie."""
         token = request.query_params.get("token", "")
         if token:
             return token
         auth = request.headers.get("Authorization", "")
         if auth.startswith("Bearer "):
             return auth[7:]
-        return ""
+        return request.cookies.get(COOKIE_NAME, "")
 
     @staticmethod
     def extract_from_websocket(websocket: WebSocket) -> str:
-        """Extract token from query param or sec-websocket-protocol / headers."""
+        """Extract token from query param, headers, or cookie."""
         token = websocket.query_params.get("token", "")
         if token:
             return token
         auth = websocket.headers.get("authorization", "")
         if auth.startswith("Bearer "):
             return auth[7:]
-        return ""
+        return websocket.cookies.get(COOKIE_NAME, "")
 
 
 class AuthExemptPaths:
     """Central registry of paths exempt from auth requirements."""
 
     EXEMPT = frozenset({
-        "/api/report",
-        "/api/auth/status",
         "/favicon.ico",
         "/manifest.json",
         "/health",
-        "/metrics",
         "/icon.svg",
-        "/api/qr",
     })
 
     @classmethod

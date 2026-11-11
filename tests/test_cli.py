@@ -130,22 +130,19 @@ class TestMainDispatch:
 
 
 class TestStatus:
-    """Tests for the _status command that hits /health."""
+    """Tests for the _status command."""
+
+    @staticmethod
+    def _fake_api(info, summary):
+        def _api_get(path):
+            return info if path == "/api/info" else summary
+        return _api_get
 
     def test_status_running(self, capsys):
-        health_data = json.dumps({
-            "version": "0.2.0",
-            "uptime": 123.4,
-            "agents": 5,
-            "active": 3,
-            "pending": 1,
-            "idle": 1,
-        }).encode()
+        info = {"version": "0.2.0", "uptime": 123.4}
+        summary = {"total_agents": 5, "active": 3, "pending": 1, "idle": 1}
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = health_data
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch.object(cli, "_api_get", side_effect=self._fake_api(info, summary)):
             cli._status()
 
         out = capsys.readouterr().out
@@ -155,26 +152,17 @@ class TestStatus:
         assert "Agents: 5" in out
 
     def test_status_connection_refused(self, capsys):
-        with patch("urllib.request.urlopen", side_effect=ConnectionRefusedError("refused")):
+        with patch.object(cli, "_api_get", side_effect=ConnectionRefusedError("refused")):
             cli._status()
 
         err = capsys.readouterr().err
         assert "not reachable" in err
 
     def test_status_json(self, capsys):
-        health_data = json.dumps({
-            "version": "0.4.0",
-            "uptime": 12.0,
-            "agents": 3,
-            "active": 1,
-            "pending": 1,
-            "idle": 1,
-        }).encode()
+        info = {"version": "0.4.0", "uptime": 12.0}
+        summary = {"total_agents": 3, "active": 1, "pending": 1, "idle": 1}
 
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = health_data
-
-        with patch("urllib.request.urlopen", return_value=mock_resp):
+        with patch.object(cli, "_api_get", side_effect=self._fake_api(info, summary)):
             cli._status(json_output=True)
 
         data = json.loads(capsys.readouterr().out)
@@ -182,7 +170,7 @@ class TestStatus:
         assert data["version"] == "0.4.0"
 
     def test_status_json_down(self, capsys):
-        with patch("urllib.request.urlopen", side_effect=ConnectionRefusedError("refused")):
+        with patch.object(cli, "_api_get", side_effect=ConnectionRefusedError("refused")):
             cli._status(json_output=True)
 
         data = json.loads(capsys.readouterr().out)

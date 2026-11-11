@@ -676,25 +676,16 @@ def _lan_ip():
 
 
 def _print_startup_info(lan: bool = False, qr: bool = False):
-    token = _read_token()
-    if not token:
-        return
-
-    local_url = f"http://127.0.0.1:9100?token={token}"
+    local_url = "http://127.0.0.1:9100"
     print(f"\n{_style('⚓ Armada is starting', 'bold', 'cyan')}")
     print(f"  {_style('Dashboard:', 'dim')} {_hyperlink(local_url)}")
+    print(f"  {_style('Login:', 'dim')}     armada token --qr")
     if lan:
         ip = _lan_ip()
-        print(f"  {_style('LAN:', 'dim')}       {_hyperlink(f'http://{ip}:9100?token={token}')}")
-    print()
-
+        print(f"  {_style('LAN:', 'dim')}       {_hyperlink(f'http://{ip}:9100')}")
     if qr:
-        import qrcode
-        url = f"http://{_lan_ip()}:9100?token={token}" if lan else local_url
-        qr_code = qrcode.QRCode()
-        qr_code.add_data(url)
-        qr_code.print_ascii()
-        print()
+        print(f"  {_style('Pair a device:', 'dim')} armada token --qr")
+    print()
 
 
 def _print_token(qr: bool = False, lan: bool = False):
@@ -705,10 +696,16 @@ def _print_token(qr: bool = False, lan: bool = False):
         sys.exit(1)
 
     if qr:
+        try:
+            ticket = _api_get("/api/pair-ticket")["ticket"]
+        except Exception:
+            _err("Armada server is not reachable.")
+            _info("Start it first with: armada")
+            sys.exit(1)
         import qrcode
         host = _lan_ip() if lan else "127.0.0.1"
-        url = f"http://{host}:9100?token={token}"
-        _header("Armada token", "scan to open the dashboard")
+        url = f"http://{host}:9100/?ticket={ticket}"
+        _header("Armada token", "scan to open the dashboard (valid for 60s)")
         print(f"  {_hyperlink(url)}")
         print()
         qr_code = qrcode.QRCode()
@@ -860,12 +857,8 @@ def _setup_skills():
 
 def _status(json_output: bool = False):
     try:
-        import urllib.request
-        req = urllib.request.Request(
-            f"http://127.0.0.1:{constants.DEFAULT_PORT}/health"
-        )
-        resp = urllib.request.urlopen(req, timeout=5)
-        data = json.loads(resp.read())
+        info = _api_get("/api/info")
+        summary = _api_get("/api/stats/summary")
     except Exception:
         if json_output:
             print(json.dumps({"status": "down"}))
@@ -876,6 +869,16 @@ def _status(json_output: bool = False):
                 file=sys.stderr,
             )
         return
+
+    data = {
+        "status": "ok",
+        "version": info.get("version", "?"),
+        "uptime": info.get("uptime", 0),
+        "agents": summary.get("total_agents", 0),
+        "active": summary.get("active", 0),
+        "pending": summary.get("pending", 0),
+        "idle": summary.get("idle", 0),
+    }
 
     if json_output:
         print(json.dumps(data, indent=2))

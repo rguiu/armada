@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .. import constants
 from .. import logs
+from ..domain.models import validate_node_name
 
 ARMADA_SESSION = "armada"
 
@@ -72,9 +73,12 @@ def ensure_armada_session():
 def _build_shell_command(name: str, colour: str, working_dir: str,
                          agent_type: str) -> str | None:
     """Build the shell command string for a new node window. Returns None on failure."""
+    if validate_node_name(name):
+        return None
     cwd = os.path.abspath(working_dir)
     safe_dir = shlex.quote(cwd)
     safe_name = name.replace("'", "'\\''")
+    safe_title = safe_name
     sanitize_prefix = _sanitize_env_prefix()
     workspace = agent_workspace(name)
     os.makedirs(workspace, exist_ok=True)
@@ -91,7 +95,7 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
                 f"{sanitize_prefix}"
                 f"cd {safe_dir} && "
                 f"{direnv_hook}"
-                f"printf '\\033]2;{name}\\033\\\\' && "
+                f"printf '\\033]2;{safe_title}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
                 f"export ARMADA_WORKSPACE='{safe_workspace}' && "
                 f"{exec_cmd}"
@@ -101,7 +105,7 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
                 f"{sanitize_prefix}"
                 f"cd {safe_dir} && "
                 f"{direnv_hook}"
-                f"printf '\\033]2;{name}\\033\\\\' && "
+                f"printf '\\033]2;{safe_title}\\033\\\\' && "
                 f"export ARMADA_NODE_NAME='{safe_name}' && "
                 f"export ARMADA_WORKSPACE='{safe_workspace}' && "
                 f"exec {os.environ.get('SHELL', '/bin/zsh')}"
@@ -128,6 +132,9 @@ def _build_shell_command(name: str, colour: str, working_dir: str,
 def create_node_window(name: str, colour: str, working_dir: str,
                        agent_type: str = "auto",
                        ) -> NodeWindowResult:
+    if validate_node_name(name):
+        logs.log_event("_tmux", "create_fail", {"name": name, "reason": "invalid name"})
+        return NodeWindowResult(error="invalid node name")
     if not has_tmux():
         reason = "tmux not found in PATH"
         logs.log_event("_tmux", "create_fail", {"name": name, "reason": reason})

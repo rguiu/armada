@@ -4,6 +4,15 @@ __pycache__/
 .venv/
 .DS_Store
 *.pid
+.env
+.env.*
+*.pem
+*.key
+*.p12
+.npmrc
+.netrc
+.secrets*
+*.log
 dist/
 build/
 .opencode/
